@@ -8,6 +8,8 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
     port: 5173,
+    // listen on the LAN too, so the PWA can be opened on a phone during development
+    host: true,
     proxy: {
       '/api': {
         target: process.env.VITE_API_TARGET || 'http://localhost:4000',

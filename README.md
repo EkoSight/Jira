@@ -51,36 +51,91 @@ React (Vite) PWA · Node.js + Express · PostgreSQL · JavaScript throughout.
 
 ---
 
-## Getting started
+## Running it locally
 
-Requirements: Node 20+, PostgreSQL 13+.
+Requirements: **Node 20+** and **PostgreSQL 13+**. Nothing else — no Docker, no
+native build steps.
+
+**1. Make sure PostgreSQL is running and create a database.**
 
 ```bash
-git clone <this repo> && cd Jira
+# macOS (Homebrew)
+brew services start postgresql
+# Linux
+sudo service postgresql start
+# Windows: start the "postgresql" service, or use the pgAdmin tray icon
+
+createdb taskflow
+```
+
+**2. Install and configure.**
+
+```bash
+git clone https://github.com/EkoSight/Jira.git && cd Jira
 npm install
 
 cp server/.env.example server/.env
-# edit server/.env — at minimum the PG* values and JWT_SECRET
-
-npm run migrate          # creates the taskflow schema and tables
-npm run seed             # departments, statuses, default rules, admin account
-
-npm run dev              # API on :4000, PWA on :5173
 ```
 
-Sign in with the admin account printed by the seed
+Open `server/.env` and set `PGUSER`, `PGPASSWORD` and `PGDATABASE` to match your
+machine. Generate a `JWT_SECRET` while you are there:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+**3. Create the tables and the first account.**
+
+```bash
+npm run migrate          # creates the taskflow schema and tables
+npm run seed             # departments, statuses, default rules, admin account
+```
+
+Set `SEED_DEMO=true` in `server/.env` before seeding to also load a demo team and
+16 sample cards — the quickest way to see the dashboard and black marks with real
+numbers in them.
+
+**4. Start it.**
+
+```bash
+npm run dev
+```
+
+- PWA: <http://localhost:5173>
+- API: <http://localhost:4000/api/taskflow>
+
+Both restart on save. Sign in with the admin account the seed prints
 (`admin@ekosight.com` / `ChangeMe123!` unless you set `ADMIN_EMAIL` and
-`ADMIN_PASSWORD`). You are asked to change the password immediately.
+`ADMIN_PASSWORD`); you are asked to change the password straight away.
 
-To load a demo team and 16 sample cards while evaluating, set `SEED_DEMO=true`
-in `server/.env` before running `npm run seed`.
+### Trying it on a phone
 
-### Production build
+The dev server also listens on your local network, so the mobile layout and the
+install prompt can be tested on a real device on the same wifi. Vite prints the
+address on startup:
+
+```
+➜  Network: http://192.168.1.24:5173/
+```
+
+Open that on the phone. For the full PWA experience — installing to the home
+screen and offline reads — use the production build below, since service workers
+need HTTPS or `localhost`.
+
+### Production-style run (single server)
 
 ```bash
 npm run build            # builds the PWA into client/dist
 npm start                # Express serves the API and the built PWA together
 ```
+
+Everything is then on <http://localhost:4000> with the service worker active.
+
+### If it will not start
+
+The server explains the common failures rather than printing a stack trace — a
+database that is not running, a wrong password, or a database that does not exist
+yet each come with the command that fixes them.
 
 ### Tests
 
