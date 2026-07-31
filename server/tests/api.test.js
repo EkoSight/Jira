@@ -1,0 +1,499 @@
+/**
+ * End to end tests against a real postgres database.
+ *
+ * `npm test` loads .env.test, which points DB_SCHEMA at taskflow_test so the
+ * suite never touches working data. Tests skip cleanly with no database.
+ */
+import test, { before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { config } from '../src/config.js';
+import { createApp } from '../src/app.js';
+import { runMigrations } from '../src/db/migrate.js';
+import { pool, query, closePool } from '../src/db/pool.js';
+import { hashPassword } from '../src/lib/password.js';
+import { runBlackMarkScan, monthlyReview } from '../src/services/blackmarks.js';
+
+let server;
+let baseUrl;
+let available = true;
+const tokens = {};
+const ids = {};
+
+const call = async (method, path, { token, body } = {}) => {
+  const response = await fetch(`${baseUrl}/api/taskflow${path}`, {
+    method,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await response.text();
+  return { status: response.status, body: text ? JSON.parse(text) : {} };
+};
+
+const daysFromNow = (days) => new Date(Date.now() + days * 86400000).toISOString();
+
+before(async () => {
+  // guard against ever pointing the destructive setup at a working schema
+  assert.match(
+    config.db.schema,
+    /test/,
+    'refusing to run: DB_SCHEMA must contain "test" (run via `npm test`, which loads .env.test)',
+  );
+
+  try {
+    await query('SELECT 1');
+  } catch {
+    available = false;
+    console.log('[tests] no database reachable — skipping API tests');
+    return;
+  }
+
+  await query(`DROP SCHEMA IF EXISTS "${config.db.schema}" CASCADE`);
+  await runMigrations({ verbose: false });
+
+  await query(
+    `INSERT INTO departments (key, name, color, position) VALUES ('TST', 'Testing', '#2a78d6', 1)`,
+  );
+  await query(
+    `INSERT INTO workflow_statuses (name, slug, stage, color, position, is_default) VALUES
+      ('To Do', 'to-do', 'todo', '#3b82f6', 1, TRUE),
+      ('In Progress', 'in-progress', 'in_progress', '#f59e0b', 2, FALSE),
+      ('Done', 'done', 'done', '#22c55e', 3, FALSE)`,
+  );
+
+  const password = await hashPassword('Password123!');
+  const { rows: dept } = await query(`SELECT id FROM departments WHERE key = 'TST'`);
+  ids.department = dept[0].id;
+
+  const { rows: admin } = await query(
+    `INSERT INTO users (full_name, email, password_hash, role, must_change_password)
+     VALUES ('Admin User', 'admin@test.local', $1, 'admin', FALSE) RETURNING id`,
+    [password],
+  );
+  const { rows: member } = await query(
+    `INSERT INTO users (full_name, email, password_hash, role, department_id, must_change_password)
+     VALUES ('Member User', 'member@test.local', $1, 'member', $2, FALSE) RETURNING id`,
+    [password, ids.department],
+  );
+  ids.admin = admin[0].id;
+  ids.member = member[0].id;
+
+  const { rows: statuses } = await query('SELECT id, slug FROM workflow_statuses ORDER BY position');
+  ids.todo = statuses[0].id;
+  ids.inProgress = statuses[1].id;
+  ids.done = statuses[2].id;
+
+  await new Promise((resolve) => {
+    server = createApp().listen(0, () => {
+      baseUrl = `http://127.0.0.1:${server.address().port}`;
+      resolve();
+    });
+  });
+});
+
+after(async () => {
+  if (server) await new Promise((resolve) => server.close(resolve));
+  if (available) {
+    await query(`DROP SCHEMA IF EXISTS "${config.db.schema}" CASCADE`).catch(() => {});
+  }
+  await closePool().catch(() => {});
+});
+
+const skipIfUnavailable = (t) => {
+  if (!available) {
+    t.skip('no database');
+    return true;
+  }
+  return false;
+};
+
+test('rejects a bad password and issues a token for a good one', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const bad = await call('POST', '/auth/login', { body: { email: 'admin@test.local', password: 'nope' } });
+  assert.equal(bad.status, 401);
+
+  const good = await call('POST', '/auth/login', {
+    body: { email: 'admin@test.local', password: 'Password123!' },
+  });
+  assert.equal(good.status, 200);
+  assert.ok(good.body.token);
+  assert.equal(good.body.user.role, 'admin');
+  tokens.admin = good.body.token;
+
+  const memberLogin = await call('POST', '/auth/login', {
+    body: { email: 'member@test.local', password: 'Password123!' },
+  });
+  tokens.member = memberLogin.body.token;
+});
+
+test('protected routes need a token', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  const anonymous = await call('GET', '/tasks');
+  assert.equal(anonymous.status, 401);
+});
+
+test('creates a task with a department-prefixed reference', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Prepare the vendor comparison',
+      department_id: ids.department,
+      priority: 'high',
+      assignee_id: ids.member,
+      due_date: daysFromNow(3),
+      estimate_hours: 6,
+    },
+  });
+
+  assert.equal(created.status, 201);
+  assert.equal(created.body.task.ref, 'TST-1');
+  assert.equal(created.body.task.status_name, 'To Do');
+  assert.equal(created.body.task.assignee_id, ids.member);
+  ids.task = created.body.task.id;
+
+  const second = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'A second card', department_id: ids.department },
+  });
+  assert.equal(second.body.task.ref, 'TST-2', 'references increment per department');
+  ids.secondTask = second.body.task.id;
+});
+
+test('rejects a task with no title', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  const result = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'x', department_id: ids.department },
+  });
+  assert.equal(result.status, 400);
+  assert.equal(result.body.error, 'Validation failed');
+});
+
+test('a member cannot reassign someone else’s work', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  const result = await call('PATCH', `/tasks/${ids.task}`, {
+    token: tokens.member,
+    body: { assignee_id: ids.admin },
+  });
+  assert.equal(result.status, 403);
+});
+
+test('moving a card to a done status stamps completion, and reopening clears it', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const done = await call('POST', `/tasks/${ids.secondTask}/move`, {
+    token: tokens.admin,
+    body: { status_id: ids.done },
+  });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.task.progress, 100);
+  assert.ok(done.body.task.completed_at);
+
+  const reopened = await call('POST', `/tasks/${ids.secondTask}/move`, {
+    token: tokens.admin,
+    body: { status_id: ids.inProgress },
+  });
+  assert.equal(reopened.body.task.completed_at, null);
+
+  const detail = await call('GET', `/tasks/${ids.secondTask}`, { token: tokens.admin });
+  const actions = detail.body.activity.map((a) => a.action);
+  assert.ok(actions.includes('completed'));
+  assert.ok(actions.includes('reopened'));
+});
+
+test('changing the deadline is counted and the original is kept', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  await call('PATCH', `/tasks/${ids.task}`, {
+    token: tokens.admin,
+    body: { due_date: daysFromNow(10) },
+  });
+  const detail = await call('GET', `/tasks/${ids.task}`, { token: tokens.admin });
+  assert.equal(detail.body.task.due_date_changes, 1);
+  assert.ok(detail.body.task.original_due_date);
+});
+
+test('a WIP limit blocks an over-full column', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  await call('PATCH', `/statuses/${ids.inProgress}`, { token: tokens.admin, body: { wip_limit: 1 } });
+  const blocked = await call('POST', `/tasks/${ids.task}/move`, {
+    token: tokens.admin,
+    body: { status_id: ids.inProgress },
+  });
+  assert.equal(blocked.status, 400);
+  assert.match(blocked.body.error, /WIP limit/);
+  await call('PATCH', `/statuses/${ids.inProgress}`, { token: tokens.admin, body: { wip_limit: null } });
+});
+
+test('black marks are recorded once per rule and task, however often the scan runs', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const rule = await call('POST', '/blackmarks/rules', {
+    token: tokens.admin,
+    body: { name: 'Missed deadline', trigger_type: 'deadline_missed', points: 1, grace_hours: 0 },
+  });
+  assert.equal(rule.status, 201);
+
+  // a task that is already past its deadline
+  const overdue = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'This one slipped',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(-5),
+    },
+  });
+
+  const first = await runBlackMarkScan();
+  const second = await runBlackMarkScan();
+  const third = await runBlackMarkScan();
+
+  assert.equal(first.created.length, 1, 'first scan records the breach');
+  assert.equal(second.created.length, 0, 'repeat scans are idempotent');
+  assert.equal(third.created.length, 0);
+  assert.equal(first.created[0].user_id, ids.member);
+  assert.equal(first.created[0].task_ref, overdue.body.task.ref);
+});
+
+test('a rule scoped to critical work ignores lower priorities', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  await call('POST', '/blackmarks/rules', {
+    token: tokens.admin,
+    body: {
+      name: 'Critical only',
+      trigger_type: 'deadline_missed',
+      points: 5,
+      grace_hours: 0,
+      priorities: ['critical'],
+    },
+  });
+
+  const before = await runBlackMarkScan();
+  assert.equal(before.created.length, 0, 'the medium priority overdue task does not match');
+
+  await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Critical slip',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      priority: 'critical',
+      due_date: daysFromNow(-2),
+    },
+  });
+
+  const after = await runBlackMarkScan();
+  assert.equal(after.created.length, 2, 'both the general and the critical rule fire');
+  assert.ok(after.created.some((mark) => Number(mark.points) === 5));
+});
+
+test('a grace period holds the mark back until it expires', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  await query(`UPDATE blackmark_rules SET is_active = FALSE`);
+  await call('POST', '/blackmarks/rules', {
+    token: tokens.admin,
+    body: { name: 'Two day grace', trigger_type: 'deadline_missed', points: 1, grace_hours: 48 },
+  });
+
+  const fresh = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Only just late',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(-1),
+    },
+  });
+
+  const within = await runBlackMarkScan();
+  assert.equal(
+    within.created.filter((m) => m.task_ref === fresh.body.task.ref).length,
+    0,
+    'still inside the grace window',
+  );
+
+  const later = await runBlackMarkScan({ now: new Date(Date.now() + 3 * 86400000) });
+  assert.ok(
+    later.created.some((m) => m.task_ref === fresh.body.task.ref),
+    'recorded once the grace window has passed',
+  );
+});
+
+test('the monthly review counts points and flags people over the limit', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const review = await monthlyReview({});
+  const member = review.members.find((m) => m.user_id === ids.member);
+
+  assert.ok(member, 'the member appears in the review');
+  assert.ok(member.total_points > 0);
+  assert.ok(member.missed_deadlines >= 1);
+  assert.equal(typeof member.over_limit, 'boolean');
+  assert.ok(['ok', 'warning', 'critical'].includes(member.severity));
+});
+
+test('waiving a black mark takes it out of the active total', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const marks = await call('GET', '/blackmarks', { token: tokens.admin });
+  // the grace-period test deliberately scans with a future clock, and those marks
+  // land outside the current review window — pick one that is actually counted
+  const monthStart = new Date();
+  monthStart.setUTCDate(1);
+  monthStart.setUTCHours(0, 0, 0, 0);
+  const target = marks.body.marks.find(
+    (m) =>
+      m.status === 'active' &&
+      new Date(m.occurred_at) >= monthStart &&
+      new Date(m.occurred_at) <= new Date(),
+  );
+  assert.ok(target, 'expected at least one active mark inside the current month');
+
+  const before = await monthlyReview({});
+  const beforePoints = before.members.find((m) => m.user_id === target.user_id).total_points;
+
+  const waived = await call('POST', `/blackmarks/${target.id}/waive`, {
+    token: tokens.admin,
+    body: { reason: 'Deadline moved by the customer' },
+  });
+  assert.equal(waived.status, 200);
+  assert.equal(waived.body.mark.status, 'waived');
+
+  const after = await monthlyReview({});
+  const afterPoints = after.members.find((m) => m.user_id === target.user_id).total_points;
+  assert.equal(afterPoints, beforePoints - Number(target.points));
+});
+
+test('a member cannot waive black marks or see other people’s', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const marks = await call('GET', '/blackmarks', { token: tokens.member });
+  assert.equal(marks.status, 200);
+  assert.ok(marks.body.marks.every((mark) => mark.user_id === ids.member));
+
+  const attempt = await call('POST', `/blackmarks/${marks.body.marks[0].id}/waive`, {
+    token: tokens.member,
+    body: { reason: 'let me off' },
+  });
+  assert.equal(attempt.status, 403);
+});
+
+test('adding a team member returns a one-time password and applies role defaults', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/users', {
+    token: tokens.admin,
+    body: {
+      full_name: 'New Joiner',
+      email: 'joiner@test.local',
+      role: 'member',
+      department_id: ids.department,
+    },
+  });
+
+  assert.equal(created.status, 201);
+  assert.ok(created.body.temporary_password);
+  assert.equal(created.body.user.must_change_password, true);
+  assert.ok(created.body.user.permissions.includes('task.create'));
+  assert.ok(!created.body.user.permissions.includes('user.permissions'));
+
+  const login = await call('POST', '/auth/login', {
+    body: { email: 'joiner@test.local', password: created.body.temporary_password },
+  });
+  assert.equal(login.status, 200);
+  assert.equal(login.body.user.must_change_password, true);
+});
+
+test('a member cannot add people or hand out permissions', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const attempt = await call('POST', '/users', {
+    token: tokens.member,
+    body: { full_name: 'Sneaky Admin', email: 'sneaky@test.local', role: 'admin' },
+  });
+  assert.equal(attempt.status, 403);
+});
+
+test('the last active admin cannot be demoted or deactivated', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const demote = await call('PATCH', `/users/${ids.admin}`, {
+    token: tokens.admin,
+    body: { role: 'member' },
+  });
+  assert.equal(demote.status, 400);
+  assert.match(demote.body.error, /admin must remain/);
+});
+
+test('the dashboard reports overdue, critical and unassigned counts', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const dashboard = await call('GET', '/reports/dashboard', { token: tokens.admin });
+  assert.equal(dashboard.status, 200);
+  assert.ok(dashboard.body.summary.total > 0);
+  assert.ok(dashboard.body.summary.overdue >= 1);
+  assert.ok(Array.isArray(dashboard.body.workload));
+  assert.ok(Array.isArray(dashboard.body.trend));
+  assert.equal(dashboard.body.trend.length, 14);
+
+  const memberRow = dashboard.body.workload.find((w) => w.id === ids.member);
+  assert.ok(memberRow.open_tasks > 0);
+  assert.ok(['idle', 'available', 'busy', 'overloaded', 'stalled'].includes(memberRow.status));
+});
+
+test('settings round trip and drive the review thresholds', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const saved = await call('PUT', '/settings/blackmarks', {
+    token: tokens.admin,
+    body: { value: { missedDeadlineLimit: 1 } },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.settings.blackmarks.missedDeadlineLimit, 1);
+  assert.equal(saved.body.settings.blackmarks.warningPoints, 3, 'untouched keys keep their defaults');
+
+  const review = await monthlyReview({});
+  const member = review.members.find((m) => m.user_id === ids.member);
+  assert.equal(member.over_limit, member.missed_deadlines > 1);
+});
+
+test('an unknown settings key is rejected', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  const result = await call('PUT', '/settings/nonsense', { token: tokens.admin, body: { value: 1 } });
+  assert.equal(result.status, 400);
+});
+
+test('comments are recorded against the task', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const posted = await call('POST', `/tasks/${ids.task}/comments`, {
+    token: tokens.member,
+    body: { body: 'Vendor quotes are in.' },
+  });
+  assert.equal(posted.status, 201);
+
+  const detail = await call('GET', `/tasks/${ids.task}`, { token: tokens.admin });
+  assert.equal(detail.body.comments.length, 1);
+  assert.equal(detail.body.comments[0].body, 'Vendor quotes are in.');
+});
+
+test('archiving hides a card from the default list', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const before = await call('GET', '/tasks', { token: tokens.admin });
+  await call('DELETE', `/tasks/${ids.secondTask}`, { token: tokens.admin });
+  const after = await call('GET', '/tasks', { token: tokens.admin });
+
+  assert.equal(after.body.tasks.length, before.body.tasks.length - 1);
+  const archived = await call('GET', '/tasks?archived=true', { token: tokens.admin });
+  assert.ok(archived.body.tasks.some((task) => task.id === ids.secondTask));
+});

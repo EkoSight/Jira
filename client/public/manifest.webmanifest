@@ -1,0 +1,22 @@
+{
+  "name": "TaskFlow — EkoSight",
+  "short_name": "TaskFlow",
+  "description": "Day to day task management across every EkoSight department",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "categories": ["productivity", "business"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "My tasks", "short_name": "My tasks", "url": "/my-tasks" },
+    { "name": "Board", "short_name": "Board", "url": "/board" },
+    { "name": "Dashboard", "short_name": "Dashboard", "url": "/" }
+  ]
+}
