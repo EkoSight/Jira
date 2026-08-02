@@ -12,6 +12,7 @@
     "start": "node src/index.js",
     "migrate": "node src/db/migrate.js",
     "seed": "node src/db/seed.js",
+    "doctor": "node src/db/doctor.js",
     "test": "node --env-file=.env.test --test \"tests/**/*.test.js\""
   },
   "dependencies": {

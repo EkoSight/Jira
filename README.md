@@ -158,16 +158,36 @@ together on <http://localhost:4000>, with the service worker active.
 
 ### If it will not start
 
-Failures explain themselves rather than printing a stack trace. A database that is
-not running, credentials that are rejected, a database that does not exist, and
-tables that have not been created yet each come back with the command that fixes
-them — at startup in the terminal, and on the sign-in screen if it happens while
-the app is running.
+Run the setup check — it works through everything in order and stops at the first
+thing that is wrong, with the command that fixes it:
+
+```bash
+npm run doctor
+```
+
+```
+TaskFlow setup check
+
+  ✓ server/.env found
+  ✓ Node 22.22.2
+  ✓ something is listening on localhost:5432
+  ✓ connected to database "taskflow"
+  ✗ the TaskFlow tables are not in schema "taskflow" yet
+
+Next step:
+
+  npm run migrate
+  npm run seed
+```
+
+Failures elsewhere explain themselves the same way rather than printing a stack
+trace — at startup in the terminal, and on the sign-in screen if something breaks
+while the app is running.
 
 | What you see | What it means |
 |---|---|
 | `Could not read package.json` | You are not inside the `Jira` folder — `cd Jira` first |
-| `Cannot reach the database` | PostgreSQL is not running |
+| `Cannot reach PostgreSQL` | The database service is not running (Windows: start `postgresql-x64-…` in Services) |
 | `The TaskFlow tables are missing` | Run `npm run migrate` then `npm run seed` |
 | `The database "taskflow" does not exist` | Create it: `createdb taskflow` |
 | `PostgreSQL rejected the credentials` | Fix `PGUSER` / `PGPASSWORD` in `server/.env` |
