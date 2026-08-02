@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { query, closePool } from './pool.js';
 import { runMigrations } from './migrate.js';
 import { hashPassword } from '../lib/password.js';
+import { reportStartupFailure } from '../lib/dbErrors.js';
 
 const DEPARTMENTS = [
   ['MKT', 'Marketing', '#ec4899', 'Campaigns, branding, collateral, events'],
@@ -242,7 +243,7 @@ if (isDirectRun) {
   main()
     .then(() => closePool())
     .catch(async (err) => {
-      console.error('[seed] failed:', err);
+      reportStartupFailure('seed', err);
       await closePool();
       process.exit(1);
     });

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { pool, closePool } from './pool.js';
+import { reportStartupFailure, describeError } from '../lib/dbErrors.js';
 
 const migrationsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
@@ -39,7 +40,7 @@ export async function runMigrations({ verbose = true } = {}) {
         count += 1;
       } catch (err) {
         await client.query('ROLLBACK');
-        throw new Error(`migration ${file} failed: ${err.message}`);
+        throw new Error(`migration ${file} failed: ${describeError(err)}`, { cause: err });
       }
     }
 
@@ -55,7 +56,7 @@ if (isDirectRun) {
   runMigrations()
     .then(() => closePool())
     .catch(async (err) => {
-      console.error('[migrate] failed:', err.message);
+      reportStartupFailure('migrate', err);
       await closePool();
       process.exit(1);
     });

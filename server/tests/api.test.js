@@ -492,9 +492,12 @@ test('a setup problem answers with the fix, not a bare 500', async (t) => {
   const { errorHandler } = await import('../src/middleware/error.js');
   const cases = [
     [{ code: '42P01' }, /npm run migrate/],
-    [{ code: 'ECONNREFUSED' }, /Is PostgreSQL running/],
+    [{ code: 'ECONNREFUSED' }, /Is the database running/],
     [{ code: '3D000' }, /createdb/],
     [{ code: '28P01' }, /PGUSER and PGPASSWORD/],
+    // Windows resolves localhost to both ::1 and 127.0.0.1, so a refused
+    // connection arrives wrapped in an AggregateError with an empty message
+    [new AggregateError([Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })]), /Is the database running/],
   ];
 
   for (const [error, expected] of cases) {
@@ -510,10 +513,25 @@ test('a setup problem answers with the fix, not a bare 500', async (t) => {
       },
     };
     errorHandler(error, {}, res, () => {});
-    assert.equal(status, 503, `${error.code} should be a 503`);
+    assert.equal(status, 503, `${error.code || 'AggregateError'} should be a 503`);
     assert.match(payload.error, expected);
     assert.equal(payload.setup_required, true);
+    assert.ok(!payload.error.includes('\n'), 'the UI message stays on one line');
   }
+});
+
+test('an error explanation is never empty, whatever the shape of the error', async (t) => {
+  const { describeError } = await import('../src/lib/dbErrors.js');
+
+  assert.equal(describeError(new Error('plain')), 'plain');
+  assert.equal(describeError({ code: 'ECONNREFUSED' }), 'ECONNREFUSED');
+  assert.equal(
+    describeError(new AggregateError([new Error('inner cause')])),
+    'inner cause',
+    'AggregateError reports its first inner error rather than an empty string',
+  );
+  assert.ok(describeError(new AggregateError([])).length > 0);
+  assert.ok(describeError(undefined).length > 0);
 });
 
 test('archiving hides a card from the default list', async (t) => {

@@ -56,26 +56,46 @@ React (Vite) PWA · Node.js + Express · PostgreSQL · JavaScript throughout.
 Requirements: **Node 20+** and **PostgreSQL 13+**. Nothing else — no Docker, no
 native build steps.
 
-**1. Make sure PostgreSQL is running and create a database.**
+> Every command below is run **from inside the project folder**, and none of them
+> take comments — do not paste a trailing `#  …` into Windows CMD or PowerShell,
+> where `#` is not a comment character.
+
+**1. Make sure PostgreSQL is running, then create a database.**
+
+macOS: `brew services start postgresql`
+Linux: `sudo service postgresql start`
+Windows: start the **postgresql** service from Services, or use the pgAdmin tray icon.
 
 ```bash
-# macOS (Homebrew)
-brew services start postgresql
-# Linux
-sudo service postgresql start
-# Windows: start the "postgresql" service, or use the pgAdmin tray icon
-
 createdb taskflow
 ```
 
-**2. Install and configure.**
+If `createdb` is not on your PATH (common on Windows), use pgAdmin, or:
 
 ```bash
-git clone https://github.com/EkoSight/Jira.git && cd Jira
-npm install
+psql -U postgres -c "CREATE DATABASE taskflow;"
+```
 
+**2. Clone, enter the folder, and install.**
+
+```bash
+git clone https://github.com/EkoSight/Jira.git
+cd Jira
+npm install
+```
+
+That `cd` matters — every `npm run …` below has to run inside the `Jira` folder,
+or npm reports `Could not read package.json`.
+
+**3. Configure.**
+
+Copy the example environment file:
+
+```bash
 cp server/.env.example server/.env
 ```
+
+On Windows CMD, use `copy server\.env.example server\.env` instead.
 
 Open `server/.env` and set `PGUSER`, `PGPASSWORD` and `PGDATABASE` to match your
 machine. Generate a `JWT_SECRET` while you are there:
@@ -84,18 +104,22 @@ machine. Generate a `JWT_SECRET` while you are there:
 node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ```
 
-**3. Create the tables and the first account.**
+**4. Create the tables and the first account.**
 
 ```bash
-npm run migrate          # creates the taskflow schema and tables
-npm run seed             # departments, statuses, default rules, admin account
+npm run migrate
+npm run seed
 ```
+
+`migrate` creates the schema and tables; `seed` adds the departments, board
+statuses, default black mark rules and the admin account, and prints the login it
+created.
 
 Set `SEED_DEMO=true` in `server/.env` before seeding to also load a demo team and
 16 sample cards — the quickest way to see the dashboard and black marks with real
 numbers in them.
 
-**4. Start it.**
+**5. Start it.**
 
 ```bash
 npm run dev
@@ -125,17 +149,36 @@ need HTTPS or `localhost`.
 ### Production-style run (single server)
 
 ```bash
-npm run build            # builds the PWA into client/dist
-npm start                # Express serves the API and the built PWA together
+npm run build
+npm start
 ```
 
-Everything is then on <http://localhost:4000> with the service worker active.
+`build` compiles the PWA into `client/dist`; `start` serves the API and that build
+together on <http://localhost:4000>, with the service worker active.
 
 ### If it will not start
 
-The server explains the common failures rather than printing a stack trace — a
-database that is not running, a wrong password, or a database that does not exist
-yet each come with the command that fixes them.
+Failures explain themselves rather than printing a stack trace. A database that is
+not running, credentials that are rejected, a database that does not exist, and
+tables that have not been created yet each come back with the command that fixes
+them — at startup in the terminal, and on the sign-in screen if it happens while
+the app is running.
+
+| What you see | What it means |
+|---|---|
+| `Could not read package.json` | You are not inside the `Jira` folder — `cd Jira` first |
+| `Cannot reach the database` | PostgreSQL is not running |
+| `The TaskFlow tables are missing` | Run `npm run migrate` then `npm run seed` |
+| `The database "taskflow" does not exist` | Create it: `createdb taskflow` |
+| `PostgreSQL rejected the credentials` | Fix `PGUSER` / `PGPASSWORD` in `server/.env` |
+| Sign-in says email or password is incorrect | The admin password has already been changed — see below |
+
+To reset the admin account back to the seeded password:
+
+```bash
+psql -d taskflow -c "DELETE FROM taskflow.users WHERE email = 'admin@ekosight.com';"
+npm run seed
+```
 
 ### Tests
 
