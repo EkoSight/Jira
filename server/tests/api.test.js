@@ -486,6 +486,36 @@ test('comments are recorded against the task', async (t) => {
   assert.equal(detail.body.comments[0].body, 'Vendor quotes are in.');
 });
 
+test('a setup problem answers with the fix, not a bare 500', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const { errorHandler } = await import('../src/middleware/error.js');
+  const cases = [
+    [{ code: '42P01' }, /npm run migrate/],
+    [{ code: 'ECONNREFUSED' }, /Is PostgreSQL running/],
+    [{ code: '3D000' }, /createdb/],
+    [{ code: '28P01' }, /PGUSER and PGPASSWORD/],
+  ];
+
+  for (const [error, expected] of cases) {
+    let status;
+    let payload;
+    const res = {
+      status(code) {
+        status = code;
+        return this;
+      },
+      json(body) {
+        payload = body;
+      },
+    };
+    errorHandler(error, {}, res, () => {});
+    assert.equal(status, 503, `${error.code} should be a 503`);
+    assert.match(payload.error, expected);
+    assert.equal(payload.setup_required, true);
+  }
+});
+
 test('archiving hides a card from the default list', async (t) => {
   if (skipIfUnavailable(t)) return;
 
