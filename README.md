@@ -64,7 +64,20 @@ native build steps.
 
 macOS: `brew services start postgresql`
 Linux: `sudo service postgresql start`
-Windows: start the **postgresql** service from Services, or use the pgAdmin tray icon.
+
+On **Windows**, starting the service needs administrator rights — running
+`net start postgresql-x64-18` from an ordinary prompt fails with
+`System error 5 … Access is denied`. Either:
+
+- press the Windows key, type `cmd`, right-click **Command Prompt** →
+  **Run as administrator**, then `net start postgresql-x64-18` (use your own
+  version number), or
+- press `Win+R`, run `services.msc`, find `postgresql-x64-…`, right-click →
+  **Start**. Set **Startup type** to **Automatic** in its Properties so it comes
+  up with Windows from now on.
+
+`npm run doctor` detects the exact service name installed on your machine and
+prints the command for it.
 
 ```bash
 createdb taskflow

@@ -5,8 +5,8 @@
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import pg from 'pg';
 import { config } from '../config.js';
 import { closePool, query } from './pool.js';
 import { explainDatabaseError, describeError, rootCause } from '../lib/dbErrors.js';
@@ -22,6 +22,41 @@ const nextSteps = (...lines) => {
   for (const line of lines) console.log(`  ${line}`);
   console.log('');
 };
+
+/**
+ * On Windows, find the installed PostgreSQL service so the advice can name it
+ * exactly rather than guessing a version number.
+ */
+function windowsPostgresService() {
+  if (process.platform !== 'win32') return null;
+  try {
+    const output = execSync('sc query type= service state= all', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 10_000,
+    });
+    const match = output.match(/SERVICE_NAME:\s*(postgresql[-\w]*)/i);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Where the PostgreSQL command line tools live, when they are not on PATH. */
+function windowsPsqlHint() {
+  if (process.platform !== 'win32') return null;
+  const base = 'C:\\Program Files\\PostgreSQL';
+  try {
+    const versions = fs
+      .readdirSync(base)
+      .filter((name) => /^\d+$/.test(name))
+      .sort((a, b) => Number(b) - Number(a));
+    if (versions.length) return `${base}\\${versions[0]}\\bin`;
+  } catch {
+    /* not installed there */
+  }
+  return `${base}\\<version>\\bin`;
+}
 
 /** Is anything listening on the database port at all? */
 const portOpen = (host, port, timeout = 2500) =>
@@ -69,15 +104,40 @@ async function main() {
       ok(`something is listening on ${host}:${port}`);
     } else {
       bad(`nothing is listening on ${host}:${port} — PostgreSQL is not running`);
+
+      const service = windowsPostgresService();
+      if (service) {
+        return nextSteps(
+          `The "${service}" service is installed but not running. Starting it needs`,
+          'administrator rights — a normal prompt fails with "Access is denied".',
+          '',
+          '  Press the Windows key, type cmd, then right-click "Command Prompt"',
+          '  and choose "Run as administrator". In that window:',
+          '',
+          `      net start ${service}`,
+          '',
+          '  Or without the command line: Win+R, services.msc, find',
+          `  "${service}", right-click, Start.`,
+          '',
+          '  To have it start with Windows from now on, open its Properties in',
+          '  services.msc and set Startup type to Automatic.',
+        );
+      }
+
+      if (process.platform === 'win32') {
+        return nextSteps(
+          'No PostgreSQL service was found. Install it from',
+          'https://www.postgresql.org/download/windows/ and note the password you',
+          'set for the "postgres" user — it goes in server/.env as PGPASSWORD.',
+        );
+      }
+
       return nextSteps(
-        'Windows:  open Services (Win+R, services.msc), start "postgresql-x64-…"',
-        '          or from an admin prompt:  net start postgresql-x64-16',
-        'macOS:    brew services start postgresql',
-        'Linux:    sudo service postgresql start',
+        'macOS:  brew services start postgresql',
+        'Linux:  sudo service postgresql start',
         '',
-        'Not installed yet? Get it from https://www.postgresql.org/download/',
-        'and note the password you set for the "postgres" user during setup —',
-        'that goes in server/.env as PGPASSWORD.',
+        'Not installed yet? See https://www.postgresql.org/download/ and note the',
+        'password you set for the "postgres" user — it goes in server/.env as PGPASSWORD.',
       );
     }
   }
@@ -91,13 +151,14 @@ async function main() {
     bad(`cannot connect: ${describeError(err)}`);
 
     if (cause?.code === '3D000') {
+      const psqlHint = windowsPsqlHint();
       return nextSteps(
         `The database "${database}" does not exist yet. Create it with:`,
         '',
         `  psql -U ${user} -c "CREATE DATABASE ${database};"`,
-        '',
-        'On Windows, psql lives in C:\\Program Files\\PostgreSQL\\16\\bin if it is not on your PATH,',
-        'or you can create the database from pgAdmin.',
+        ...(psqlHint
+          ? ['', `If psql is not recognised, it lives in ${psqlHint}`, 'or you can create the database from pgAdmin.']
+          : []),
       );
     }
     if (cause?.code === '28P01' || cause?.code === '28000') {
