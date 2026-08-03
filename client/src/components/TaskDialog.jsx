@@ -2,7 +2,14 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, ConfirmButton, Field, Icon, Modal, Spinner } from './ui.jsx';
-import { Attachments, Collaborators, Subtasks } from './TaskExtras.jsx';
+import {
+  Attachments,
+  Collaborators,
+  PendingAttachments,
+  PendingCollaborators,
+  Subtasks,
+  flushPendingAttachments,
+} from './TaskExtras.jsx';
 import {
   PRIORITIES,
   PRIORITY_LABEL,
@@ -35,34 +42,42 @@ const blankTask = (defaults = {}) => ({
  * only learn the layout once.
  */
 export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenTask }) {
-  const isNew = !taskId;
+  // once a new card is created the dialog stays open on it, so attachments,
+  // sub tasks and the checklist are reachable without hunting for it again
+  const [activeId, setActiveId] = useState(taskId ?? null);
+  const isNew = !activeId;
+
   const { user, can } = useAuth();
   const { departments, statuses, users, settings } = useRefData();
   const toast = useToast();
 
-  const [loading, setLoading] = useState(!isNew);
+  const [loading, setLoading] = useState(Boolean(taskId));
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(() => blankTask(defaults));
   const [comment, setComment] = useState('');
   const [checklistDraft, setChecklistDraft] = useState('');
   const [tab, setTab] = useState('details');
+  // staged while the task does not exist yet
+  const [pending, setPending] = useState([]);
+  const [pendingTags, setPendingTags] = useState([]);
 
   const taskTypes = settings?.taskTypes || ['task'];
 
   const reload = () => {
+    if (!activeId) return;
     api
-      .task(taskId)
+      .task(activeId)
       .then(setDetail)
       .catch((err) => toast.error(err));
   };
 
   useEffect(() => {
-    if (isNew) return;
+    if (!activeId) return;
     let cancelled = false;
     setLoading(true);
     api
-      .task(taskId)
+      .task(activeId)
       .then((data) => {
         if (cancelled) return;
         setDetail(data);
@@ -87,7 +102,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  }, [activeId]);
 
   const set = (key) => (event) => {
     const value = event?.target ? event.target.value : event;
@@ -122,12 +137,30 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     setSaving(true);
     try {
       if (isNew) {
-        const { task: created } = await api.createTask(payload());
-        toast.success(`${created.ref} created`);
+        const body = payload();
+        if (pendingTags.length) body.collaborator_ids = pendingTags;
+
+        const { task: created } = await api.createTask(body);
+
+        // the card exists now, so anything staged can finally be sent
+        const failed = pending.length ? await flushPendingAttachments(created.id, pending) : 0;
+        if (failed > 0) {
+          toast.error(`${created.ref} created, but ${failed} attachment(s) could not be added`);
+        } else {
+          toast.success(
+            pending.length
+              ? `${created.ref} created with ${pending.length} attachment(s)`
+              : `${created.ref} created`,
+          );
+        }
+
+        setPending([]);
+        setPendingTags([]);
         onSaved?.(created);
-        onClose();
+        // keep the dialog open on the new card so sub tasks and files are to hand
+        setActiveId(created.id);
       } else {
-        const { task: updated } = await api.updateTask(taskId, payload());
+        const { task: updated } = await api.updateTask(activeId, payload());
         toast.success('Saved');
         setDetail((current) => ({ ...current, task: updated }));
         onSaved?.(updated);
@@ -142,7 +175,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const postComment = async () => {
     if (!comment.trim()) return;
     try {
-      const { comment: created } = await api.addComment(taskId, comment.trim());
+      const { comment: created } = await api.addComment(activeId, comment.trim());
       setDetail((current) => ({ ...current, comments: [...current.comments, created] }));
       setComment('');
     } catch (err) {
@@ -153,7 +186,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const addChecklistItem = async () => {
     if (!checklistDraft.trim()) return;
     try {
-      const { item } = await api.addChecklistItem(taskId, checklistDraft.trim());
+      const { item } = await api.addChecklistItem(activeId, checklistDraft.trim());
       setDetail((current) => ({ ...current, checklist: [...current.checklist, item] }));
       setChecklistDraft('');
     } catch (err) {
@@ -163,7 +196,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
   const toggleChecklistItem = async (item) => {
     try {
-      const { item: updated } = await api.updateChecklistItem(taskId, item.id, { is_done: !item.is_done });
+      const { item: updated } = await api.updateChecklistItem(activeId, item.id, { is_done: !item.is_done });
       setDetail((current) => ({
         ...current,
         checklist: current.checklist.map((c) => (c.id === updated.id ? updated : c)),
@@ -175,7 +208,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
   const archive = async () => {
     try {
-      await api.archiveTask(taskId);
+      await api.archiveTask(activeId);
       toast.success('Task archived');
       onSaved?.(null);
       onClose();
@@ -215,7 +248,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
   return (
     <Modal title={title} onClose={onClose} footer={footer} size="lg">
-      {loading ? (
+      {/* a freshly created card has an id but no loaded detail yet, so wait for it
+          rather than rendering the sections that read from it */}
+      {loading || (!isNew && !detail) ? (
         <Spinner />
       ) : (
         <div className="stack">
@@ -397,6 +432,14 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 />
               </Field>
 
+              {isNew && <PendingAttachments pending={pending} onChange={setPending} />}
+              {isNew && <PendingCollaborators selected={pendingTags} onChange={setPendingTags} />}
+              {isNew && (
+                <div className="small muted">
+                  Sub tasks, comments and the checklist open up as soon as the card is created.
+                </div>
+              )}
+
               {!isNew && (
                 <Subtasks
                   task={detail.task}
@@ -409,7 +452,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
               {!isNew && (
                 <Attachments
-                  taskId={taskId}
+                  taskId={activeId}
                   attachments={detail.attachments}
                   canEdit={canEdit}
                   onChange={(attachments) => setDetail((c) => ({ ...c, attachments }))}
@@ -418,7 +461,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
               {!isNew && (
                 <Collaborators
-                  taskId={taskId}
+                  taskId={activeId}
                   collaborators={detail.collaborators}
                   canEdit={canEdit}
                   onChange={(collaborators) => setDetail((c) => ({ ...c, collaborators }))}
@@ -441,7 +484,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                         type="button"
                         className="btn btn-ghost btn-sm"
                         onClick={async () => {
-                          await api.deleteChecklistItem(taskId, item.id);
+                          await api.deleteChecklistItem(activeId, item.id);
                           setDetail((c) => ({ ...c, checklist: c.checklist.filter((i) => i.id !== item.id) }));
                         }}
                         aria-label="Remove item"

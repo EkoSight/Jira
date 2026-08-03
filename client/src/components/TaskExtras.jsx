@@ -227,6 +227,144 @@ export function Attachments({ taskId, attachments, onChange, canEdit }) {
   );
 }
 
+/**
+ * The same links-and-files panel, for a task that does not exist yet.
+ * Everything is held in the browser and sent as soon as the card is created.
+ */
+export function PendingAttachments({ pending, onChange }) {
+  const toast = useToast();
+  const [linkUrl, setLinkUrl] = useState('');
+  const [linkTitle, setLinkTitle] = useState('');
+
+  const addLink = () => {
+    const url = linkUrl.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) {
+      return toast.error('Links must start with http:// or https://');
+    }
+    onChange([...pending, { type: 'link', url, title: linkTitle.trim() || undefined }]);
+    setLinkUrl('');
+    setLinkTitle('');
+  };
+
+  const addFiles = (files) => {
+    const additions = [...files].map((file) => ({ type: 'file', file }));
+    onChange([...pending, ...additions]);
+  };
+
+  const remove = (index) => onChange(pending.filter((_, i) => i !== index));
+
+  return (
+    <div className="card card-pad stack-sm">
+      <div className="row-between">
+        <h3>Links & files</h3>
+        {pending.length > 0 && (
+          <span className="small muted">{pending.length} will be attached on save</span>
+        )}
+      </div>
+
+      {pending.map((item, index) => (
+        <div key={`${item.type}-${index}`} className="row" style={{ gap: 8 }}>
+          <Icon name={item.type === 'link' ? 'link' : 'paperclip'} size={14} />
+          <span className="grow truncate">{item.title || item.url || item.file.name}</span>
+          {item.type === 'link' && (
+            <Badge dot={PROVIDER_COLOR[detectProviderClientSide(item.url)]}>
+              {PROVIDER_LABEL[detectProviderClientSide(item.url)]}
+            </Badge>
+          )}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => remove(index)} aria-label="Remove">
+            <Icon name="close" size={13} />
+          </button>
+        </div>
+      ))}
+
+      {pending.length === 0 && (
+        <div className="small muted">
+          Paste a Google Doc, Sheet or Slides link, or attach an image or PDF. They are added when you create the task.
+        </div>
+      )}
+
+      <div className="row" style={{ gap: 6 }}>
+        <input
+          className="input grow"
+          placeholder="Paste a link — Google Docs, Sheets, Slides, Drive…"
+          value={linkUrl}
+          onChange={(e) => setLinkUrl(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addLink();
+            }
+          }}
+        />
+        <input
+          className="input"
+          style={{ maxWidth: 150 }}
+          placeholder="Label (optional)"
+          value={linkTitle}
+          onChange={(e) => setLinkTitle(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addLink();
+            }
+          }}
+        />
+        <button type="button" className="btn" onClick={addLink} disabled={!linkUrl.trim()}>
+          Add
+        </button>
+      </div>
+
+      <label className="btn btn-sm" style={{ alignSelf: 'flex-start', cursor: 'pointer' }}>
+        <Icon name="image" size={14} />
+        Attach an image or file
+        <input
+          type="file"
+          hidden
+          multiple
+          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt"
+          onChange={(e) => {
+            addFiles(e.target.files || []);
+            e.target.value = '';
+          }}
+        />
+      </label>
+    </div>
+  );
+}
+
+/** Mirrors the server's provider detection so the staged list looks the same. */
+function detectProviderClientSide(url = '') {
+  if (/docs\.google\.com\/document/i.test(url)) return 'google-docs';
+  if (/docs\.google\.com\/spreadsheets/i.test(url)) return 'google-sheets';
+  if (/docs\.google\.com\/presentation/i.test(url)) return 'google-slides';
+  if (/docs\.google\.com\/forms/i.test(url)) return 'google-forms';
+  if (/drive\.google\.com/i.test(url)) return 'google-drive';
+  if (/dropbox\.com/i.test(url)) return 'dropbox';
+  if (/sharepoint\.com|onedrive\.live\.com/i.test(url)) return 'onedrive';
+  if (/notion\.so/i.test(url)) return 'notion';
+  if (/figma\.com/i.test(url)) return 'figma';
+  if (/github\.com/i.test(url)) return 'github';
+  return 'link';
+}
+
+/**
+ * Uploads everything staged during creation. Returns how many failed so the
+ * caller can say so rather than silently dropping an attachment.
+ */
+export async function flushPendingAttachments(taskId, pending) {
+  let failed = 0;
+  for (const item of pending) {
+    try {
+      if (item.type === 'link') await api.addTaskLink(taskId, item.url, item.title);
+      else await api.uploadTaskFile(taskId, item.file, item.title);
+    } catch {
+      failed += 1;
+    }
+  }
+  return failed;
+}
+
 /** People tagged on the card — they can see it whatever department they are in. */
 export function Collaborators({ taskId, collaborators, onChange, canEdit }) {
   const { users } = useRefData();
@@ -300,6 +438,65 @@ export function Collaborators({ taskId, collaborators, onChange, canEdit }) {
           ))}
         </select>
       )}
+    </div>
+  );
+}
+
+/** Tagging on a card that does not exist yet — sent with the create request. */
+export function PendingCollaborators({ selected, onChange }) {
+  const { users } = useRefData();
+  const [adding, setAdding] = useState('');
+
+  const chosen = users.filter((u) => selected.includes(u.id));
+  const available = users.filter((u) => !selected.includes(u.id));
+
+  return (
+    <div className="card card-pad stack-sm">
+      <div className="row-between">
+        <h3>Tagged people</h3>
+        <span className="small muted">see it across departments</span>
+      </div>
+
+      {chosen.length === 0 && (
+        <div className="small muted">
+          Tag someone from another team and this card appears for them too.
+        </div>
+      )}
+
+      <div className="row wrap" style={{ gap: 6 }}>
+        {chosen.map((person) => (
+          <span key={person.id} className="badge" style={{ height: 26, paddingLeft: 3 }}>
+            <Avatar name={person.full_name} color={person.avatar_color} size={20} />
+            {person.full_name}
+            {person.department_name && <span className="muted">· {person.department_name}</span>}
+            <button
+              type="button"
+              onClick={() => onChange(selected.filter((id) => id !== person.id))}
+              style={{ border: 0, background: 'none', cursor: 'pointer', padding: 0, color: 'inherit' }}
+              aria-label={`Remove ${person.full_name}`}
+            >
+              <Icon name="close" size={11} />
+            </button>
+          </span>
+        ))}
+      </div>
+
+      <select
+        className="select"
+        value={adding}
+        onChange={(e) => {
+          if (e.target.value) onChange([...selected, Number(e.target.value)]);
+          setAdding('');
+        }}
+      >
+        <option value="">Tag someone…</option>
+        {available.map((u) => (
+          <option key={u.id} value={u.id}>
+            {u.full_name}
+            {u.department_name ? ` · ${u.department_name}` : ''}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

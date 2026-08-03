@@ -582,6 +582,37 @@ test('a tagged person sees a task from another department', async (t) => {
   assert.equal(removed.status, 404);
 });
 
+test('a task can be created with people already tagged on it', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // this is the path the "New task" screen uses, so tagging works at creation
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Tagged from the start',
+      department_id: ids.department,
+      collaborator_ids: [ids.member, ids.outsider],
+    },
+  });
+  assert.equal(created.status, 201);
+
+  const detail = await call('GET', `/tasks/${created.body.task.id}`, { token: tokens.admin });
+  assert.deepEqual(
+    detail.body.collaborators.map((c) => c.id).sort(),
+    [ids.member, ids.outsider].sort(),
+  );
+
+  // and the outsider can see it immediately, without a second request
+  const asOutsider = await call('GET', `/tasks/${created.body.task.id}`, { token: tokens.outsider });
+  assert.equal(asOutsider.status, 200);
+
+  const { rows } = await query(
+    `SELECT COUNT(*)::int AS n FROM notifications WHERE task_id = $1 AND type = 'tagged'`,
+    [created.body.task.id],
+  );
+  assert.equal(rows[0].n, 2, 'both tagged people are notified');
+});
+
 test('the follower can see and move the task, but the owner keeps the black mark', async (t) => {
   if (skipIfUnavailable(t)) return;
 
