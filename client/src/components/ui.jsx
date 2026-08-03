@@ -106,6 +106,15 @@ const PATHS = {
   menu: 'M4 7h16M4 12h16M4 17h16',
   trash: 'M4 7h16M9 7V5h6v2M6 7l1 14h10l1-14',
   edit: 'M4 20h4L20 8l-4-4L4 16v4z',
+  note: 'M5 3h14v13l-5 5H5V3zM19 16h-5v5',
+  trophy: 'M7 4h10v5a5 5 0 0 1-10 0V4zM7 6H4v2a3 3 0 0 0 3 3M17 6h3v2a3 3 0 0 1-3 3M9 19h6M12 14v5',
+  bulb: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5V16h8v-2.5A6 6 0 0 0 12 3z',
+  link: 'M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1',
+  image: 'M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6',
+  paperclip: 'M21 11l-9 9a5 5 0 0 1-7-7l9-9a3.5 3.5 0 0 1 5 5l-9 9a2 2 0 0 1-3-3l8-8',
+  sound: 'M4 9v6h4l5 4V5L8 9H4zM17 8a5 5 0 0 1 0 8',
+  mute: 'M4 9v6h4l5 4V5L8 9H4zM17 9l4 6M21 9l-4 6',
+  subtask: 'M4 5h8M4 5v8a3 3 0 0 0 3 3h5M16 9l4 4-4 4',
 };
 
 export function Icon({ name, size = 16, style }) {

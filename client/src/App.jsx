@@ -9,6 +9,9 @@ import MyTasks from './pages/MyTasks.jsx';
 import Team from './pages/Team.jsx';
 import BlackMarks from './pages/BlackMarks.jsx';
 import Settings from './pages/Settings.jsx';
+import Notes from './pages/Notes.jsx';
+import FeatureRequests from './pages/FeatureRequests.jsx';
+import Recognition from './pages/Recognition.jsx';
 
 function Protected({ permission, children }) {
   const { can } = useAuth();
@@ -39,6 +42,23 @@ function Shell() {
           element={
             <Protected permission="blackmark.view">
               <BlackMarks />
+            </Protected>
+          }
+        />
+        <Route
+          path="/notes"
+          element={
+            <Protected permission="note.use">
+              <Notes />
+            </Protected>
+          }
+        />
+        <Route path="/recognition" element={<Recognition />} />
+        <Route
+          path="/feature-requests"
+          element={
+            <Protected permission="feature.request">
+              <FeatureRequests />
             </Protected>
           }
         />

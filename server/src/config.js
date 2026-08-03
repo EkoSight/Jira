@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import path from 'node:path';
 
 const bool = (value, fallback) => {
   if (value === undefined || value === '') return fallback;
@@ -40,6 +41,12 @@ export const config = {
       .split(',')
       .map((o) => o.trim())
       .filter(Boolean),
+  },
+
+  uploads: {
+    // Keep this OUTSIDE the checked-out code so a deploy never wipes attachments.
+    dir: process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads'),
+    maxSizeMb: int(process.env.UPLOAD_MAX_MB, 10),
   },
 
   jobs: {

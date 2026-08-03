@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, ConfirmButton, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Attachments, Collaborators, Subtasks } from './TaskExtras.jsx';
 import {
   PRIORITIES,
   PRIORITY_LABEL,
@@ -22,6 +23,7 @@ const blankTask = (defaults = {}) => ({
   priority: 'medium',
   task_type: 'task',
   assignee_id: defaults.assignee_id || '',
+  follower_id: '',
   due_date: '',
   estimate_hours: '',
   progress: 0,
@@ -32,7 +34,7 @@ const blankTask = (defaults = {}) => ({
  * One dialog serves both "new card" and "open card" — the same fields, so people
  * only learn the layout once.
  */
-export default function TaskDialog({ taskId, defaults, onClose, onSaved }) {
+export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenTask }) {
   const isNew = !taskId;
   const { user, can } = useAuth();
   const { departments, statuses, users, settings } = useRefData();
@@ -47,6 +49,13 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved }) {
   const [tab, setTab] = useState('details');
 
   const taskTypes = settings?.taskTypes || ['task'];
+
+  const reload = () => {
+    api
+      .task(taskId)
+      .then(setDetail)
+      .catch((err) => toast.error(err));
+  };
 
   useEffect(() => {
     if (isNew) return;
@@ -65,6 +74,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved }) {
           priority: data.task.priority,
           task_type: data.task.task_type,
           assignee_id: data.task.assignee_id || '',
+          follower_id: data.task.follower_id || '',
           due_date: toDateTimeLocal(data.task.due_date),
           estimate_hours: data.task.estimate_hours ?? '',
           progress: data.task.progress,
@@ -95,6 +105,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved }) {
       priority: form.priority,
       task_type: form.task_type,
       assignee_id: form.assignee_id ? Number(form.assignee_id) : null,
+      follower_id: form.follower_id ? Number(form.follower_id) : null,
       due_date: fromDateTimeLocal(form.due_date),
       estimate_hours: form.estimate_hours === '' ? null : Number(form.estimate_hours),
       progress: Number(form.progress) || 0,
@@ -274,11 +285,31 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved }) {
                   </select>
                 </Field>
 
-                <Field label="Assignee" hint={can('task.assign') ? undefined : 'You can only assign work to yourself'}>
+                <Field
+                  label="Task owner"
+                  hint={can('task.assign') ? 'Accountable for the deadline' : 'You can only assign work to yourself'}
+                >
                   <select className="select" value={form.assignee_id} onChange={set('assignee_id')} disabled={!canEdit}>
                     <option value="">Unassigned</option>
                     {users
                       .filter((u) => can('task.assign') || u.id === user.id)
+                      .map((u) => (
+                        <option key={u.id} value={u.id}>
+                          {u.full_name}
+                          {u.department_name ? ` · ${u.department_name}` : ''}
+                        </option>
+                      ))}
+                  </select>
+                </Field>
+
+                <Field
+                  label="Second person (follower)"
+                  hint="Works on it too, but the owner carries the deadline"
+                >
+                  <select className="select" value={form.follower_id} onChange={set('follower_id')} disabled={!canEdit}>
+                    <option value="">Nobody</option>
+                    {users
+                      .filter((u) => String(u.id) !== String(form.assignee_id))
                       .map((u) => (
                         <option key={u.id} value={u.id}>
                           {u.full_name}
@@ -365,6 +396,34 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved }) {
                   placeholder="vendor, q3, escalation"
                 />
               </Field>
+
+              {!isNew && (
+                <Subtasks
+                  task={detail.task}
+                  subtasks={detail.subtasks}
+                  canEdit={canEdit}
+                  onOpen={(id) => onOpenTask?.(id)}
+                  onChanged={reload}
+                />
+              )}
+
+              {!isNew && (
+                <Attachments
+                  taskId={taskId}
+                  attachments={detail.attachments}
+                  canEdit={canEdit}
+                  onChange={(attachments) => setDetail((c) => ({ ...c, attachments }))}
+                />
+              )}
+
+              {!isNew && (
+                <Collaborators
+                  taskId={taskId}
+                  collaborators={detail.collaborators}
+                  canEdit={canEdit}
+                  onChange={(collaborators) => setDetail((c) => ({ ...c, collaborators }))}
+                />
+              )}
 
               {!isNew && (
                 <div className="card card-pad stack-sm">

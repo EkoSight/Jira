@@ -9,6 +9,9 @@ import blackmarkRoutes from './routes/blackmarks.js';
 import reportRoutes from './routes/reports.js';
 import settingsRoutes from './routes/settings.js';
 import notificationRoutes from './routes/notifications.js';
+import noteRoutes from './routes/notes.js';
+import featureRequestRoutes from './routes/featureRequests.js';
+import recognitionRoutes from './routes/recognition.js';
 
 /**
  * The whole TaskFlow API as a single Express router.
@@ -34,6 +37,9 @@ export function createTaskFlowRouter() {
   router.use('/reports', reportRoutes);
   router.use('/settings', settingsRoutes);
   router.use('/notifications', notificationRoutes);
+  router.use('/notes', noteRoutes);
+  router.use('/feature-requests', featureRequestRoutes);
+  router.use('/recognition', recognitionRoutes);
 
   return router;
 }

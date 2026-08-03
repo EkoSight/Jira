@@ -39,6 +39,29 @@ React (Vite) PWA · Node.js + Express · PostgreSQL · JavaScript throughout.
   flags anyone over your limit (3 by default) so action can be taken.
 - Marks can be waived with a reason, and the waiver is kept on the record.
 
+**Working together on a card**
+- Two people per task: an **owner** who is accountable for the deadline, and a
+  **follower** who works on it alongside them. Black marks stay with the owner.
+- **Tag anyone from any department** — a tagged person sees and can comment on the
+  card even when it belongs to a team they are not in.
+- **Sub tasks** are real cards. Completing them drives the parent's progress, so a
+  parent can never claim to be further along than its children.
+- **Attach Google Docs, Sheets, Slides and Drive links**, or upload images and
+  documents. Uploads are served only to people allowed to see the task.
+
+**Alerts**
+- A chime and a desktop notification the moment work is assigned to you, or you
+  are tagged, or a black mark is recorded. Mutable per device.
+
+**Notes, ideas and recognition**
+- A private **notepad** for each person — for the half-formed things you want to
+  refer back to. Nobody else can read them, not even an admin.
+- **Feature requests** from anyone, with voting, so the admin team can see what
+  people actually want and reply to them.
+- **Performer of the month**: a transparent score from completed work, on-time
+  delivery and black marks, plus **kudos** anyone can give. The winner gets a
+  shareable award card they can download and post.
+
 **Access control**
 - Roles: admin, manager, member, viewer — each with sensible defaults.
 - Per-person overrides on top of the role, so one team lead can be given a single
@@ -264,6 +287,8 @@ The ones that matter most:
 | `API_PREFIX` | `/api/taskflow` | Where the API mounts |
 | `JWT_SECRET` | — | Set this in production |
 | `TRUST_HOST_AUTH` | `false` | Set true when embedded, to reuse the host application's session instead of TaskFlow's own login |
+| `UPLOAD_DIR` | `./uploads` | Where attachments are stored. **On a server, point this outside the deployment folder** or a redeploy can delete them |
+| `UPLOAD_MAX_MB` | `10` | Largest attachment accepted |
 | `ENABLE_SCANNER` | `true` | Background deadline / black mark scan |
 | `SCANNER_INTERVAL_MINUTES` | `15` | How often that scan runs |
 
@@ -278,3 +303,18 @@ in the host app plus a decision about authentication.
 See **[docs/INTEGRATION.md](docs/INTEGRATION.md)** for the full checklist,
 including how to map existing employees onto TaskFlow members and how to serve the
 PWA from a sub-path of the main site.
+
+## Deploying an update
+
+Already running on a server? **[docs/DEPLOY.md](docs/DEPLOY.md)** covers the
+release routine, and why an update never destroys existing tasks or users:
+
+```bash
+git pull && npm install && npm run build && npm run migrate
+sudo systemctl restart taskflow
+```
+
+Migrations are additive and recorded, so re-running them is a no-op. A test in the
+suite reads every migration and fails the build if one contains `DROP`, `TRUNCATE`
+or `DELETE`, and another applies the migrations to a database full of tasks and
+proves every row is unchanged.

@@ -534,6 +534,274 @@ test('an error explanation is never empty, whatever the shape of the error', asy
   assert.ok(describeError(undefined).length > 0);
 });
 
+// ---------------------------------------------------------------- collaboration
+
+test('a tagged person sees a task from another department', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // a second department with its own member, who shares nothing with ids.department
+  await query(`INSERT INTO departments (key, name, position) VALUES ('OTH', 'Other Team', 2)`);
+  const { rows: dept } = await query(`SELECT id FROM departments WHERE key = 'OTH'`);
+  const { rows: outsider } = await query(
+    `INSERT INTO users (full_name, email, password_hash, role, department_id, must_change_password)
+     VALUES ('Outside Person', 'outsider@test.local', $1, 'member', $2, FALSE) RETURNING id`,
+    [await hashPassword('Password123!'), dept[0].id],
+  );
+  ids.outsider = outsider[0].id;
+
+  const login = await call('POST', '/auth/login', {
+    body: { email: 'outsider@test.local', password: 'Password123!' },
+  });
+  tokens.outsider = login.body.token;
+
+  const secret = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Work in another department', department_id: ids.department },
+  });
+  const secretId = secret.body.task.id;
+
+  const before = await call('GET', `/tasks/${secretId}`, { token: tokens.outsider });
+  assert.equal(before.status, 404, 'not visible before being tagged');
+
+  const tagged = await call('POST', `/tasks/${secretId}/collaborators`, {
+    token: tokens.admin,
+    body: { user_id: ids.outsider },
+  });
+  assert.equal(tagged.status, 201);
+
+  const after = await call('GET', `/tasks/${secretId}`, { token: tokens.outsider });
+  assert.equal(after.status, 200, 'visible once tagged, despite the department');
+  assert.equal(after.body.task.id, secretId);
+
+  const list = await call('GET', '/tasks', { token: tokens.outsider });
+  assert.ok(list.body.tasks.some((task) => task.id === secretId), 'and it appears in their list');
+
+  // and it goes away again when the tag is removed
+  await call('DELETE', `/tasks/${secretId}/collaborators/${ids.outsider}`, { token: tokens.admin });
+  const removed = await call('GET', `/tasks/${secretId}`, { token: tokens.outsider });
+  assert.equal(removed.status, 404);
+});
+
+test('the follower can see and move the task, but the owner keeps the black mark', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const task = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Two people on this one',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      follower_id: ids.outsider,
+      due_date: daysFromNow(-3),
+    },
+  });
+  const taskId = task.body.task.id;
+  assert.equal(task.body.task.follower_name, 'Outside Person');
+
+  const seen = await call('GET', `/tasks/${taskId}`, { token: tokens.outsider });
+  assert.equal(seen.status, 200, 'the follower can open it');
+  assert.equal(seen.body.can_edit, true, 'and can work on it');
+
+  await query(`UPDATE blackmark_rules SET is_active = FALSE`);
+  await call('POST', '/blackmarks/rules', {
+    token: tokens.admin,
+    body: { name: 'Owner accountability', trigger_type: 'deadline_missed', points: 1, grace_hours: 0 },
+  });
+
+  const scan = await runBlackMarkScan();
+  const mark = scan.created.find((m) => m.task_id === taskId);
+  assert.ok(mark, 'the missed deadline is recorded');
+  assert.equal(mark.user_id, ids.member, 'against the owner, not the follower');
+});
+
+test('sub tasks drive the parent progress', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const parent = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Parent with steps', department_id: ids.department },
+  });
+  const parentId = parent.body.task.id;
+
+  const children = [];
+  for (const title of ['Step one', 'Step two', 'Step three', 'Step four']) {
+    const child = await call('POST', '/tasks', {
+      token: tokens.admin,
+      body: { title, department_id: ids.department, parent_task_id: parentId },
+    });
+    children.push(child.body.task.id);
+  }
+
+  const fresh = await call('GET', `/tasks/${parentId}`, { token: tokens.admin });
+  assert.equal(fresh.body.subtasks.length, 4);
+  assert.equal(fresh.body.task.effective_progress, 0);
+
+  await call('POST', `/tasks/${children[0]}/move`, { token: tokens.admin, body: { status_id: ids.done } });
+  await call('POST', `/tasks/${children[1]}/move`, { token: tokens.admin, body: { status_id: ids.done } });
+
+  const halfway = await call('GET', `/tasks/${parentId}`, { token: tokens.admin });
+  assert.equal(halfway.body.task.effective_progress, 50, 'two of four done reads as 50%');
+  assert.equal(halfway.body.task.subtask_done, 2);
+});
+
+test('attachments accept safe links and reject dangerous ones', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const good = await call('POST', `/tasks/${ids.task}/attachments/link`, {
+    token: tokens.admin,
+    body: { url: 'https://docs.google.com/presentation/d/xyz/edit', title: 'Launch deck' },
+  });
+  assert.equal(good.status, 201);
+  assert.equal(good.body.attachment.provider, 'google-slides');
+
+  for (const url of ['javascript:alert(1)', 'data:text/html,<script>', 'file:///etc/passwd', 'not a url']) {
+    const bad = await call('POST', `/tasks/${ids.task}/attachments/link`, {
+      token: tokens.admin,
+      body: { url },
+    });
+    assert.equal(bad.status, 400, `${url} should be rejected`);
+  }
+});
+
+// ---------------------------------------------------------------- notes
+
+test('notes are private to their owner', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const mine = await call('POST', '/notes', {
+    token: tokens.member,
+    body: { title: 'Private thought', body: 'Only I should see this' },
+  });
+  assert.equal(mine.status, 201);
+
+  const asOwner = await call('GET', '/notes', { token: tokens.member });
+  assert.ok(asOwner.body.notes.some((n) => n.id === mine.body.note.id));
+
+  // even an admin cannot see or touch someone else's notes
+  const asAdmin = await call('GET', '/notes', { token: tokens.admin });
+  assert.ok(!asAdmin.body.notes.some((n) => n.id === mine.body.note.id), 'admins do not see other people’s notes');
+
+  const edit = await call('PATCH', `/notes/${mine.body.note.id}`, {
+    token: tokens.admin,
+    body: { title: 'Hijacked' },
+  });
+  assert.equal(edit.status, 404);
+
+  const remove = await call('DELETE', `/notes/${mine.body.note.id}`, { token: tokens.admin });
+  assert.equal(remove.status, 404);
+});
+
+// ---------------------------------------------------------------- feature requests
+
+test('anyone can raise a feature request and vote once', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/feature-requests', {
+    token: tokens.member,
+    body: { title: 'Send reminders on WhatsApp', detail: 'Field staff do not read email', urgency: 'important' },
+  });
+  assert.equal(created.status, 201);
+  const requestId = created.body.request.id;
+
+  const first = await call('POST', `/feature-requests/${requestId}/vote`, { token: tokens.member });
+  assert.equal(first.body.request.votes, 1);
+  assert.equal(first.body.request.has_voted, true);
+
+  const second = await call('POST', `/feature-requests/${requestId}/vote`, { token: tokens.member });
+  assert.equal(second.body.request.votes, 0, 'voting again takes the vote back');
+
+  // only someone with feature.manage may set the status
+  const denied = await call('PATCH', `/feature-requests/${requestId}`, {
+    token: tokens.member,
+    body: { status: 'planned' },
+  });
+  assert.equal(denied.status, 403);
+
+  const allowed = await call('PATCH', `/feature-requests/${requestId}`, {
+    token: tokens.admin,
+    body: { status: 'planned', admin_note: 'Good idea — scheduled for next month' },
+  });
+  assert.equal(allowed.status, 200);
+  assert.equal(allowed.body.request.status, 'planned');
+});
+
+// ---------------------------------------------------------------- recognition
+
+test('the leaderboard rewards on-time delivery and penalises black marks', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const board = await call('GET', '/recognition/leaderboard', { token: tokens.admin });
+  assert.equal(board.status, 200);
+
+  const withMarks = board.body.members.find((m) => m.mark_count > 0);
+  if (withMarks) {
+    assert.ok(withMarks.score < withMarks.done_count + 1, 'black marks pull the score down');
+  }
+
+  for (const member of board.body.members) {
+    assert.equal(typeof member.score, 'number');
+    assert.ok(Number.isFinite(member.score));
+  }
+
+  // the board is sorted best first
+  const scores = board.body.members.map((m) => m.score);
+  assert.deepEqual(scores, [...scores].sort((a, b) => b - a));
+});
+
+test('an award notifies the winner and records their stats', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const given = await call('POST', '/recognition/awards', {
+    token: tokens.admin,
+    body: { user_id: ids.member, citation: 'Carried the launch single handed.' },
+  });
+  assert.equal(given.status, 201);
+  assert.equal(given.body.award.user_id, ids.member);
+  assert.ok(given.body.award.stats);
+
+  const { rows } = await query(
+    `SELECT COUNT(*)::int AS n FROM notifications WHERE user_id = $1 AND type = 'recognition'`,
+    [ids.member],
+  );
+  assert.equal(rows[0].n, 1, 'the winner is told');
+
+  // awarding the same month again updates rather than duplicating
+  const again = await call('POST', '/recognition/awards', {
+    token: tokens.admin,
+    body: { user_id: ids.member, citation: 'Updated citation.' },
+  });
+  assert.equal(again.status, 201);
+  const { rows: awards } = await query('SELECT COUNT(*)::int AS n FROM recognitions WHERE user_id = $1', [
+    ids.member,
+  ]);
+  assert.equal(awards[0].n, 1);
+});
+
+test('a member cannot award themselves the month', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  const attempt = await call('POST', '/recognition/awards', {
+    token: tokens.member,
+    body: { user_id: ids.member, citation: 'I am great' },
+  });
+  assert.equal(attempt.status, 403);
+});
+
+test('kudos go to someone else, never yourself', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const valid = await call('POST', '/recognition/kudos', {
+    token: tokens.member,
+    body: { to_user: ids.admin, message: 'Thanks for unblocking the vendor payment.' },
+  });
+  assert.equal(valid.status, 201);
+
+  const self = await call('POST', '/recognition/kudos', {
+    token: tokens.member,
+    body: { to_user: ids.member, message: 'I am wonderful' },
+  });
+  assert.equal(self.status, 400);
+});
+
 test('archiving hides a card from the default list', async (t) => {
   if (skipIfUnavailable(t)) return;
 

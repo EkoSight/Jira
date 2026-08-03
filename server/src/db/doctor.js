@@ -206,6 +206,30 @@ async function main() {
   ok(`${departments} departments, ${statuses} board statuses, ${rules} black mark rules`);
   ok(`${tasks} task card(s)`);
 
+  // 7. can attachments be written, and will they survive a deploy? -----------
+  const uploadDir = config.uploads.dir;
+  try {
+    fs.mkdirSync(uploadDir, { recursive: true });
+    const probe = path.join(uploadDir, `.write-test-${process.pid}`);
+    fs.writeFileSync(probe, 'ok');
+    fs.unlinkSync(probe);
+
+    const insideRepo = path.resolve(uploadDir).startsWith(path.resolve(serverRoot, '..'));
+    if (insideRepo) {
+      warn(`attachments are stored inside the project folder (${uploadDir})`);
+      console.log('      On a server, set UPLOAD_DIR in server/.env to a path outside the');
+      console.log('      deployment folder, or a redeploy can delete uploaded files.');
+    } else {
+      ok('attachment storage is writable', uploadDir);
+    }
+  } catch (err) {
+    bad(`cannot write attachments to ${uploadDir}: ${describeError(err)}`);
+    return nextSteps(
+      'Set UPLOAD_DIR in server/.env to a folder the application can write to,',
+      'and make sure it exists.',
+    );
+  }
+
   const { rows: admin } = await query(
     `SELECT email, must_change_password FROM users WHERE role = 'admin' AND is_active ORDER BY id LIMIT 1`,
   );

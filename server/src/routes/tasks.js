@@ -1,6 +1,14 @@
+import fs from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db/pool.js';
+import {
+  upload,
+  assertSafeUrl,
+  detectProvider,
+  deleteStoredFile,
+  resolveStoredFile,
+} from '../lib/uploads.js';
 import { asyncHandler, notFound, badRequest, forbidden } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
@@ -14,33 +22,77 @@ const TASK_SELECT = `
          s.name AS status_name, s.slug AS status_slug, s.stage, s.color AS status_color,
          d.name AS department_name, d.key AS department_key, d.color AS department_color,
          a.full_name AS assignee_name, a.avatar_color AS assignee_color, a.email AS assignee_email,
+         f.full_name AS follower_name, f.avatar_color AS follower_color,
          r.full_name AS reporter_name,
          c.full_name AS created_by_name,
+         p.ref AS parent_ref, p.title AS parent_title,
          (t.due_date IS NOT NULL AND t.due_date < now() AND s.stage NOT IN ('done','cancelled')) AS is_overdue,
          (SELECT COUNT(*)::int FROM task_comments tc WHERE tc.task_id = t.id) AS comment_count,
          (SELECT COUNT(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
-         (SELECT COUNT(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id AND ci.is_done) AS checklist_done
+         (SELECT COUNT(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id AND ci.is_done) AS checklist_done,
+         (SELECT COUNT(*)::int FROM task_attachments ta WHERE ta.task_id = t.id) AS attachment_count,
+         (SELECT COUNT(*)::int FROM task_collaborators tcol WHERE tcol.task_id = t.id) AS collaborator_count,
+         (SELECT COUNT(*)::int FROM tasks st WHERE st.parent_task_id = t.id AND st.is_archived = FALSE) AS subtask_total,
+         (SELECT COUNT(*)::int FROM tasks st
+            JOIN workflow_statuses ss ON ss.id = st.status_id
+           WHERE st.parent_task_id = t.id AND st.is_archived = FALSE AND ss.stage = 'done') AS subtask_done,
+         -- when a card has sub tasks its progress is the average of theirs, so a
+         -- parent can never claim to be further along than its children
+         COALESCE((
+           SELECT ROUND(AVG(CASE WHEN ss.stage = 'done' THEN 100 ELSE st.progress END))::int
+             FROM tasks st
+             JOIN workflow_statuses ss ON ss.id = st.status_id
+            WHERE st.parent_task_id = t.id AND st.is_archived = FALSE
+         ), t.progress) AS effective_progress
     FROM tasks t
     JOIN workflow_statuses s ON s.id = t.status_id
     JOIN departments d ON d.id = t.department_id
     LEFT JOIN users a ON a.id = t.assignee_id
+    LEFT JOIN users f ON f.id = t.follower_id
     LEFT JOIN users r ON r.id = t.reporter_id
     LEFT JOIN users c ON c.id = t.created_by
+    LEFT JOIN tasks p ON p.id = t.parent_task_id
 `;
 
-/** Restricts the visible task set to what the caller is allowed to see. */
+/**
+ * Restricts the visible task set to what the caller is allowed to see.
+ * Being tagged on a card grants access to it regardless of department — that is
+ * the whole point of tagging someone from another team.
+ */
 function visibilityClause(user, params) {
   if (hasPermission(user, 'task.view.all')) return '1=1';
   params.push(user.id, user.department_id);
   const uid = `$${params.length - 1}`;
   const dept = `$${params.length}`;
-  return `(t.assignee_id = ${uid} OR t.reporter_id = ${uid} OR t.created_by = ${uid} OR t.department_id = ${dept})`;
+  return `(
+    t.assignee_id = ${uid}
+    OR t.follower_id = ${uid}
+    OR t.reporter_id = ${uid}
+    OR t.created_by = ${uid}
+    OR t.department_id = ${dept}
+    OR EXISTS (SELECT 1 FROM task_collaborators tc WHERE tc.task_id = t.id AND tc.user_id = ${uid})
+  )`;
 }
 
 function canEdit(user, task) {
   if (hasPermission(user, 'task.edit.any')) return true;
   if (!hasPermission(user, 'task.edit.own')) return false;
-  return [task.assignee_id, task.reporter_id, task.created_by].includes(user.id);
+  // the follower is a second owner, so they can move and update the card too
+  return [task.assignee_id, task.follower_id, task.reporter_id, task.created_by].includes(user.id);
+}
+
+/** Tagged people and the follower may comment even when they cannot edit. */
+async function canAccess(user, taskId) {
+  if (hasPermission(user, 'task.view.all')) return true;
+  const { rows } = await query(
+    `SELECT 1 FROM tasks t
+      WHERE t.id = $1
+        AND (t.assignee_id = $2 OR t.follower_id = $2 OR t.reporter_id = $2 OR t.created_by = $2
+             OR t.department_id = $3
+             OR EXISTS (SELECT 1 FROM task_collaborators tc WHERE tc.task_id = t.id AND tc.user_id = $2))`,
+    [taskId, user.id, user.department_id],
+  );
+  return rows.length > 0;
 }
 
 async function nextRef(client, departmentId) {
@@ -66,6 +118,9 @@ const taskInput = z.object({
   priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
   task_type: z.string().max(40).optional(),
   assignee_id: z.number().int().positive().nullable().optional(),
+  follower_id: z.number().int().positive().nullable().optional(),
+  parent_task_id: z.number().int().positive().nullable().optional(),
+  collaborator_ids: z.array(z.number().int().positive()).optional(),
   reporter_id: z.number().int().positive().nullable().optional(),
   start_date: z.string().nullable().optional(),
   due_date: z.string().datetime({ offset: true }).or(z.string().min(8)).nullable().optional(),
@@ -161,7 +216,7 @@ router.get(
     const task = rows[0];
     if (!task) throw notFound('Task not found');
 
-    const [comments, activity, checklist] = await Promise.all([
+    const [comments, activity, checklist, attachments, collaborators, subtasks] = await Promise.all([
       query(
         `SELECT c.*, u.full_name AS author_name, u.avatar_color
            FROM task_comments c LEFT JOIN users u ON u.id = c.author_id
@@ -175,6 +230,32 @@ router.get(
         [task.id],
       ),
       query('SELECT * FROM task_checklist_items WHERE task_id = $1 ORDER BY position, id', [task.id]),
+      query(
+        `SELECT a.*, u.full_name AS uploaded_by_name
+           FROM task_attachments a LEFT JOIN users u ON u.id = a.uploaded_by
+          WHERE a.task_id = $1 ORDER BY a.created_at`,
+        [task.id],
+      ),
+      query(
+        `SELECT u.id, u.full_name, u.avatar_color, u.email, d.name AS department_name
+           FROM task_collaborators tc
+           JOIN users u ON u.id = tc.user_id
+           LEFT JOIN departments d ON d.id = u.department_id
+          WHERE tc.task_id = $1
+          ORDER BY u.full_name`,
+        [task.id],
+      ),
+      query(
+        `SELECT t.id, t.ref, t.title, t.progress, t.due_date, t.priority, t.assignee_id,
+                s.name AS status_name, s.stage, s.color AS status_color,
+                u.full_name AS assignee_name, u.avatar_color AS assignee_color
+           FROM tasks t
+           JOIN workflow_statuses s ON s.id = t.status_id
+           LEFT JOIN users u ON u.id = t.assignee_id
+          WHERE t.parent_task_id = $1 AND t.is_archived = FALSE
+          ORDER BY t.position, t.id`,
+        [task.id],
+      ),
     ]);
 
     res.json({
@@ -182,6 +263,9 @@ router.get(
       comments: comments.rows,
       activity: activity.rows,
       checklist: checklist.rows,
+      attachments: attachments.rows,
+      collaborators: collaborators.rows,
+      subtasks: subtasks.rows,
       can_edit: canEdit(req.currentUser, task),
     });
   }),
@@ -217,10 +301,10 @@ router.post(
       const { rows } = await client.query(
         `INSERT INTO tasks
            (ref, title, description, department_id, status_id, priority, task_type, assignee_id,
-            reporter_id, created_by, start_date, due_date, original_due_date, estimate_hours,
-            progress, tags, position)
-         VALUES ($1,$2,$3,$4,$5,COALESCE($6,'medium'),COALESCE($7,'task'),$8,$9,$10,$11,$12,$12,$13,
-                 COALESCE($14,0),COALESCE($15::text[],'{}'::text[]),
+            follower_id, parent_task_id, reporter_id, created_by, start_date, due_date,
+            original_due_date, estimate_hours, progress, tags, position)
+         VALUES ($1,$2,$3,$4,$5,COALESCE($6,'medium'),COALESCE($7,'task'),$8,$9,$10,$11,$12,$13,$14,$14,$15,
+                 COALESCE($16,0),COALESCE($17::text[],'{}'::text[]),
                  (SELECT COALESCE(MAX(position), 0) + 100 FROM tasks WHERE status_id = $5))
          RETURNING *`,
         [
@@ -232,6 +316,8 @@ router.post(
           data.priority ?? null,
           data.task_type ?? null,
           data.assignee_id ?? null,
+          data.follower_id ?? null,
+          data.parent_task_id ?? null,
           data.reporter_id ?? req.currentUser.id,
           req.currentUser.id,
           data.start_date || null,
@@ -250,14 +336,23 @@ router.post(
         meta: { ref: created.ref },
       });
 
-      if (created.assignee_id && created.assignee_id !== req.currentUser.id) {
-        await notify(client, {
-          userId: created.assignee_id,
-          type: 'assigned',
-          title: `You were assigned ${created.ref}`,
-          body: created.title,
-          taskId: created.id,
-        });
+      for (const userId of data.collaborator_ids || []) {
+        await client.query(
+          `INSERT INTO task_collaborators (task_id, user_id, added_by) VALUES ($1, $2, $3)
+           ON CONFLICT DO NOTHING`,
+          [created.id, userId, req.currentUser.id],
+        );
+      }
+
+      const toNotify = [
+        [created.assignee_id, 'assigned', `You were assigned ${created.ref}`],
+        [created.follower_id, 'follower', `You are following ${created.ref}`],
+        ...(data.collaborator_ids || []).map((id) => [id, 'tagged', `You were tagged on ${created.ref}`]),
+      ];
+      for (const [userId, type, title] of toNotify) {
+        if (userId && userId !== req.currentUser.id) {
+          await notify(client, { userId, type, title, body: created.title, taskId: created.id });
+        }
       }
       return created;
     });
@@ -271,8 +366,8 @@ router.post(
 
 const TRACKED_FIELDS = [
   'title', 'description', 'department_id', 'status_id', 'priority', 'task_type',
-  'assignee_id', 'reporter_id', 'start_date', 'due_date', 'estimate_hours',
-  'spent_hours', 'progress', 'tags', 'blocked_reason',
+  'assignee_id', 'follower_id', 'parent_task_id', 'reporter_id', 'start_date', 'due_date',
+  'estimate_hours', 'spent_hours', 'progress', 'tags', 'blocked_reason',
 ];
 
 router.patch(
@@ -372,6 +467,46 @@ router.patch(
           body: task.title,
           taskId: id,
         });
+      }
+      if (data.follower_id !== undefined && data.follower_id !== existing.follower_id && data.follower_id) {
+        await notify(client, {
+          userId: data.follower_id,
+          type: 'follower',
+          title: `You are now following ${task.ref}`,
+          body: task.title,
+          taskId: id,
+        });
+      }
+
+      // collaborators are replaced wholesale when the field is supplied
+      if (data.collaborator_ids !== undefined) {
+        const { rows: before } = await client.query(
+          'SELECT user_id FROM task_collaborators WHERE task_id = $1',
+          [id],
+        );
+        const had = new Set(before.map((r) => r.user_id));
+        const wanted = new Set(data.collaborator_ids);
+
+        await client.query(
+          'DELETE FROM task_collaborators WHERE task_id = $1 AND user_id <> ALL($2::int[])',
+          [id, data.collaborator_ids],
+        );
+        for (const userId of wanted) {
+          await client.query(
+            `INSERT INTO task_collaborators (task_id, user_id, added_by) VALUES ($1, $2, $3)
+             ON CONFLICT DO NOTHING`,
+            [id, userId, req.currentUser.id],
+          );
+          if (!had.has(userId) && userId !== req.currentUser.id) {
+            await notify(client, {
+              userId,
+              type: 'tagged',
+              title: `You were tagged on ${task.ref}`,
+              body: task.title,
+              taskId: id,
+            });
+          }
+        }
       }
 
       return { ...task, stage: newStage, previousStage: existing.stage };
@@ -533,6 +668,174 @@ router.delete(
       throw forbidden('You can only delete your own comments');
     }
     await query('DELETE FROM task_comments WHERE id = $1', [req.params.commentId]);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- attachments
+
+/** Attach a link — Google Docs, Sheets, Slides, Drive or any other http(s) URL. */
+router.post(
+  '/:id/attachments/link',
+  asyncHandler(async (req, res) => {
+    const { url, title } = z
+      .object({ url: z.string().min(4), title: z.string().max(200).optional() })
+      .parse(req.body);
+    const taskId = Number(req.params.id);
+
+    if (!(await canAccess(req.currentUser, taskId))) throw forbidden('You cannot add to this task');
+
+    const safeUrl = assertSafeUrl(url.trim());
+    const provider = detectProvider(safeUrl);
+
+    const { rows } = await query(
+      `INSERT INTO task_attachments (task_id, kind, title, url, provider, uploaded_by)
+       VALUES ($1, 'link', $2, $3, $4, $5) RETURNING *`,
+      [taskId, title?.trim() || null, safeUrl, provider, req.currentUser.id],
+    );
+    await logActivity(null, {
+      taskId,
+      actorId: req.currentUser.id,
+      action: 'attached',
+      field: 'link',
+      to: title || safeUrl,
+    });
+    res.status(201).json({ attachment: rows[0] });
+  }),
+);
+
+/** Upload an image or document. Files live on disk, never in the database. */
+router.post(
+  '/:id/attachments/upload',
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    const taskId = Number(req.params.id);
+    if (!req.file) throw badRequest('No file was received');
+
+    if (!(await canAccess(req.currentUser, taskId))) {
+      deleteStoredFile(req.file.filename);
+      throw forbidden('You cannot add to this task');
+    }
+
+    const kind = req.file.mimetype.startsWith('image/') ? 'image' : 'file';
+    const { rows } = await query(
+      `INSERT INTO task_attachments
+         (task_id, kind, title, file_name, stored_name, mime_type, size_bytes, uploaded_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [
+        taskId,
+        kind,
+        req.body.title?.trim() || req.file.originalname,
+        req.file.originalname,
+        req.file.filename,
+        req.file.mimetype,
+        req.file.size,
+        req.currentUser.id,
+      ],
+    );
+    await logActivity(null, {
+      taskId,
+      actorId: req.currentUser.id,
+      action: 'attached',
+      field: kind,
+      to: req.file.originalname,
+    });
+    res.status(201).json({ attachment: rows[0] });
+  }),
+);
+
+/** Streams an uploaded file back, only to someone allowed to see the task. */
+router.get(
+  '/:taskId/attachments/:id/raw',
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      'SELECT * FROM task_attachments WHERE id = $1 AND task_id = $2',
+      [req.params.id, req.params.taskId],
+    );
+    const attachment = rows[0];
+    if (!attachment || !attachment.stored_name) throw notFound('Attachment not found');
+    if (!(await canAccess(req.currentUser, Number(req.params.taskId)))) {
+      throw forbidden('You cannot view this attachment');
+    }
+
+    const filePath = resolveStoredFile(attachment.stored_name);
+    if (!fs.existsSync(filePath)) throw notFound('The file is no longer on the server');
+
+    res.setHeader('Content-Type', attachment.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(attachment.file_name)}"`);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    fs.createReadStream(filePath).pipe(res);
+  }),
+);
+
+router.delete(
+  '/:taskId/attachments/:id',
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      'SELECT * FROM task_attachments WHERE id = $1 AND task_id = $2',
+      [req.params.id, req.params.taskId],
+    );
+    const attachment = rows[0];
+    if (!attachment) throw notFound('Attachment not found');
+    if (attachment.uploaded_by !== req.currentUser.id && !hasPermission(req.currentUser, 'task.edit.any')) {
+      throw forbidden('You can only remove attachments you added');
+    }
+
+    await query('DELETE FROM task_attachments WHERE id = $1', [attachment.id]);
+    deleteStoredFile(attachment.stored_name);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- tagged people
+
+router.post(
+  '/:id/collaborators',
+  asyncHandler(async (req, res) => {
+    const { user_id: userId } = z.object({ user_id: z.number().int().positive() }).parse(req.body);
+    const taskId = Number(req.params.id);
+
+    const { rows: taskRows } = await query('SELECT id, ref, title FROM tasks WHERE id = $1', [taskId]);
+    if (!taskRows[0]) throw notFound('Task not found');
+    if (!(await canAccess(req.currentUser, taskId))) throw forbidden('You cannot change this task');
+
+    await query(
+      `INSERT INTO task_collaborators (task_id, user_id, added_by) VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
+      [taskId, userId, req.currentUser.id],
+    );
+    if (userId !== req.currentUser.id) {
+      await notify(null, {
+        userId,
+        type: 'tagged',
+        title: `You were tagged on ${taskRows[0].ref}`,
+        body: taskRows[0].title,
+        taskId,
+      });
+    }
+
+    const { rows } = await query(
+      `SELECT u.id, u.full_name, u.avatar_color, u.email, d.name AS department_name
+         FROM task_collaborators tc
+         JOIN users u ON u.id = tc.user_id
+         LEFT JOIN departments d ON d.id = u.department_id
+        WHERE tc.task_id = $1 ORDER BY u.full_name`,
+      [taskId],
+    );
+    res.status(201).json({ collaborators: rows });
+  }),
+);
+
+router.delete(
+  '/:taskId/collaborators/:userId',
+  asyncHandler(async (req, res) => {
+    if (!(await canAccess(req.currentUser, Number(req.params.taskId)))) {
+      throw forbidden('You cannot change this task');
+    }
+    await query('DELETE FROM task_collaborators WHERE task_id = $1 AND user_id = $2', [
+      req.params.taskId,
+      req.params.userId,
+    ]);
     res.json({ ok: true });
   }),
 );

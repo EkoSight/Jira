@@ -50,6 +50,36 @@ async function request(method, path, body, options = {}) {
   return data;
 }
 
+/** Multipart upload — the browser sets its own Content-Type boundary. */
+async function upload(path, file, title) {
+  const form = new FormData();
+  form.append('file', file);
+  if (title) form.append('title', title);
+
+  const token = tokenStore.get();
+  const response = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: form,
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    if (response.status === 401) onUnauthorized();
+    throw new ApiError(data.error || `Upload failed (${response.status})`, response.status);
+  }
+  return data;
+}
+
+/** Fetches a protected file and returns an object URL the browser can render. */
+export async function fetchBlobUrl(url) {
+  const token = tokenStore.get();
+  const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!response.ok) throw new ApiError('Could not load the attachment', response.status);
+  return URL.createObjectURL(await response.blob());
+}
+
 const qs = (params = {}) => {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -78,6 +108,31 @@ export const api = {
   addChecklistItem: (id, title) => request('POST', `/tasks/${id}/checklist`, { title }),
   updateChecklistItem: (taskId, itemId, data) => request('PATCH', `/tasks/${taskId}/checklist/${itemId}`, data),
   deleteChecklistItem: (taskId, itemId) => request('DELETE', `/tasks/${taskId}/checklist/${itemId}`),
+
+  addTaskLink: (id, url, title) => request('POST', `/tasks/${id}/attachments/link`, { url, title }),
+  uploadTaskFile: (id, file, title) => upload(`/tasks/${id}/attachments/upload`, file, title),
+  attachmentUrl: (taskId, id) => `${BASE}/tasks/${taskId}/attachments/${id}/raw`,
+  deleteAttachment: (taskId, id) => request('DELETE', `/tasks/${taskId}/attachments/${id}`),
+  addCollaborator: (id, userId) => request('POST', `/tasks/${id}/collaborators`, { user_id: userId }),
+  removeCollaborator: (taskId, userId) => request('DELETE', `/tasks/${taskId}/collaborators/${userId}`),
+
+  notes: (params) => request('GET', `/notes${qs(params)}`),
+  createNote: (data) => request('POST', '/notes', data),
+  updateNote: (id, data) => request('PATCH', `/notes/${id}`, data),
+  deleteNote: (id) => request('DELETE', `/notes/${id}`),
+
+  featureRequests: (params) => request('GET', `/feature-requests${qs(params)}`),
+  createFeatureRequest: (data) => request('POST', '/feature-requests', data),
+  voteFeatureRequest: (id) => request('POST', `/feature-requests/${id}/vote`),
+  updateFeatureRequest: (id, data) => request('PATCH', `/feature-requests/${id}`, data),
+  deleteFeatureRequest: (id) => request('DELETE', `/feature-requests/${id}`),
+
+  leaderboard: (params) => request('GET', `/recognition/leaderboard${qs(params)}`),
+  awards: () => request('GET', '/recognition/awards'),
+  giveAward: (data) => request('POST', '/recognition/awards', data),
+  removeAward: (id) => request('DELETE', `/recognition/awards/${id}`),
+  kudos: (params) => request('GET', `/recognition/kudos${qs(params)}`),
+  giveKudos: (data) => request('POST', '/recognition/kudos', data),
 
   users: (params) => request('GET', `/users${qs(params)}`),
   user: (id) => request('GET', `/users/${id}`),

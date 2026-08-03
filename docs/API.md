@@ -39,10 +39,34 @@ duplicate.
 | POST | `/tasks/:id/checklist` | edit access |
 | PATCH | `/tasks/:taskId/checklist/:itemId` | edit access |
 | DELETE | `/tasks/:taskId/checklist/:itemId` | edit access |
+| POST | `/tasks/:id/attachments/link` | task access — `{ url, title }` |
+| POST | `/tasks/:id/attachments/upload` | task access — multipart `file` |
+| GET | `/tasks/:taskId/attachments/:id/raw` | task access — streams the file |
+| DELETE | `/tasks/:taskId/attachments/:id` | uploader, or `task.edit.any` |
+| POST | `/tasks/:id/collaborators` | task access — `{ user_id }` |
+| DELETE | `/tasks/:taskId/collaborators/:userId` | task access |
 
 **Visibility.** Holders of `task.view.all` see everything. Otherwise a caller sees
-tasks they are assigned, reported or created, plus everything in their own
-department.
+tasks where they are the **owner** (`assignee_id`), the **follower**
+(`follower_id`), the reporter or the creator, plus everything in their own
+department — **and any card they have been tagged on**, whatever department it
+belongs to. Tagging is what lets someone from another team follow a task.
+
+**Two people on a task.** `assignee_id` is the accountable owner and is who a
+missed-deadline black mark is recorded against. `follower_id` is a second person
+who can see and edit the card but carries no deadline accountability.
+
+**Sub tasks.** Set `parent_task_id` to make a card a sub task of another. The
+parent's `effective_progress` becomes the average of its children (a child in a
+`done` stage counts as 100), so a parent can never report more progress than its
+children justify. `subtask_total` and `subtask_done` come back on every task row.
+
+**Attachments.** Links are validated: only `http` and `https` are accepted, and
+the provider (`google-docs`, `google-sheets`, `google-slides`, `google-drive`, …)
+is detected from the URL. Uploads are written to `UPLOAD_DIR` on disk, never into
+the database, with a random stored filename; the original name is kept only as a
+label. Files are streamed back through the API so the same task permissions apply
+— they are not publicly served.
 
 **List filters** (query string, all optional):
 
@@ -220,6 +244,64 @@ into the defaults, so you can send a single field.
 
 ---
 
+## Notes (private)
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/notes` | `note.use` — only ever your own |
+| POST | `/notes` | `note.use` |
+| PATCH | `/notes/:id` | owner only |
+| DELETE | `/notes/:id` | owner only |
+
+Every query is scoped to the signed-in user. There is no route by which one person
+can read another's notes, and an admin is not an exception.
+
+---
+
+## Feature requests
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/feature-requests` | signed in |
+| POST | `/feature-requests` | `feature.request` |
+| POST | `/feature-requests/:id/vote` | signed in — toggles |
+| PATCH | `/feature-requests/:id` | `feature.manage` — status and admin reply |
+| DELETE | `/feature-requests/:id` | author, or `feature.manage` |
+
+Raising a request notifies every admin and manager; a status change notifies the
+person who asked.
+
+---
+
+## Recognition
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/recognition/leaderboard` | signed in |
+| GET | `/recognition/awards` | signed in |
+| POST | `/recognition/awards` | `recognition.manage` |
+| DELETE | `/recognition/awards/:id` | `recognition.manage` |
+| GET | `/recognition/kudos` | signed in |
+| POST | `/recognition/kudos` | `kudos.give` |
+
+**Scoring**, per completed task in the month:
+
+| | |
+|---|---|
+| each completed task | +1 |
+| high priority | +0.5 |
+| critical priority | +1 |
+| finished on or before the deadline | +0.5 |
+| finished after the deadline | −0.5 |
+| each active black mark point | −1 |
+| kudos received | +0.25 each, capped at +2 |
+
+The weights come back in the response as `weights`, so the UI can explain the
+number to the person being measured. Awarding the same person twice in a month
+updates the citation instead of creating a duplicate.
+
+---
+
 ## Notifications
 
 | Method | Route |
@@ -227,4 +309,7 @@ into the defaults, so you can send a single field.
 | GET | `/notifications` |
 | POST | `/notifications/read` — `{ ids: [...] }`, or empty to mark all read |
 
-Generated on assignment, new comments, approaching deadlines and black marks.
+Generated on assignment, being made a follower, being tagged, new comments,
+approaching deadlines, black marks, kudos, awards and feature request updates.
+The client polls every 30 seconds and plays a chime plus a desktop notification
+for anything new.

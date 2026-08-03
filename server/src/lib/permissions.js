@@ -31,6 +31,12 @@ export const PERMISSIONS = {
 
   'report.view': 'View dashboards and monthly reviews',
   'settings.manage': 'Change system settings',
+
+  'note.use': 'Keep private notes',
+  'feature.request': 'Send feature requests to the admin',
+  'feature.manage': 'Triage and respond to feature requests',
+  'kudos.give': 'Give kudos to a colleague',
+  'recognition.manage': 'Award performer of the month',
 };
 
 export const PERMISSION_KEYS = Object.keys(PERMISSIONS);
@@ -54,6 +60,11 @@ export const ROLE_PERMISSIONS = {
     'blackmark.create',
     'blackmark.waive',
     'report.view',
+    'note.use',
+    'feature.request',
+    'feature.manage',
+    'kudos.give',
+    'recognition.manage',
   ],
 
   member: [
@@ -63,9 +74,18 @@ export const ROLE_PERMISSIONS = {
     'task.comment',
     'user.view',
     'blackmark.view',
+    'note.use',
+    'feature.request',
+    'kudos.give',
   ],
 
-  viewer: ['task.view.department', 'user.view', 'blackmark.view'],
+  viewer: [
+    'task.view.department',
+    'user.view',
+    'blackmark.view',
+    'note.use',
+    'feature.request',
+  ],
 };
 
 export const ROLES = Object.keys(ROLE_PERMISSIONS);
