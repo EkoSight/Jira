@@ -4,7 +4,7 @@ import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import { LoadMeter } from '../components/charts.jsx';
-import { WORKLOAD_STATUS, relativeTime } from '../lib/format.js';
+import { WORKLOAD_STATUS, loadSummary, relativeTime } from '../lib/format.js';
 
 const ROLE_NOTE = {
   admin: 'Full control, including permissions and rules',
@@ -380,8 +380,10 @@ export default function Team() {
                       {load ? (
                         <>
                           <LoadMeter percent={load.load_percent} status={load.status} />
-                          <Badge tone={state.tone}>{state.label}</Badge>
-                          <span className="small muted"> {load.committed_hours}h of {load.capacity_hours}h</span>
+                          <div className="row" style={{ gap: 6, marginTop: 2 }}>
+                            <Badge tone={state.tone}>{state.label}</Badge>
+                            <span className="small muted">{loadSummary(load)}</span>
+                          </div>
                         </>
                       ) : (
                         <span className="muted small">—</span>

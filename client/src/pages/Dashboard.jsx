@@ -9,6 +9,7 @@ import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
   WORKLOAD_STATUS,
+  loadSummary,
   describeActivity,
   dueLabel,
   relativeTime,
@@ -190,7 +191,10 @@ export default function Dashboard() {
                       </td>
                       <td style={{ minWidth: 190 }}>
                         <LoadMeter percent={member.load_percent} status={member.status} />
-                        <Badge tone={state.tone}>{state.label}</Badge>
+                        <div className="row" style={{ gap: 6, marginTop: 2 }}>
+                          <Badge tone={state.tone}>{state.label}</Badge>
+                          <span className="small muted">{loadSummary(member)}</span>
+                        </div>
                       </td>
                       <td className="num tnum">{member.open_tasks}</td>
                       <td className="num tnum">{member.active_tasks}</td>

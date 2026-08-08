@@ -450,6 +450,44 @@ test('the dashboard reports overdue, critical and unassigned counts', async (t) 
   assert.ok(['idle', 'available', 'busy', 'overloaded', 'stalled'].includes(memberRow.status));
 });
 
+test('workload reports the basis it measured load from, so the meter caption matches', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // give a member several open tasks with no hour estimates, so load is by count
+  const { rows: dept } = await query(`SELECT id FROM departments WHERE key = 'TST'`);
+  const { rows: statusRows } = await query(`SELECT id FROM workflow_statuses WHERE stage = 'in_progress' LIMIT 1`);
+  const { rows: victim } = await query(
+    `INSERT INTO users (full_name, email, password_hash, role, department_id, weekly_capacity_hours, max_concurrent_tasks, must_change_password)
+     VALUES ('Loaded Person', 'loaded@test.local', $1, 'member', $2, 40, 3, FALSE) RETURNING id`,
+    [await hashPassword('Password123!'), dept[0].id],
+  );
+
+  for (let i = 0; i < 5; i += 1) {
+    await query(
+      `INSERT INTO tasks (ref, title, department_id, status_id, assignee_id, created_by, priority)
+       VALUES ($1, $2, $3, $4, $5, $5, 'medium')`,
+      [`LOAD-${i}`, `No estimate ${i}`, dept[0].id, statusRows[0].id, victim[0].id],
+    );
+  }
+
+  const dashboard = await call('GET', '/reports/workload', { token: tokens.admin });
+  const row = dashboard.body.workload.find((w) => w.id === victim[0].id);
+
+  assert.equal(row.load_basis, 'tasks', 'no estimates → load measured by task count');
+  assert.equal(row.committed_hours, 0, 'and committed hours is genuinely zero');
+  assert.ok(row.open_tasks >= 5);
+  // 5 open against a comfort of 3 is over capacity, and it is the task count, not
+  // the (zero) hours, that says so — the client caption must therefore be task-based
+  assert.equal(row.status, 'overloaded');
+
+  // now add an estimate and the basis flips to hours
+  await query(`UPDATE tasks SET estimate_hours = 4 WHERE assignee_id = $1`, [victim[0].id]);
+  const after = await call('GET', '/reports/workload', { token: tokens.admin });
+  const updated = after.body.workload.find((w) => w.id === victim[0].id);
+  assert.equal(updated.load_basis, 'hours');
+  assert.ok(updated.committed_hours > 0);
+});
+
 test('settings round trip and drive the review thresholds', async (t) => {
   if (skipIfUnavailable(t)) return;
 

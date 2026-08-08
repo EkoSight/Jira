@@ -159,12 +159,18 @@ export async function workload(scope = {}) {
   return rows.map((r) => {
     const capacityHours = Number(r.weekly_capacity_hours) || 0;
     const committed = Number(r.committed_hours) || 0;
-    // when nobody estimates hours, fall back to task-count based load
     const hoursLoad = capacityHours > 0 ? Math.round((committed / capacityHours) * 100) : null;
     const countLoad = r.max_concurrent_tasks > 0
       ? Math.round((r.open_tasks / r.max_concurrent_tasks) * 100)
       : null;
-    const loadPercent = committed > 0 && hoursLoad !== null ? hoursLoad : countLoad;
+
+    // Load is measured in hours only when the open work actually has estimates;
+    // otherwise it is measured in task count. Whichever drives the status is also
+    // what the client shows, so the meter and its caption never disagree (no more
+    // "0h of 40h" sitting next to "Busy").
+    const useHours = committed > 0 && hoursLoad !== null;
+    const loadPercent = useHours ? hoursLoad : countLoad;
+    const loadBasis = useHours ? 'hours' : 'tasks';
 
     let status = 'available';
     if (r.open_tasks === 0) status = 'idle';
@@ -178,6 +184,7 @@ export async function workload(scope = {}) {
       ...r,
       committed_hours: committed,
       load_percent: loadPercent,
+      load_basis: loadBasis,
       capacity_hours: capacityHours,
       status,
     };

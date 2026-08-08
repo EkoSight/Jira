@@ -27,6 +27,25 @@ export const WORKLOAD_STATUS = {
   stalled: { label: 'Stalled', tone: 'serious', note: 'No recent movement' },
 };
 
+/**
+ * Plain-language summary of how loaded someone is, matched to whatever the load
+ * status was actually measured from. Reads as "committed work vs capacity", never
+ * as "spare time" — and never shows hours when the load is really about task count.
+ */
+export function loadSummary(load) {
+  if (!load) return '';
+  if (!load.open_tasks) return 'No open work';
+
+  if (load.load_basis === 'hours') {
+    // committed (planned) hours against weekly capacity
+    return `${load.committed_hours}h planned of ${load.capacity_hours}h`;
+  }
+
+  const max = Number(load.max_concurrent_tasks) || 0;
+  const plural = load.open_tasks === 1 ? '' : 's';
+  return max > 0 ? `${load.open_tasks} of ${max} tasks` : `${load.open_tasks} open task${plural}`;
+}
+
 const dayMs = 86400000;
 
 export const initials = (name = '') =>
