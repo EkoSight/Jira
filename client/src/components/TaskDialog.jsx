@@ -133,6 +133,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const save = async () => {
     if (!form.title.trim() || form.title.trim().length < 3) return toast.error('Give the task a title first');
     if (!form.department_id) return toast.error('Pick a department');
+    if (isNew && !form.assignee_id) return toast.error('Select a task owner before creating the task');
 
     setSaving(true);
     try {
@@ -321,11 +322,11 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 </Field>
 
                 <Field
-                  label="Task owner"
-                  hint={can('task.assign') ? 'Accountable for the deadline' : 'You can only assign work to yourself'}
+                  label="Task owner *"
+                  hint={can('task.assign') ? 'Required — accountable for the deadline' : 'You can only assign work to yourself'}
                 >
                   <select className="select" value={form.assignee_id} onChange={set('assignee_id')} disabled={!canEdit}>
-                    <option value="">Unassigned</option>
+                    <option value="">Select an owner…</option>
                     {users
                       .filter((u) => can('task.assign') || u.id === user.id)
                       .map((u) => (

@@ -158,7 +158,7 @@ test('creates a task with a department-prefixed reference', async (t) => {
 
   const second = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'A second card', department_id: ids.department },
+    body: { title: 'A second card', department_id: ids.department, assignee_id: ids.member },
   });
   assert.equal(second.body.task.ref, 'TST-2', 'references increment per department');
   ids.secondTask = second.body.task.id;
@@ -172,6 +172,16 @@ test('rejects a task with no title', async (t) => {
   });
   assert.equal(result.status, 400);
   assert.equal(result.body.error, 'Validation failed');
+});
+
+test('rejects a task with no owner', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  const result = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Nobody owns this', department_id: ids.department },
+  });
+  assert.equal(result.status, 400);
+  assert.match(result.body.error, /task owner is required/i);
 });
 
 test('a member cannot reassign someone else’s work', async (t) => {
@@ -594,7 +604,7 @@ test('a tagged person sees a task from another department', async (t) => {
 
   const secret = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Work in another department', department_id: ids.department },
+    body: { title: 'Work in another department', department_id: ids.department, assignee_id: ids.admin },
   });
   const secretId = secret.body.task.id;
 
@@ -629,6 +639,7 @@ test('a task can be created with people already tagged on it', async (t) => {
     body: {
       title: 'Tagged from the start',
       department_id: ids.department,
+      assignee_id: ids.admin,
       collaborator_ids: [ids.member, ids.outsider],
     },
   });
@@ -688,7 +699,7 @@ test('sub tasks drive the parent progress', async (t) => {
 
   const parent = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Parent with steps', department_id: ids.department },
+    body: { title: 'Parent with steps', department_id: ids.department, assignee_id: ids.admin },
   });
   const parentId = parent.body.task.id;
 
@@ -696,7 +707,7 @@ test('sub tasks drive the parent progress', async (t) => {
   for (const title of ['Step one', 'Step two', 'Step three', 'Step four']) {
     const child = await call('POST', '/tasks', {
       token: tokens.admin,
-      body: { title, department_id: ids.department, parent_task_id: parentId },
+      body: { title, department_id: ids.department, parent_task_id: parentId, assignee_id: ids.admin },
     });
     children.push(child.body.task.id);
   }
@@ -876,7 +887,7 @@ test('a task created straight into a done status counts as completed this month'
 
   const created = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Already finished when logged', department_id: ids.department, status_id: ids.done },
+    body: { title: 'Already finished when logged', department_id: ids.department, status_id: ids.done, assignee_id: ids.admin },
   });
   assert.equal(created.status, 201);
   assert.ok(created.body.task.completed_at, 'completed_at is stamped at creation');

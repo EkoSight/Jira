@@ -279,10 +279,14 @@ router.post(
   asyncHandler(async (req, res) => {
     const data = taskInput.parse(req.body);
 
-    if (data.assignee_id && !hasPermission(req.currentUser, 'task.assign')) {
-      if (data.assignee_id !== req.currentUser.id) {
-        throw forbidden('You can only assign tasks to yourself');
-      }
+    // every task must have an owner accountable for it — enforced here so the API
+    // cannot create an ownerless card even if the form is bypassed
+    if (!data.assignee_id) {
+      throw badRequest('A task owner is required');
+    }
+
+    if (!hasPermission(req.currentUser, 'task.assign') && data.assignee_id !== req.currentUser.id) {
+      throw forbidden('You can only assign tasks to yourself');
     }
 
     const task = await withTransaction(async (client) => {
