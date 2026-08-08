@@ -287,14 +287,25 @@ router.post(
 
     const task = await withTransaction(async (client) => {
       let statusId = data.status_id;
-      if (!statusId) {
+      let statusStage;
+      if (statusId) {
+        const { rows } = await client.query('SELECT stage FROM workflow_statuses WHERE id = $1', [statusId]);
+        if (!rows[0]) throw badRequest('Status not found');
+        statusStage = rows[0].stage;
+      } else {
         const { rows } = await client.query(
-          `SELECT id FROM workflow_statuses WHERE is_active = TRUE
+          `SELECT id, stage FROM workflow_statuses WHERE is_active = TRUE
             ORDER BY is_default DESC, position ASC LIMIT 1`,
         );
         if (!rows[0]) throw badRequest('No workflow statuses configured');
         statusId = rows[0].id;
+        statusStage = rows[0].stage;
       }
+
+      // a card created straight into a done column is already complete, so stamp
+      // completed_at (and full progress) — otherwise it counts as "done" on the
+      // board but stays invisible to the monthly completion figures
+      const bornDone = statusStage === 'done';
 
       const ref = await nextRef(client, data.department_id);
 
@@ -302,10 +313,11 @@ router.post(
         `INSERT INTO tasks
            (ref, title, description, department_id, status_id, priority, task_type, assignee_id,
             follower_id, parent_task_id, reporter_id, created_by, start_date, due_date,
-            original_due_date, estimate_hours, progress, tags, position)
+            original_due_date, estimate_hours, progress, tags, position, completed_at)
          VALUES ($1,$2,$3,$4,$5,COALESCE($6,'medium'),COALESCE($7,'task'),$8,$9,$10,$11,$12,$13,$14,$14,$15,
-                 COALESCE($16,0),COALESCE($17::text[],'{}'::text[]),
-                 (SELECT COALESCE(MAX(position), 0) + 100 FROM tasks WHERE status_id = $5))
+                 COALESCE($16::int,$18::int),COALESCE($17::text[],'{}'::text[]),
+                 (SELECT COALESCE(MAX(position), 0) + 100 FROM tasks WHERE status_id = $5),
+                 $19)
          RETURNING *`,
         [
           ref,
@@ -325,6 +337,8 @@ router.post(
           data.estimate_hours ?? null,
           data.progress ?? null,
           data.tags ?? null,
+          bornDone ? 100 : 0,
+          bornDone ? new Date() : null,
         ],
       );
 

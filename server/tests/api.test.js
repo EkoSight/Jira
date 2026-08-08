@@ -833,6 +833,32 @@ test('kudos go to someone else, never yourself', async (t) => {
   assert.equal(self.status, 400);
 });
 
+test('a task created straight into a done status counts as completed this month', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Already finished when logged', department_id: ids.department, status_id: ids.done },
+  });
+  assert.equal(created.status, 201);
+  assert.ok(created.body.task.completed_at, 'completed_at is stamped at creation');
+  assert.equal(created.body.task.progress, 100);
+
+  // the "Completed overall" ring (stage-based) and "Done this month"
+  // (completed_at-based) must agree that this card is done — no done task may be
+  // invisible to the monthly figure
+  const dashboard = await call('GET', '/reports/dashboard', { token: tokens.admin });
+  const { summary } = dashboard.body;
+  assert.ok(summary.completed_this_month >= 1);
+
+  const { rows } = await query(
+    `SELECT COUNT(*)::int AS n
+       FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
+      WHERE s.stage = 'done' AND t.is_archived = FALSE AND t.completed_at IS NULL`,
+  );
+  assert.equal(rows[0].n, 0, 'no done task is left without a completion date');
+});
+
 test('archiving hides a card from the default list', async (t) => {
   if (skipIfUnavailable(t)) return;
 

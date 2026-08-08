@@ -91,6 +91,20 @@ router.patch(
       params,
     );
     if (!rows[0]) throw notFound('Status not found');
+
+    // If this status is now a done stage, tasks sitting in it are complete —
+    // stamp completed_at so they show up in the completion figures rather than
+    // becoming board-done but month-invisible.
+    if (data.stage === 'done') {
+      await query(
+        `UPDATE tasks
+            SET completed_at = COALESCE(completed_at, updated_at, created_at, now()),
+                progress = 100
+          WHERE status_id = $1 AND completed_at IS NULL`,
+        [req.params.id],
+      );
+    }
+
     res.json({ status: rows[0] });
   }),
 );
