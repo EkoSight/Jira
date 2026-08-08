@@ -879,6 +879,29 @@ table.data tr:last-child td { border-bottom: none; }
   color: var(--brand-ink);
 }
 
+/* ---------------------------------------------------------- completion prompt */
+
+.complete-intro {
+  padding: 11px 13px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-wash);
+  color: var(--ink);
+  font-size: 13.5px;
+  line-height: 1.5;
+  border-left: 3px solid var(--brand);
+}
+.complete-intro.complete-late { background: var(--warning-wash); border-left-color: var(--warning); }
+.complete-intro.complete-critical { background: var(--serious-wash); border-left-color: var(--serious); }
+
+.outcome-box {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--good-wash);
+  border-left: 3px solid var(--good);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;

@@ -4,6 +4,7 @@ import { useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import TaskCard from '../components/TaskCard.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
+import CompleteTaskDialog from '../components/CompleteTaskDialog.jsx';
 
 const GROUPS = [
   { key: 'overdue', title: 'Overdue', tone: 'critical', note: 'Past the deadline — clear these first' },
@@ -44,16 +45,12 @@ export default function MyTasks() {
 
   useEffect(load, [load]);
 
-  const complete = async (task) => {
+  // marking done opens the completion prompt rather than closing silently
+  const [completing, setCompleting] = useState(null);
+  const startComplete = (task) => {
     const doneStatus = statuses.find((s) => s.stage === 'done');
     if (!doneStatus) return toast.error('No "done" status is configured');
-    try {
-      await api.moveTask(task.id, { status_id: doneStatus.id });
-      toast.success(`${task.ref} marked done`);
-      load();
-    } catch (err) {
-      toast.error(err);
-    }
+    setCompleting({ task, statusId: doneStatus.id });
   };
 
   if (loading && tasks.length === 0) return <Spinner label="Loading your work" />;
@@ -96,7 +93,7 @@ export default function MyTasks() {
                 <button
                   type="button"
                   className="btn btn-sm"
-                  onClick={() => complete(task)}
+                  onClick={() => startComplete(task)}
                   title="Mark done"
                   style={{ alignSelf: 'center' }}
                 >
@@ -109,6 +106,14 @@ export default function MyTasks() {
       ))}
 
       {openTask && <TaskDialog taskId={openTask} onClose={() => setOpenTask(null)} onSaved={load} />}
+      {completing && (
+        <CompleteTaskDialog
+          task={completing.task}
+          targetStatusId={completing.statusId}
+          onClose={() => setCompleting(null)}
+          onCompleted={load}
+        />
+      )}
     </div>
   );
 }

@@ -882,6 +882,73 @@ test('kudos go to someone else, never yourself', async (t) => {
   assert.equal(self.status, 400);
 });
 
+test('completing a task stores the outcome note and logs it', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Needs a sign-off note', department_id: ids.department, assignee_id: ids.member },
+  });
+  const id = created.body.task.id;
+
+  const done = await call('POST', `/tasks/${id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Verified with the customer and closed the ticket.' },
+  });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.task.completion_note, 'Verified with the customer and closed the ticket.');
+  assert.equal(done.body.next_occurrence, null, 'a one-off task spawns nothing');
+
+  const detail = await call('GET', `/tasks/${id}`, { token: tokens.admin });
+  const completed = detail.body.activity.find((a) => a.action === 'completed');
+  assert.ok(completed, 'a completed entry is logged');
+  assert.equal(completed.to_value, 'Verified with the customer and closed the ticket.');
+});
+
+test('a recurring task spawns its next occurrence when completed', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Close the till',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      recurrence: 'daily',
+      due_date: daysFromNow(0),
+    },
+  });
+  const id = created.body.task.id;
+  assert.equal(created.body.task.recurrence, 'daily');
+
+  const done = await call('POST', `/tasks/${id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Counted and locked up.' },
+  });
+  assert.ok(done.body.next_occurrence, 'the next occurrence is created');
+  assert.notEqual(done.body.next_occurrence.id, id, 'it is a new card');
+
+  // the next card is a fresh, open, un-completed instance that still recurs
+  const next = await call('GET', `/tasks/${done.body.next_occurrence.id}`, { token: tokens.admin });
+  assert.equal(next.body.task.recurrence, 'daily');
+  assert.equal(next.body.task.stage !== 'done', true);
+  assert.equal(next.body.task.completed_at, null);
+  assert.equal(next.body.task.assignee_id, ids.member, 'same owner carries forward');
+  assert.equal(next.body.task.recurrence_parent_id, id, 'linked back to the series');
+
+  // due date advanced by a day
+  const firstDue = new Date(created.body.task.due_date).getTime();
+  const nextDue = new Date(next.body.task.due_date).getTime();
+  assert.ok(nextDue - firstDue >= 23 * 3600 * 1000, 'due date rolled forward roughly a day');
+
+  // completing the second one makes a third — the series continues
+  const done2 = await call('POST', `/tasks/${done.body.next_occurrence.id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Done again.' },
+  });
+  assert.ok(done2.body.next_occurrence, 'the series keeps going');
+});
+
 test('a task created straight into a done status counts as completed this month', async (t) => {
   if (skipIfUnavailable(t)) return;
 

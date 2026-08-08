@@ -5,6 +5,7 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import TaskCard from '../components/TaskCard.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
+import CompleteTaskDialog from '../components/CompleteTaskDialog.jsx';
 import { PRIORITIES, PRIORITY_LABEL, PRIORITY_TONE, dueLabel, formatDate } from '../lib/format.js';
 
 export default function Board() {
@@ -16,6 +17,7 @@ export default function Board() {
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [openTask, setOpenTask] = useState(null);
+  const [completing, setCompleting] = useState(null);
   const [creatingIn, setCreatingIn] = useState(null);
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
@@ -58,6 +60,16 @@ export default function Board() {
 
   const move = async (task, statusId) => {
     if (task.status_id === statusId) return;
+
+    // moving a card into a done column asks for the outcome first, rather than
+    // closing it silently — the completion dialog performs the move itself
+    const target = statuses.find((s) => s.id === statusId);
+    const wasDone = task.stage === 'done' || task.stage === 'cancelled';
+    if (target?.stage === 'done' && !wasDone) {
+      setCompleting({ task, statusId });
+      return;
+    }
+
     const previous = tasks;
     setTasks((current) => current.map((t) => (t.id === task.id ? { ...t, status_id: statusId } : t)));
     try {
@@ -274,6 +286,14 @@ export default function Board() {
       )}
 
       {openTask && <TaskDialog taskId={openTask} onClose={() => setOpenTask(null)} onSaved={load} />}
+      {completing && (
+        <CompleteTaskDialog
+          task={completing.task}
+          targetStatusId={completing.statusId}
+          onClose={() => setCompleting(null)}
+          onCompleted={load}
+        />
+      )}
       {creatingIn && (
         <TaskDialog
           defaults={{ status_id: creatingIn, department_id: filters.department_id || undefined }}

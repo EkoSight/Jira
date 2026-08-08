@@ -39,6 +39,19 @@ React (Vite) PWA · Node.js + Express · PostgreSQL · JavaScript throughout.
   flags anyone over your limit (3 by default) so action can be taken.
 - Marks can be waived with a reason, and the waiver is kept on the record.
 
+**Recurring work**
+- A task can repeat daily, every working day, weekly or monthly. Completing one
+  automatically creates the next occurrence — same owner, checklist and tags, due
+  date rolled forward — so a daily routine is a fresh, closeable card each day
+  with its own record.
+
+**A real close-out, not just a status flip**
+- Marking a task done opens a prompt that asks for the outcome and any proof
+  (a link or image) before it will complete. The wording is tailored to the work
+  and the person — a bug asks how the fix was verified, a procurement task asks
+  for the PO, an overdue task asks what held it up — so it reads as a smart nudge
+  rather than a blank box. The outcome is saved on the card for anyone to see.
+
 **Working together on a card**
 - Two people per task: an **owner** who is accountable for the deadline, and a
   **follower** who works on it alongside them. Black marks stay with the owner.

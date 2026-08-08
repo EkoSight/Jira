@@ -14,6 +14,7 @@ import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
 import { logActivity, notify } from '../services/activity.js';
 import { handleTaskReopened, runBlackMarkScan } from '../services/blackmarks.js';
+import { spawnNextOccurrence, describeRecurrence } from '../services/recurrence.js';
 
 const router = Router();
 
@@ -129,6 +130,8 @@ const taskInput = z.object({
   progress: z.number().int().min(0).max(100).optional(),
   tags: z.array(z.string().max(40)).optional(),
   blocked_reason: z.string().max(500).nullable().optional(),
+  recurrence: z.enum(['none', 'daily', 'weekdays', 'weekly', 'monthly']).optional(),
+  completion_note: z.string().max(5000).nullable().optional(),
 });
 
 // ---------------------------------------------------------------- list
@@ -317,11 +320,11 @@ router.post(
         `INSERT INTO tasks
            (ref, title, description, department_id, status_id, priority, task_type, assignee_id,
             follower_id, parent_task_id, reporter_id, created_by, start_date, due_date,
-            original_due_date, estimate_hours, progress, tags, position, completed_at)
+            original_due_date, estimate_hours, progress, tags, position, completed_at, recurrence)
          VALUES ($1,$2,$3,$4,$5,COALESCE($6,'medium'),COALESCE($7,'task'),$8,$9,$10,$11,$12,$13,$14,$14,$15,
                  COALESCE($16::int,$18::int),COALESCE($17::text[],'{}'::text[]),
                  (SELECT COALESCE(MAX(position), 0) + 100 FROM tasks WHERE status_id = $5),
-                 $19)
+                 $19, COALESCE($20,'none'))
          RETURNING *`,
         [
           ref,
@@ -343,6 +346,7 @@ router.post(
           data.tags ?? null,
           bornDone ? 100 : 0,
           bornDone ? new Date() : null,
+          data.recurrence ?? null,
         ],
       );
 
@@ -443,8 +447,12 @@ router.patch(
       if (enteringDone) {
         fields.push('completed_at = now()');
         if (data.progress === undefined) fields.push('progress = 100');
+        if (data.completion_note) set('completion_note', data.completion_note);
       }
-      if (leavingDone) fields.push('completed_at = NULL');
+      if (leavingDone) {
+        fields.push('completed_at = NULL');
+        fields.push('completion_note = NULL');
+      }
 
       if (!fields.length) return existing;
 
@@ -471,7 +479,12 @@ router.patch(
       }
 
       if (enteringDone) {
-        await logActivity(client, { taskId: id, actorId: req.currentUser.id, action: 'completed' });
+        await logActivity(client, {
+          taskId: id,
+          actorId: req.currentUser.id,
+          action: 'completed',
+          to: data.completion_note || null,
+        });
       }
       if (leavingDone) {
         await logActivity(client, { taskId: id, actorId: req.currentUser.id, action: 'reopened' });
@@ -527,7 +540,22 @@ router.patch(
         }
       }
 
-      return { ...task, stage: newStage, previousStage: existing.stage };
+      // a recurring task spawns its next occurrence the moment this one is closed
+      let spawnedNext = null;
+      if (enteringDone && existing.recurrence && existing.recurrence !== 'none') {
+        spawnedNext = await spawnNextOccurrence(client, task);
+        if (spawnedNext && task.assignee_id) {
+          await notify(client, {
+            userId: task.assignee_id,
+            type: 'assigned',
+            title: `Next up: ${spawnedNext.ref}`,
+            body: `${task.title} — repeats ${describeRecurrence(existing.recurrence)}`,
+            taskId: spawnedNext.id,
+          });
+        }
+      }
+
+      return { ...task, stage: newStage, previousStage: existing.stage, spawnedNext };
     });
 
     // rule hooks run outside the transaction so a rule failure never loses the edit
@@ -543,7 +571,12 @@ router.patch(
     }
 
     const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
-    res.json({ task: rows[0] });
+    res.json({
+      task: rows[0],
+      next_occurrence: updated.spawnedNext
+        ? { id: updated.spawnedNext.id, ref: updated.spawnedNext.ref, due_date: updated.spawnedNext.due_date }
+        : null,
+    });
   }),
 );
 
@@ -551,8 +584,12 @@ router.patch(
 router.post(
   '/:id/move',
   asyncHandler(async (req, res) => {
-    const { status_id, position } = z
-      .object({ status_id: z.number().int().positive(), position: z.number().optional() })
+    const { status_id, position, completion_note: completionNote } = z
+      .object({
+        status_id: z.number().int().positive(),
+        position: z.number().optional(),
+        completion_note: z.string().max(5000).nullable().optional(),
+      })
       .parse(req.body);
     const id = Number(req.params.id);
 
@@ -581,6 +618,7 @@ router.post(
     const enteringDone = status.stage === 'done' && existing.stage !== 'done';
     const leavingDone = existing.stage === 'done' && status.stage !== 'done';
 
+    let spawnedNext = null;
     await withTransaction(async (client) => {
       await client.query(
         `UPDATE tasks
@@ -588,9 +626,10 @@ router.post(
                 position = COALESCE($2, (SELECT COALESCE(MAX(position), 0) + 100 FROM tasks WHERE status_id = $1)),
                 completed_at = CASE WHEN $3 THEN now() WHEN $4 THEN NULL ELSE completed_at END,
                 progress = CASE WHEN $3 THEN 100 ELSE progress END,
+                completion_note = CASE WHEN $3 THEN $6 WHEN $4 THEN NULL ELSE completion_note END,
                 updated_at = now()
           WHERE id = $5`,
-        [status_id, position ?? null, enteringDone, leavingDone, id],
+        [status_id, position ?? null, enteringDone, leavingDone, id, completionNote || null],
       );
       await logActivity(client, {
         taskId: id,
@@ -598,9 +637,22 @@ router.post(
         action: enteringDone ? 'completed' : leavingDone ? 'reopened' : 'moved',
         field: 'status_id',
         from: existing.status_id,
-        to: status_id,
+        to: enteringDone ? completionNote || null : status_id,
         meta: { to_status: status.name },
       });
+
+      if (enteringDone && existing.recurrence && existing.recurrence !== 'none') {
+        spawnedNext = await spawnNextOccurrence(client, { ...existing, status_id });
+        if (spawnedNext && existing.assignee_id) {
+          await notify(client, {
+            userId: existing.assignee_id,
+            type: 'assigned',
+            title: `Next up: ${spawnedNext.ref}`,
+            body: `${existing.title} — repeats ${describeRecurrence(existing.recurrence)}`,
+            taskId: spawnedNext.id,
+          });
+        }
+      }
     });
 
     if (leavingDone) {
@@ -611,7 +663,12 @@ router.post(
     }
 
     const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
-    res.json({ task: rows[0] });
+    res.json({
+      task: rows[0],
+      next_occurrence: spawnedNext
+        ? { id: spawnedNext.id, ref: spawnedNext.ref, due_date: spawnedNext.due_date }
+        : null,
+    });
   }),
 );
 

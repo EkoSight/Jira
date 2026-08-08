@@ -10,6 +10,7 @@ import {
   Subtasks,
   flushPendingAttachments,
 } from './TaskExtras.jsx';
+import CompleteTaskDialog from './CompleteTaskDialog.jsx';
 import {
   PRIORITIES,
   PRIORITY_LABEL,
@@ -35,7 +36,16 @@ const blankTask = (defaults = {}) => ({
   estimate_hours: '',
   progress: 0,
   tags: [],
+  recurrence: 'none',
 });
+
+const RECURRENCE_OPTIONS = [
+  ['none', 'Does not repeat'],
+  ['daily', 'Every day'],
+  ['weekdays', 'Every weekday (Mon–Sat)'],
+  ['weekly', 'Every week'],
+  ['monthly', 'Every month'],
+];
 
 /**
  * One dialog serves both "new card" and "open card" — the same fields, so people
@@ -61,6 +71,8 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   // staged while the task does not exist yet
   const [pending, setPending] = useState([]);
   const [pendingTags, setPendingTags] = useState([]);
+  // set when a done-transition needs the completion prompt
+  const [completing, setCompleting] = useState(null);
 
   const taskTypes = settings?.taskTypes || ['task'];
 
@@ -94,6 +106,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
           estimate_hours: data.task.estimate_hours ?? '',
           progress: data.task.progress,
           tags: data.task.tags || [],
+          recurrence: data.task.recurrence || 'none',
         });
       })
       .catch((err) => toast.error(err))
@@ -125,6 +138,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       estimate_hours: form.estimate_hours === '' ? null : Number(form.estimate_hours),
       progress: Number(form.progress) || 0,
       tags: form.tags,
+      recurrence: form.recurrence || 'none',
     };
     if (form.status_id) data.status_id = Number(form.status_id);
     return data;
@@ -161,10 +175,23 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
         // keep the dialog open on the new card so sub tasks and files are to hand
         setActiveId(created.id);
       } else {
-        const { task: updated } = await api.updateTask(activeId, payload());
-        toast.success('Saved');
-        setDetail((current) => ({ ...current, task: updated }));
-        onSaved?.(updated);
+        // marking done through the status dropdown must still capture an outcome:
+        // persist any other edits now (keeping the current status), then hand off
+        // to the completion prompt to do the actual move into the done column
+        const target = statuses.find((s) => String(s.id) === String(form.status_id));
+        const goingDone = target?.stage === 'done' && detail?.task?.stage !== 'done';
+        if (goingDone) {
+          const body = payload();
+          body.status_id = detail.task.status_id;
+          const { task: updated } = await api.updateTask(activeId, body);
+          setDetail((current) => ({ ...current, task: updated }));
+          setCompleting({ statusId: target.id });
+        } else {
+          const { task: updated } = await api.updateTask(activeId, payload());
+          toast.success('Saved');
+          setDetail((current) => ({ ...current, task: updated }));
+          onSaved?.(updated);
+        }
       }
     } catch (err) {
       toast.error(err);
@@ -248,6 +275,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   );
 
   return (
+    <>
     <Modal title={title} onClose={onClose} footer={footer} size="lg">
       {/* a freshly created card has an id but no loaded detail yet, so wait for it
           rather than rendering the sections that read from it */}
@@ -392,6 +420,23 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                   </select>
                 </Field>
 
+                <Field
+                  label="Repeats"
+                  hint={
+                    form.recurrence !== 'none'
+                      ? 'Completing this creates the next one automatically'
+                      : 'Turn a daily/weekly routine into a repeating task'
+                  }
+                >
+                  <select className="select" value={form.recurrence} onChange={set('recurrence')} disabled={!canEdit}>
+                    {RECURRENCE_OPTIONS.map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
                 <Field label="Estimate (hours)" hint="Feeds the team bandwidth view">
                   <input
                     type="number"
@@ -509,6 +554,15 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 </div>
               )}
 
+              {!isNew && task?.completion_note && (
+                <div>
+                  <div className="small" style={{ fontWeight: 600, marginBottom: 4 }}>
+                    Outcome recorded on completion
+                  </div>
+                  <div className="outcome-box">{task.completion_note}</div>
+                </div>
+              )}
+
               {!isNew && task && (
                 <div className="row wrap small muted" style={{ gap: 14 }}>
                   <span>Created by {task.created_by_name || 'someone'} · {formatDate(task.created_at)}</span>
@@ -577,6 +631,20 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
         </div>
       )}
     </Modal>
+
+    {completing && detail?.task && (
+      <CompleteTaskDialog
+        task={detail.task}
+        targetStatusId={completing.statusId}
+        onClose={() => setCompleting(null)}
+        onCompleted={(result) => {
+          setCompleting(null);
+          reload();
+          onSaved?.(result.task);
+        }}
+      />
+    )}
+    </>
   );
 }
 

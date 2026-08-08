@@ -26,6 +26,11 @@ export default function TaskCard({ task, onOpen, draggable, onDragStart, onDragE
       <div className="row" style={{ gap: 6 }}>
         <span className="task-ref">{task.ref}</span>
         <Badge dot={task.department_color}>{task.department_name}</Badge>
+        {task.recurrence && task.recurrence !== 'none' && (
+          <Badge tone="brand" title={`Repeats ${task.recurrence}`}>
+            <Icon name="clock" size={10} /> {task.recurrence}
+          </Badge>
+        )}
       </div>
 
       <div className="task-card-title">{task.title}</div>
