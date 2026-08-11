@@ -1,14 +1,16 @@
 import { Avatar, Badge, Icon } from './ui.jsx';
 import { dueLabel, PRIORITY_LABEL, PRIORITY_TONE } from '../lib/format.js';
 
-export default function TaskCard({ task, onOpen, draggable, onDragStart, onDragEnd, compact }) {
+export default function TaskCard({ task, onOpen, onOpenParent, draggable, onDragStart, onDragEnd, compact }) {
   const done = task.stage === 'done' || task.stage === 'cancelled';
   const due = dueLabel(task.due_date, { done });
   const checklist = task.checklist_total > 0;
+  const isSubtask = Boolean(task.parent_task_id);
+  const isParent = task.subtask_total > 0;
 
   return (
     <article
-      className={`task-card priority-bar-${task.priority}`}
+      className={`task-card priority-bar-${task.priority}${isSubtask ? ' is-subtask' : ''}`}
       draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -21,11 +23,30 @@ export default function TaskCard({ task, onOpen, draggable, onDragStart, onDragE
       }}
       tabIndex={0}
       role="button"
-      aria-label={`${task.ref} ${task.title}`}
+      aria-label={`${isSubtask ? 'Subtask ' : ''}${task.ref} ${task.title}`}
     >
+      {isSubtask && (
+        <button
+          type="button"
+          className="subtask-link"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenParent?.(task.parent_task_id);
+          }}
+          title={task.parent_title ? `Part of ${task.parent_ref}: ${task.parent_title}` : `Part of ${task.parent_ref}`}
+        >
+          <Icon name="subtask" size={12} /> Subtask of {task.parent_ref}
+        </button>
+      )}
+
       <div className="row" style={{ gap: 6 }}>
         <span className="task-ref">{task.ref}</span>
         <Badge dot={task.department_color}>{task.department_name}</Badge>
+        {isParent && (
+          <Badge tone="neutral" title="This task has subtasks">
+            <Icon name="subtask" size={10} /> {task.subtask_done}/{task.subtask_total}
+          </Badge>
+        )}
         {task.recurrence && task.recurrence !== 'none' && (
           <Badge tone="brand" title={`Repeats ${task.recurrence}`}>
             <Icon name="clock" size={10} /> {task.recurrence}

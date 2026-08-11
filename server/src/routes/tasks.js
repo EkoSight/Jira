@@ -674,19 +674,33 @@ router.post(
 
 router.delete(
   '/:id',
-  requirePermission('task.delete'),
   asyncHandler(async (req, res) => {
-    const permanent = req.query.permanent === 'true' && hasPermission(req.currentUser, 'task.delete');
+    const { rows } = await query('SELECT id, created_by FROM tasks WHERE id = $1', [req.params.id]);
+    const existing = rows[0];
+    if (!existing) throw notFound('Task not found');
+
+    // Managers keep the delete permission; on top of that, whoever created a task
+    // can remove it — this is what lets people clear accidental duplicates they
+    // made themselves without needing an admin.
+    const isCreator = existing.created_by === req.currentUser.id;
+    const canManage = hasPermission(req.currentUser, 'task.delete');
+    if (!isCreator && !canManage) {
+      throw forbidden('Only the person who created a task, or a manager, can delete it');
+    }
+
+    // The caller states intent explicitly: ?permanent=true removes the row (child
+    // subtasks and attachments cascade), otherwise it is archived. Both are open to
+    // the creator and to managers — the creator's "delete duplicate" button asks
+    // for a permanent delete, a manager's "archive" does not.
+    const permanent = req.query.permanent === 'true';
+
     if (permanent) {
-      const { rowCount } = await query('DELETE FROM tasks WHERE id = $1', [req.params.id]);
-      if (!rowCount) throw notFound('Task not found');
+      await query('DELETE FROM tasks WHERE id = $1', [existing.id]);
       return res.json({ ok: true, deleted: true });
     }
-    const { rowCount } = await query('UPDATE tasks SET is_archived = TRUE, updated_at = now() WHERE id = $1', [
-      req.params.id,
-    ]);
-    if (!rowCount) throw notFound('Task not found');
-    await logActivity(null, { taskId: Number(req.params.id), actorId: req.currentUser.id, action: 'archived' });
+
+    await query('UPDATE tasks SET is_archived = TRUE, updated_at = now() WHERE id = $1', [existing.id]);
+    await logActivity(null, { taskId: existing.id, actorId: req.currentUser.id, action: 'archived' });
     res.json({ ok: true, archived: true });
   }),
 );

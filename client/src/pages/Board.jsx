@@ -197,6 +197,7 @@ export default function Board() {
                     <TaskCard
                       task={task}
                       onOpen={() => setOpenTask(task.id)}
+                      onOpenParent={(parentId) => setOpenTask(parentId)}
                       draggable
                       onDragStart={() => setDragging(task)}
                       onDragEnd={() => {
@@ -246,11 +247,33 @@ export default function Board() {
                 {tasks.map((task) => {
                   const due = dueLabel(task.due_date, { done: task.stage === 'done' });
                   return (
-                    <tr key={task.id} className="clickable" onClick={() => setOpenTask(task.id)}>
+                    <tr
+                      key={task.id}
+                      className={`clickable${task.parent_task_id ? ' subtask-row' : ''}`}
+                      onClick={() => setOpenTask(task.id)}
+                    >
                       <td>
+                        {task.parent_task_id && (
+                          <button
+                            type="button"
+                            className="subtask-link"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setOpenTask(task.parent_task_id);
+                            }}
+                            title={task.parent_title ? `Part of ${task.parent_ref}: ${task.parent_title}` : undefined}
+                          >
+                            <Icon name="subtask" size={12} /> Subtask of {task.parent_ref}
+                          </button>
+                        )}
                         <div className="row" style={{ gap: 8 }}>
                           <span className="task-ref">{task.ref}</span>
                           <span className="truncate" style={{ maxWidth: 340 }}>{task.title}</span>
+                          {task.subtask_total > 0 && (
+                            <Badge tone="neutral" title="Has subtasks">
+                              <Icon name="subtask" size={10} /> {task.subtask_done}/{task.subtask_total}
+                            </Badge>
+                          )}
                         </div>
                       </td>
                       <td><Badge dot={task.department_color}>{task.department_name}</Badge></td>

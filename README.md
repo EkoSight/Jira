@@ -58,7 +58,13 @@ React (Vite) PWA · Node.js + Express · PostgreSQL · JavaScript throughout.
 - **Tag anyone from any department** — a tagged person sees and can comment on the
   card even when it belongs to a team they are not in.
 - **Sub tasks** are real cards. Completing them drives the parent's progress, so a
-  parent can never claim to be further along than its children.
+  parent can never claim to be further along than its children. On the board and in
+  the list they are visually set apart — indented, with a link back to their parent
+  task — and a parent shows how many subtasks it has. Clicking the link opens the
+  parent.
+- **Delete your own duplicates.** Whoever created a task can delete it outright
+  (managers keep the softer archive). This is the fix for the accidental duplicates
+  that creep in — only the creator, or a manager, can remove a card.
 - **Attach Google Docs, Sheets, Slides and Drive links**, or upload images and
   documents. Uploads are served only to people allowed to see the task.
 

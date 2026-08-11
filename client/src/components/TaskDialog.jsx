@@ -245,6 +245,22 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     }
   };
 
+  const deleteTask = async () => {
+    try {
+      await api.deleteTask(activeId);
+      toast.success('Task deleted');
+      onSaved?.(null);
+      onClose();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  // whoever created a task can delete it outright — the fix for accidental
+  // duplicates. Managers keep the softer "Archive".
+  const isCreator = task && task.created_by === user.id;
+  const subtaskCount = detail?.subtasks?.length || 0;
+
   const title = isNew ? (
     'New task'
   ) : task ? (
@@ -259,7 +275,14 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
   const footer = (
     <>
-      {!isNew && can('task.delete') && (
+      {!isNew && isCreator && (
+        <ConfirmButton
+          label="Delete"
+          confirmLabel={subtaskCount ? `Delete this and ${subtaskCount} subtask${subtaskCount === 1 ? '' : 's'}?` : 'Tap again to delete'}
+          onConfirm={deleteTask}
+        />
+      )}
+      {!isNew && !isCreator && can('task.delete') && (
         <ConfirmButton label="Archive" confirmLabel="Tap again to archive" onConfirm={archive} />
       )}
       <span className="grow" />

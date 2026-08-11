@@ -102,6 +102,7 @@ export const api = {
   updateTask: (id, data) => request('PATCH', `/tasks/${id}`, data),
   moveTask: (id, data) => request('POST', `/tasks/${id}/move`, data),
   archiveTask: (id) => request('DELETE', `/tasks/${id}`),
+  deleteTask: (id) => request('DELETE', `/tasks/${id}?permanent=true`),
   restoreTask: (id) => request('POST', `/tasks/${id}/restore`),
   addComment: (id, body) => request('POST', `/tasks/${id}/comments`, { body }),
   deleteComment: (taskId, commentId) => request('DELETE', `/tasks/${taskId}/comments/${commentId}`),

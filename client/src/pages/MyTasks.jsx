@@ -88,7 +88,12 @@ export default function MyTasks() {
             {group.tasks.map((task) => (
               <div key={task.id} className="row" style={{ alignItems: 'stretch', gap: 8 }}>
                 <div className="grow">
-                  <TaskCard task={task} onOpen={() => setOpenTask(task.id)} compact />
+                  <TaskCard
+                    task={task}
+                    onOpen={() => setOpenTask(task.id)}
+                    onOpenParent={(parentId) => setOpenTask(parentId)}
+                    compact
+                  />
                 </div>
                 <button
                   type="button"

@@ -510,6 +510,42 @@ button, input, select, textarea {
 .task-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .task-ref { font-size: 11px; font-weight: 700; color: var(--ink-muted); letter-spacing: 0.02em; }
 
+/* subtasks read differently from top-level cards, in both board and list */
+.subtask-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin-bottom: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--brand-ink);
+}
+.subtask-link:hover { text-decoration: underline; }
+
+.task-card.is-subtask {
+  margin-left: 14px;
+  border-left-style: dashed;
+  background: var(--surface-2);
+}
+.task-card.is-subtask::before {
+  content: '';
+  position: absolute;
+  left: -10px;
+  top: 14px;
+  width: 8px;
+  height: 8px;
+  border-left: 1.5px solid var(--border-strong);
+  border-bottom: 1.5px solid var(--border-strong);
+  border-bottom-left-radius: 3px;
+}
+.task-card { position: relative; }
+
+table.data tr.subtask-row td:first-child { padding-left: 22px; box-shadow: inset 3px 0 0 var(--border-strong); }
+
 /* drag and drop covers pointer devices; the select is the touch fallback */
 .card-move { display: none; }
 @media (hover: none), (max-width: 900px) {

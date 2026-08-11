@@ -975,6 +975,96 @@ test('a task created straight into a done status counts as completed this month'
   assert.equal(rows[0].n, 0, 'no done task is left without a completion date');
 });
 
+test('the creator can delete their own task, others cannot', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // the member creates a task (a duplicate they want to remove)
+  const created = await call('POST', '/tasks', {
+    token: tokens.member,
+    body: { title: 'Accidental duplicate', department_id: ids.department, assignee_id: ids.member },
+  });
+  const id = created.body.task.id;
+
+  // the outsider (not creator, no task.delete) is refused
+  const refused = await call('DELETE', `/tasks/${id}?permanent=true`, { token: tokens.outsider });
+  assert.equal(refused.status, 403);
+
+  // the creator deletes it permanently
+  const deleted = await call('DELETE', `/tasks/${id}?permanent=true`, { token: tokens.member });
+  assert.equal(deleted.status, 200);
+  assert.equal(deleted.body.deleted, true);
+
+  // it is really gone
+  const gone = await call('GET', `/tasks/${id}`, { token: tokens.admin });
+  assert.equal(gone.status, 404);
+});
+
+test('deleting a parent removes its subtasks too', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const parent = await call('POST', '/tasks', {
+    token: tokens.member,
+    body: { title: 'Duplicated parent', department_id: ids.department, assignee_id: ids.member },
+  });
+  const child = await call('POST', '/tasks', {
+    token: tokens.member,
+    body: {
+      title: 'Its child',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      parent_task_id: parent.body.task.id,
+    },
+  });
+
+  await call('DELETE', `/tasks/${parent.body.task.id}?permanent=true`, { token: tokens.member });
+
+  const childGone = await call('GET', `/tasks/${child.body.task.id}`, { token: tokens.admin });
+  assert.equal(childGone.status, 404, 'the subtask is removed with its parent');
+});
+
+test('a manager archiving (not deleting) still just archives', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Manager archives this', department_id: ids.department, assignee_id: ids.member },
+  });
+  const id = created.body.task.id;
+
+  // admin has task.delete; a plain delete (no permanent flag) archives, not deletes
+  const archived = await call('DELETE', `/tasks/${id}`, { token: tokens.admin });
+  assert.equal(archived.body.archived, true);
+
+  const stillThere = await call('GET', `/tasks/${id}?archived=true`, { token: tokens.admin });
+  assert.equal(stillThere.status, 200, 'archived, so still recoverable');
+});
+
+test('a subtask carries its parent reference for the board and list views', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const parent = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Parent for linking', department_id: ids.department, assignee_id: ids.admin },
+  });
+  const child = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Linked child',
+      department_id: ids.department,
+      assignee_id: ids.admin,
+      parent_task_id: parent.body.task.id,
+    },
+  });
+
+  const list = await call('GET', '/tasks', { token: tokens.admin });
+  const childRow = list.body.tasks.find((tk) => tk.id === child.body.task.id);
+  const parentRow = list.body.tasks.find((tk) => tk.id === parent.body.task.id);
+
+  assert.equal(childRow.parent_task_id, parent.body.task.id);
+  assert.equal(childRow.parent_ref, parent.body.task.ref, 'subtask exposes the parent ref for the link');
+  assert.ok(parentRow.subtask_total >= 1, 'parent shows it has subtasks');
+});
+
 test('archiving hides a card from the default list', async (t) => {
   if (skipIfUnavailable(t)) return;
 
