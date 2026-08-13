@@ -8,6 +8,10 @@
  * from today's.
  */
 
+import { withTransaction } from '../db/pool.js';
+import { notify } from './activity.js';
+import { nextTaskRef } from '../lib/taskRef.js';
+
 export const RECURRENCES = ['none', 'daily', 'weekdays', 'weekly', 'monthly'];
 
 const addDays = (date, n) => {
@@ -74,14 +78,10 @@ export async function spawnNextOccurrence(client, task) {
 
   const due = task.due_date ? nextDueDate(task.recurrence, task.due_date) : nextDueDate(task.recurrence, new Date());
 
-  // reference stays within the department series (DEPT-N)
-  const { rows: deptRows } = await client.query('SELECT key FROM departments WHERE id = $1', [task.department_id]);
-  const { rows: seqRows } = await client.query(
-    `SELECT COALESCE(MAX(NULLIF(regexp_replace(ref, '^.*-', ''), '')::int), 0) + 1 AS next
-       FROM tasks WHERE department_id = $1`,
-    [task.department_id],
-  );
-  const ref = `${deptRows[0].key}-${seqRows[0].next}`;
+  // reference stays within the department series (DEPT-N), allocated under the
+  // same lock the normal create path uses so two simultaneous completions in one
+  // department cannot mint the same reference
+  const ref = await nextTaskRef(client, task.department_id);
 
   const { rows } = await client.query(
     `INSERT INTO tasks
@@ -129,4 +129,41 @@ export async function spawnNextOccurrence(client, task) {
   );
 
   return next;
+}
+
+/**
+ * Spawns the next occurrence in its own transaction, after the completion has
+ * already been committed.
+ *
+ * Completing a task is what the person actually did; creating tomorrow's card is a
+ * convenience on top. Running it separately means a failure here can never roll
+ * back — or silently discard — someone's completion. Failures are logged and
+ * reported rather than swallowed.
+ *
+ * @returns the new task row, or null if the task does not recur or the spawn failed.
+ */
+export async function spawnNextOccurrenceAfterCompletion(task) {
+  if (!task?.recurrence || task.recurrence === 'none') return null;
+
+  try {
+    return await withTransaction(async (client) => {
+      const next = await spawnNextOccurrence(client, task);
+      if (next && task.assignee_id) {
+        await notify(client, {
+          userId: task.assignee_id,
+          type: 'assigned',
+          title: `Next up: ${next.ref}`,
+          body: `${task.title} — repeats ${describeRecurrence(task.recurrence)}`,
+          taskId: next.id,
+        });
+      }
+      return next;
+    });
+  } catch (err) {
+    console.error(
+      `[taskflow] could not create the next occurrence of ${task.ref} (${task.recurrence}):`,
+      err.message,
+    );
+    return null;
+  }
 }

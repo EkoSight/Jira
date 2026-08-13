@@ -14,7 +14,8 @@ import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
 import { logActivity, notify } from '../services/activity.js';
 import { handleTaskReopened, runBlackMarkScan } from '../services/blackmarks.js';
-import { spawnNextOccurrence, describeRecurrence } from '../services/recurrence.js';
+import { spawnNextOccurrenceAfterCompletion } from '../services/recurrence.js';
+import { nextTaskRef } from '../lib/taskRef.js';
 
 const router = Router();
 
@@ -96,20 +97,8 @@ async function canAccess(user, taskId) {
   return rows.length > 0;
 }
 
-async function nextRef(client, departmentId) {
-  const { rows } = await client.query(
-    'SELECT key FROM departments WHERE id = $1 FOR UPDATE',
-    [departmentId],
-  );
-  if (!rows[0]) throw badRequest('Department not found');
-  const key = rows[0].key;
-  const { rows: seq } = await client.query(
-    `SELECT COALESCE(MAX(NULLIF(regexp_replace(ref, '^.*-', ''), '')::int), 0) + 1 AS next
-       FROM tasks WHERE department_id = $1`,
-    [departmentId],
-  );
-  return `${key}-${seq[0].next}`;
-}
+// reference allocation is shared with the recurrence spawner — see lib/taskRef.js
+const nextRef = nextTaskRef;
 
 const taskInput = z.object({
   title: z.string().min(3).max(200),
@@ -540,23 +529,14 @@ router.patch(
         }
       }
 
-      // a recurring task spawns its next occurrence the moment this one is closed
-      let spawnedNext = null;
-      if (enteringDone && existing.recurrence && existing.recurrence !== 'none') {
-        spawnedNext = await spawnNextOccurrence(client, task);
-        if (spawnedNext && task.assignee_id) {
-          await notify(client, {
-            userId: task.assignee_id,
-            type: 'assigned',
-            title: `Next up: ${spawnedNext.ref}`,
-            body: `${task.title} — repeats ${describeRecurrence(existing.recurrence)}`,
-            taskId: spawnedNext.id,
-          });
-        }
-      }
-
-      return { ...task, stage: newStage, previousStage: existing.stage, spawnedNext };
+      return { ...task, stage: newStage, previousStage: existing.stage, enteringDone };
     });
+
+    // the next occurrence is created after the completion has committed, so it can
+    // never roll back the completion itself
+    if (updated.enteringDone) {
+      updated.spawnedNext = await spawnNextOccurrenceAfterCompletion(updated);
+    }
 
     // rule hooks run outside the transaction so a rule failure never loses the edit
     if (updated.previousStage === 'done' && updated.stage !== 'done') {
@@ -566,7 +546,7 @@ router.patch(
     }
     if (updated.stage === 'done' && updated.previousStage !== 'done') {
       await runBlackMarkScan({ taskId: id }).catch((err) =>
-        console.error('[taskflow] late-completion scan failed', err),
+        console.error(`[taskflow] black mark scan failed for task ${id}:`, err.message),
       );
     }
 
@@ -618,7 +598,6 @@ router.post(
     const enteringDone = status.stage === 'done' && existing.stage !== 'done';
     const leavingDone = existing.stage === 'done' && status.stage !== 'done';
 
-    let spawnedNext = null;
     await withTransaction(async (client) => {
       await client.query(
         `UPDATE tasks
@@ -640,26 +619,26 @@ router.post(
         to: enteringDone ? completionNote || null : status_id,
         meta: { to_status: status.name },
       });
-
-      if (enteringDone && existing.recurrence && existing.recurrence !== 'none') {
-        spawnedNext = await spawnNextOccurrence(client, { ...existing, status_id });
-        if (spawnedNext && existing.assignee_id) {
-          await notify(client, {
-            userId: existing.assignee_id,
-            type: 'assigned',
-            title: `Next up: ${spawnedNext.ref}`,
-            body: `${existing.title} — repeats ${describeRecurrence(existing.recurrence)}`,
-            taskId: spawnedNext.id,
-          });
-        }
-      }
     });
 
+    // Everything below runs after the completion is committed, so none of it can
+    // undo the work the person just recorded.
+    let spawnedNext = null;
+    if (enteringDone) {
+      spawnedNext = await spawnNextOccurrenceAfterCompletion(existing);
+    }
+
     if (leavingDone) {
-      await handleTaskReopened({ task: { ...existing, ...status }, actorId: req.currentUser.id }).catch(() => {});
+      await handleTaskReopened({ task: { ...existing, ...status }, actorId: req.currentUser.id }).catch((err) =>
+        console.error('[taskflow] reopen rule failed:', err.message),
+      );
     }
     if (enteringDone) {
-      await runBlackMarkScan({ taskId: id }).catch(() => {});
+      // black marks must be recorded for a late completion — a failure here is
+      // logged loudly rather than swallowed, so it can never go unnoticed
+      await runBlackMarkScan({ taskId: id }).catch((err) =>
+        console.error(`[taskflow] black mark scan failed for task ${id}:`, err.message),
+      );
     }
 
     const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);

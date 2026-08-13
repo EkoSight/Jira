@@ -949,6 +949,123 @@ test('a recurring task spawns its next occurrence when completed', async (t) => 
   assert.ok(done2.body.next_occurrence, 'the series keeps going');
 });
 
+test('simultaneous completions in one department do not collide on the task reference', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // Two people finishing their daily recurring tasks at the same moment used to
+  // mint the same DEPT-N reference, so one completion failed with a unique
+  // violation ("That record already exists") and was rolled back entirely.
+  const ids4 = [];
+  for (let i = 0; i < 4; i += 1) {
+    const created = await call('POST', '/tasks', {
+      token: tokens.admin,
+      body: {
+        title: `Concurrent daily ${i}`,
+        department_id: ids.department,
+        assignee_id: ids.member,
+        recurrence: 'daily',
+        due_date: daysFromNow(0),
+      },
+    });
+    ids4.push(created.body.task.id);
+  }
+
+  const results = await Promise.all(
+    ids4.map((id) =>
+      call('POST', `/tasks/${id}/move`, {
+        token: tokens.admin,
+        body: { status_id: ids.done, completion_note: 'Closed for today.' },
+      }),
+    ),
+  );
+
+  for (const result of results) {
+    assert.equal(result.status, 200, `completion failed: ${result.body.error}`);
+    assert.ok(result.body.task.completed_at, 'the completion actually stuck');
+    assert.ok(result.body.next_occurrence, 'and the next occurrence was created');
+  }
+
+  // every reference minted must be unique
+  const refs = results.map((r) => r.body.next_occurrence.ref);
+  assert.equal(new Set(refs).size, refs.length, `duplicate references minted: ${refs.join(', ')}`);
+
+  const { rows } = await query(
+    `SELECT ref, COUNT(*)::int AS n FROM tasks GROUP BY ref HAVING COUNT(*) > 1`,
+  );
+  assert.equal(rows.length, 0, 'no duplicate task references exist');
+});
+
+test('a failed successor is reported as null instead of throwing', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // The spawn runs after the completion has committed and must never propagate an
+  // error, or it would surface as a failed completion to the person marking done.
+  const { spawnNextOccurrenceAfterCompletion } = await import('../src/services/recurrence.js');
+
+  const impossible = await spawnNextOccurrenceAfterCompletion({
+    id: -1,
+    ref: 'GONE-1',
+    title: 'Series with no department',
+    department_id: 999999, // does not exist, so the insert cannot succeed
+    recurrence: 'daily',
+    assignee_id: ids.member,
+    tags: [],
+  });
+  assert.equal(impossible, null, 'the failure is contained and reported as no successor');
+
+  // and a completion made right afterwards still works normally
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Still completable', department_id: ids.department, assignee_id: ids.member },
+  });
+  const done = await call('POST', `/tasks/${created.body.task.id}/move`, {
+    token: tokens.admin,
+    body: { status_id: ids.done, completion_note: 'Fine.' },
+  });
+  assert.equal(done.status, 200);
+  assert.ok(done.body.task.completed_at);
+});
+
+test('completing a task after its deadline records a black mark against the owner', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  await query(`UPDATE blackmark_rules SET is_active = FALSE`);
+  await call('POST', '/blackmarks/rules', {
+    token: tokens.admin,
+    body: { name: 'Delivered late', trigger_type: 'completed_late', points: 0.5, grace_hours: 0 },
+  });
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Finished behind schedule',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      follower_id: ids.admin,
+      due_date: daysFromNow(-4),
+    },
+  });
+  const id = created.body.task.id;
+
+  await call('POST', `/tasks/${id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Late, but delivered.' },
+  });
+
+  const { rows } = await query(
+    `SELECT bm.user_id, bm.points FROM black_marks bm WHERE bm.task_id = $1`,
+    [id],
+  );
+  assert.equal(rows.length, 1, 'exactly one late-delivery mark');
+  assert.equal(rows[0].user_id, ids.member, 'recorded against the owner, not the follower');
+  assert.equal(Number(rows[0].points), 0.5);
+
+  // and it is counted in the monthly review
+  const review = await monthlyReview({});
+  const member = review.members.find((m) => m.user_id === ids.member);
+  assert.ok(member.missed_deadlines >= 1, 'a late delivery counts toward missed deadlines');
+});
+
 test('a task created straight into a done status counts as completed this month', async (t) => {
   if (skipIfUnavailable(t)) return;
 
