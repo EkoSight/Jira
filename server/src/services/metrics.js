@@ -11,6 +11,12 @@ const scopeClause = (scope, params) => {
     params.push(scope.assigneeId);
     where.push(`t.assignee_id = $${params.length}`);
   }
+  // "my work" covers what someone owns and what they follow, so a follower's own
+  // dashboard counts the tasks they are actually working on
+  if (scope?.mineUserId) {
+    params.push(scope.mineUserId);
+    where.push(`(t.assignee_id = $${params.length} OR t.follower_id = $${params.length})`);
+  }
   return where.join(' AND ');
 };
 

@@ -769,6 +769,47 @@ test('the follower can see and move the task, but the owner keeps the black mark
   assert.equal(mark.user_id, ids.member, 'against the owner, not the follower');
 });
 
+test('a follower sees the task on their own list, board and dashboard', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // owned by the admin, followed by the outsider — who is in another department,
+  // so nothing but the follower link can make it visible to them
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Owned by one, supported by another',
+      department_id: ids.department,
+      assignee_id: ids.admin,
+      follower_id: ids.outsider,
+      due_date: daysFromNow(2),
+    },
+  });
+  const id = created.body.task.id;
+
+  // 1. their own task list
+  const mine = await call('GET', '/tasks/mine', { token: tokens.outsider });
+  assert.ok(
+    mine.body.tasks.some((task) => task.id === id),
+    'a followed task appears on the follower’s own list',
+  );
+
+  // 2. the board
+  const board = await call('GET', '/tasks', { token: tokens.outsider });
+  assert.ok(board.body.tasks.some((task) => task.id === id), 'and on the board');
+
+  // 3. their dashboard counters and upcoming deadlines
+  const dashboard = await call('GET', '/reports/dashboard', { token: tokens.outsider });
+  assert.ok(dashboard.body.summary.pending >= 1, 'and is counted on their dashboard');
+  assert.ok(
+    dashboard.body.upcoming.some((task) => task.id === id),
+    'and shows in their upcoming deadlines',
+  );
+
+  // the owner still sees it as theirs
+  const ownerList = await call('GET', '/tasks/mine', { token: tokens.admin });
+  assert.ok(ownerList.body.tasks.some((task) => task.id === id), 'the owner keeps it too');
+});
+
 test('sub tasks drive the parent progress', async (t) => {
   if (skipIfUnavailable(t)) return;
 

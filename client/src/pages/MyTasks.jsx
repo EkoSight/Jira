@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
-import { useRefData, useToast } from '../state/AppState.jsx';
+import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import TaskCard from '../components/TaskCard.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
@@ -28,6 +28,7 @@ const bucketFor = (task) => {
 
 export default function MyTasks() {
   const { statuses } = useRefData();
+  const { user } = useAuth();
   const toast = useToast();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -65,13 +66,13 @@ export default function MyTasks() {
       <div>
         <h1>My tasks</h1>
         <div className="small muted">
-          {tasks.length} open item{tasks.length === 1 ? '' : 's'} assigned to you, ordered by deadline
+          {tasks.length} open item{tasks.length === 1 ? '' : 's'} you own or are supporting, ordered by deadline
         </div>
       </div>
 
       {grouped.length === 0 && (
         <EmptyState title="Nothing on your plate">
-          You have no open tasks assigned to you right now.
+          You have no open tasks to own or support right now.
         </EmptyState>
       )}
 
@@ -88,6 +89,12 @@ export default function MyTasks() {
             {group.tasks.map((task) => (
               <div key={task.id} className="row" style={{ alignItems: 'stretch', gap: 8 }}>
                 <div className="grow">
+                  {task.assignee_id !== user.id && (
+                    <div className="row small muted" style={{ gap: 5, marginBottom: 3 }}>
+                      <Icon name="team" size={12} />
+                      Supporting {task.assignee_name || 'someone'} — they own the deadline
+                    </div>
+                  )}
                   <TaskCard
                     task={task}
                     onOpen={() => setOpenTask(task.id)}

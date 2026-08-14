@@ -19,8 +19,10 @@ const scopeFor = (req) => {
   if (req.query.department_id) scope.departmentId = Number(req.query.department_id);
   if (req.query.assignee_id) scope.assigneeId = Number(req.query.assignee_id);
   if (!hasPermission(req.currentUser, 'report.view')) {
-    scope.assigneeId = req.currentUser.id;
+    // their own numbers cover what they own and what they follow
+    delete scope.assigneeId;
     delete scope.departmentId;
+    scope.mineUserId = req.currentUser.id;
   }
   return scope;
 };

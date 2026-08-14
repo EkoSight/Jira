@@ -186,10 +186,15 @@ router.get(
 router.get(
   '/mine',
   asyncHandler(async (req, res) => {
+    // work someone is on includes tasks they follow — the follower works on it too,
+    // so it belongs on their list even though the owner carries the deadline
     const { rows } = await query(
       `${TASK_SELECT}
-        WHERE t.assignee_id = $1 AND t.is_archived = FALSE AND s.stage NOT IN ('done','cancelled')
-        ORDER BY t.due_date ASC NULLS LAST,
+        WHERE (t.assignee_id = $1 OR t.follower_id = $1)
+          AND t.is_archived = FALSE
+          AND s.stage NOT IN ('done','cancelled')
+        ORDER BY (t.assignee_id = $1) DESC,
+                 t.due_date ASC NULLS LAST,
                  CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`,
       [req.currentUser.id],
     );
