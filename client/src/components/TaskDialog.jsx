@@ -123,6 +123,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   };
 
   const canEdit = isNew ? can('task.create') : detail?.can_edit;
+  // handing the task to someone else stays open even on a task you are not part of
+  const canReassign = isNew ? can('task.create') : Boolean(detail?.can_edit || detail?.can_reassign);
+  const handOverOnly = !isNew && !canEdit && canReassign;
   const task = detail?.task;
 
   const payload = () => {
@@ -187,8 +190,17 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
           setDetail((current) => ({ ...current, task: updated }));
           setCompleting({ statusId: target.id });
         } else {
-          const { task: updated } = await api.updateTask(activeId, payload());
-          toast.success('Saved');
+          // someone who may only hand the task over sends just those two fields —
+          // the server rejects anything wider from them
+          const body = handOverOnly
+            ? {
+                assignee_id: form.assignee_id ? Number(form.assignee_id) : null,
+                follower_id: form.follower_id ? Number(form.follower_id) : null,
+              }
+            : payload();
+
+          const { task: updated } = await api.updateTask(activeId, body);
+          toast.success(handOverOnly ? 'Task handed over' : 'Saved');
           setDetail((current) => ({ ...current, task: updated }));
           onSaved?.(updated);
         }
@@ -289,9 +301,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       <button type="button" className="btn" onClick={onClose}>
         Close
       </button>
-      {canEdit && (
+      {(canEdit || handOverOnly) && (
         <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
-          {saving ? 'Saving…' : isNew ? 'Create task' : 'Save changes'}
+          {saving ? 'Saving…' : isNew ? 'Create task' : handOverOnly ? 'Hand over' : 'Save changes'}
         </button>
       )}
     </>
@@ -374,9 +386,20 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
                 <Field
                   label="Task owner *"
-                  hint={can('task.assign') ? 'Required — accountable for the deadline' : 'You can only assign work to yourself'}
+                  hint={
+                    handOverOnly
+                      ? 'You can hand this task to someone else'
+                      : can('task.assign')
+                        ? 'Required — accountable for the deadline'
+                        : 'You can only assign work to yourself'
+                  }
                 >
-                  <select className="select" value={form.assignee_id} onChange={set('assignee_id')} disabled={!canEdit}>
+                  <select
+                    className="select"
+                    value={form.assignee_id}
+                    onChange={set('assignee_id')}
+                    disabled={!canReassign}
+                  >
                     <option value="">Select an owner…</option>
                     {users
                       .filter((u) => can('task.assign') || u.id === user.id)
@@ -393,7 +416,12 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                   label="Second person (follower)"
                   hint="Works on it too, but the owner carries the deadline"
                 >
-                  <select className="select" value={form.follower_id} onChange={set('follower_id')} disabled={!canEdit}>
+                  <select
+                    className="select"
+                    value={form.follower_id}
+                    onChange={set('follower_id')}
+                    disabled={!canReassign}
+                  >
                     <option value="">Nobody</option>
                     {users
                       .filter((u) => String(u.id) !== String(form.assignee_id))

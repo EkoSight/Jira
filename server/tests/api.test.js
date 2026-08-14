@@ -184,13 +184,60 @@ test('rejects a task with no owner', async (t) => {
   assert.match(result.body.error, /task owner is required/i);
 });
 
-test('a member cannot reassign someone else’s work', async (t) => {
+test('any member can hand a task to anyone', async (t) => {
   if (skipIfUnavailable(t)) return;
+
+  // a plain member reassigns work to someone else — no manager rights needed
   const result = await call('PATCH', `/tasks/${ids.task}`, {
     token: tokens.member,
     body: { assignee_id: ids.admin },
   });
-  assert.equal(result.status, 403);
+  assert.equal(result.status, 200);
+  assert.equal(result.body.task.assignee_id, ids.admin);
+
+  // and can hand it back
+  const back = await call('PATCH', `/tasks/${ids.task}`, {
+    token: tokens.member,
+    body: { assignee_id: ids.member },
+  });
+  assert.equal(back.body.task.assignee_id, ids.member);
+});
+
+test('a member can create a task owned by someone else', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.member,
+    body: { title: 'Work for a colleague', department_id: ids.department, assignee_id: ids.admin },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.task.assignee_id, ids.admin, 'assigned to another person on creation');
+});
+
+test('ownership can be changed on a task you are not part of, but nothing else', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // a task the member neither owns, created, nor follows — but can see (same department)
+  const foreign = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { title: 'Unclaimed department work', department_id: ids.department, assignee_id: ids.admin },
+  });
+  const id = foreign.body.task.id;
+
+  // a wider edit on a task they are not part of is still refused
+  const wideEdit = await call('PATCH', `/tasks/${id}`, {
+    token: tokens.member,
+    body: { title: 'Renamed by someone uninvolved' },
+  });
+  assert.equal(wideEdit.status, 403, 'other fields still need edit rights');
+
+  // changing the owner of that same task is allowed
+  const handedOver = await call('PATCH', `/tasks/${id}`, {
+    token: tokens.member,
+    body: { assignee_id: ids.member },
+  });
+  assert.equal(handedOver.status, 200, 'handing it over is allowed');
+  assert.equal(handedOver.body.task.assignee_id, ids.member);
 });
 
 test('moving a card to a done status stamps completion, and reopening clears it', async (t) => {

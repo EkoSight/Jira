@@ -71,6 +71,8 @@ export const ROLE_PERMISSIONS = {
     'task.view.department',
     'task.create',
     'task.edit.own',
+    // everyone hands work to everyone here, so assigning is not a manager-only act
+    'task.assign',
     'task.comment',
     'user.view',
     'blackmark.view',

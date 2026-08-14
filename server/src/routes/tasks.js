@@ -259,6 +259,8 @@ router.get(
       collaborators: collaborators.rows,
       subtasks: subtasks.rows,
       can_edit: canEdit(req.currentUser, task),
+      // handing the task to someone else is open to anyone who can see it
+      can_reassign: hasPermission(req.currentUser, 'task.assign'),
     });
   }),
 );
@@ -393,7 +395,22 @@ router.patch(
     );
     const existing = existingRows[0];
     if (!existing) throw notFound('Task not found');
-    if (!canEdit(req.currentUser, existing)) throw forbidden('You cannot edit this task');
+
+    if (!canEdit(req.currentUser, existing)) {
+      // Anyone may hand work to anyone, so changing only the owner or the follower
+      // is allowed on any task the person can see — even one they are not part of.
+      // Every other field still needs normal edit rights.
+      const changingOnlyOwnership =
+        Object.keys(data).length > 0 &&
+        Object.keys(data).every((field) => field === 'assignee_id' || field === 'follower_id');
+
+      const mayHandOver =
+        changingOnlyOwnership &&
+        hasPermission(req.currentUser, 'task.assign') &&
+        (await canAccess(req.currentUser, id));
+
+      if (!mayHandOver) throw forbidden('You cannot edit this task');
+    }
 
     if (
       data.assignee_id !== undefined &&
