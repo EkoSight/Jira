@@ -38,7 +38,8 @@ router.get(
       recentActivity({ limit: 15, ...scope }),
       throughput({ days: Number(req.query.trend_days) || 14, ...scope }),
       getSettings(),
-      canSeeTeam ? workload({ departmentId: scope.departmentId }) : Promise.resolve([]),
+      // the team's workload is visible to everyone, not just report viewers
+      workload({ departmentId: scope.departmentId }),
     ]);
 
     res.json({
@@ -54,12 +55,14 @@ router.get(
   }),
 );
 
+/**
+ * Who is carrying what. This is open to everyone: bandwidth, open and overdue
+ * counts and last activity are how the team sees where the load actually sits, so
+ * they are deliberately transparent rather than a manager-only view.
+ */
 router.get(
   '/workload',
   asyncHandler(async (req, res) => {
-    if (!hasPermission(req.currentUser, 'report.view')) {
-      return res.json({ workload: await workload({ userId: req.currentUser.id }) });
-    }
     res.json({
       workload: await workload({
         departmentId: req.query.department_id ? Number(req.query.department_id) : null,

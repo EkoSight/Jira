@@ -271,7 +271,8 @@ export default function Team() {
     setLoading(true);
     Promise.all([
       api.users({ active: showInactive ? 'all' : undefined }),
-      can('report.view') ? api.workloadReport() : Promise.resolve({ workload: [] }),
+      // bandwidth, open, overdue and last active are transparent to everyone
+      api.workloadReport(),
     ])
       .then(([usersData, workloadData]) => {
         setMembers(usersData.users);

@@ -147,7 +147,7 @@ export default function Dashboard() {
         </section>
       </div>
 
-      {can('report.view') && (
+      {workload.length > 0 && (
         <section className="card">
           <div className="card-head">
             <h2>Who is working on what</h2>

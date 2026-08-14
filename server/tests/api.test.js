@@ -545,6 +545,34 @@ test('workload reports the basis it measured load from, so the meter caption mat
   assert.ok(updated.committed_hours > 0);
 });
 
+test('bandwidth, open, overdue and last active are visible to every user', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // a plain member sees the whole team's load, not just their own row
+  const asMember = await call('GET', '/reports/workload', { token: tokens.member });
+  assert.equal(asMember.status, 200);
+  assert.ok(asMember.body.workload.length > 1, 'the whole team is returned');
+
+  const asAdmin = await call('GET', '/reports/workload', { token: tokens.admin });
+  assert.equal(
+    asMember.body.workload.length,
+    asAdmin.body.workload.length,
+    'a member sees exactly what an admin sees',
+  );
+
+  // and every row carries the four columns the Team page shows
+  for (const row of asMember.body.workload) {
+    assert.equal(typeof row.open_tasks, 'number', 'Open');
+    assert.equal(typeof row.overdue_tasks, 'number', 'Overdue');
+    assert.ok('load_percent' in row && 'load_basis' in row, 'Bandwidth');
+    assert.ok('last_activity_at' in row, 'Last active');
+  }
+
+  // the dashboard's team table is populated for a member too
+  const dashboard = await call('GET', '/reports/dashboard', { token: tokens.member });
+  assert.ok(dashboard.body.workload.length > 1, 'the dashboard team table is not empty for a member');
+});
+
 test('settings round trip and drive the review thresholds', async (t) => {
   if (skipIfUnavailable(t)) return;
 
