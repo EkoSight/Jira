@@ -65,6 +65,21 @@ export const DEFAULT_SETTINGS = {
       notifyManagers: false,
     },
   },
+  crm: {
+    // the module's on/off switch, like Goals
+    enabled: true,
+    // keep every deal moving, and keep every deal warm
+    cadence: {
+      // watch and remind, or stay silent
+      enabled: true,
+      // a lead that hasn't advanced a stage in this long needs a push
+      stageStaleDays: 7,
+      // a lead with no logged activity in this long has gone cold
+      engagementDays: 7,
+      // at most one reminder to the same person inside this many hours
+      reminderHours: 24,
+    },
+  },
 };
 
 const isPlainObject = (v) => v && typeof v === 'object' && !Array.isArray(v);

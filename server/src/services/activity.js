@@ -9,11 +9,15 @@ export async function logActivity(client, { taskId, actorId, action, field = nul
   );
 }
 
-export async function notify(client, { userId, type, title, body = null, taskId = null, objectiveId = null }) {
+export async function notify(
+  client,
+  { userId, type, title, body = null, taskId = null, objectiveId = null, accountId = null },
+) {
   if (!userId) return;
   const runner = client || { query };
   await runner.query(
-    `INSERT INTO notifications (user_id, type, title, body, task_id, objective_id) VALUES ($1, $2, $3, $4, $5, $6)`,
-    [userId, type, title, body, taskId, objectiveId],
+    `INSERT INTO notifications (user_id, type, title, body, task_id, objective_id, account_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [userId, type, title, body, taskId, objectiveId, accountId],
   );
 }

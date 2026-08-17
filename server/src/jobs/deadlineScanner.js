@@ -2,6 +2,7 @@ import { config } from '../config.js';
 import { query } from '../db/pool.js';
 import { runBlackMarkScan } from '../services/blackmarks.js';
 import { runOkrScan } from './okrScanner.js';
+import { runAccountScan } from './accountScanner.js';
 import { getSettings } from '../services/settings.js';
 
 let timer = null;
@@ -51,6 +52,15 @@ export async function runScanOnce() {
     }
   } catch (err) {
     console.error('[taskflow] OKR scan failed:', err.message);
+  }
+
+  try {
+    const crm = await runAccountScan();
+    if (crm.notified?.length) {
+      console.log(`[taskflow] CRM scan nudged ${crm.notified.length} person(s)`);
+    }
+  } catch (err) {
+    console.error('[taskflow] CRM scan failed:', err.message);
   }
 
   return result;

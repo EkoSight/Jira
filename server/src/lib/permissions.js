@@ -44,6 +44,12 @@ export const PERMISSIONS = {
   'okr.manage.any': 'Edit any objective or key result',
   'okr.checkin': 'Update key result values and post check-ins',
   'okr.link.task': 'Link tasks to key results',
+
+  'crm.view': 'See leads, customers and partners',
+  'crm.create': 'Add leads and accounts',
+  'crm.manage.any': 'Edit any account, not only their own',
+  'crm.activity.log': 'Log activities and move a deal along',
+  'crm.stages.manage': 'Create and edit pipeline stages',
 };
 
 export const PERMISSION_KEYS = Object.keys(PERMISSIONS);
@@ -76,6 +82,11 @@ export const ROLE_PERMISSIONS = {
     'okr.create.department',
     'okr.checkin',
     'okr.link.task',
+    'crm.view',
+    'crm.create',
+    'crm.manage.any',
+    'crm.activity.log',
+    'crm.stages.manage',
   ],
 
   member: [
@@ -93,6 +104,9 @@ export const ROLE_PERMISSIONS = {
     'okr.view',
     'okr.checkin',
     'okr.link.task',
+    'crm.view',
+    'crm.create',
+    'crm.activity.log',
   ],
 
   viewer: [
@@ -102,6 +116,7 @@ export const ROLE_PERMISSIONS = {
     'note.use',
     'feature.request',
     'okr.view',
+    'crm.view',
   ],
 };
 

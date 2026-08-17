@@ -14,7 +14,9 @@ import featureRequestRoutes from './routes/featureRequests.js';
 import recognitionRoutes from './routes/recognition.js';
 import objectiveRoutes from './routes/objectives.js';
 import keyResultRoutes from './routes/keyResults.js';
+import accountRoutes from './routes/accounts.js';
 import { requireOkrEnabled } from './middleware/okr.js';
+import { requireCrmEnabled } from './middleware/crm.js';
 import { requirePermission } from './middleware/auth.js';
 
 /**
@@ -49,6 +51,9 @@ export function createTaskFlowRouter() {
   // routes above are byte-for-byte the ones that shipped before this module.
   router.use('/objectives', requireOkrEnabled, requirePermission('okr.view'), objectiveRoutes);
   router.use('/key-results', requireOkrEnabled, requirePermission('okr.view'), keyResultRoutes);
+
+  // CRM / pipeline, mounted the same way — off cleanly when disabled
+  router.use('/accounts', requireCrmEnabled, requirePermission('crm.view'), accountRoutes);
 
   return router;
 }

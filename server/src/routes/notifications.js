@@ -8,10 +8,11 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const { rows } = await query(
-      `SELECT n.*, t.ref AS task_ref, o.title AS objective_title
+      `SELECT n.*, t.ref AS task_ref, o.title AS objective_title, a.name AS account_name
          FROM notifications n
          LEFT JOIN tasks t ON t.id = n.task_id
          LEFT JOIN objectives o ON o.id = n.objective_id
+         LEFT JOIN accounts a ON a.id = n.account_id
         WHERE n.user_id = $1
         ORDER BY n.created_at DESC
         LIMIT 50`,

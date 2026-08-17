@@ -28,6 +28,7 @@ const TASK_SELECT = `
          r.full_name AS reporter_name,
          c.full_name AS created_by_name,
          p.ref AS parent_ref, p.title AS parent_title,
+         acc.name AS account_name, acc.type AS account_type,
          (t.due_date IS NOT NULL AND t.due_date < now() AND s.stage NOT IN ('done','cancelled')) AS is_overdue,
          (SELECT COUNT(*)::int FROM task_comments tc WHERE tc.task_id = t.id) AS comment_count,
          (SELECT COUNT(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
@@ -54,6 +55,7 @@ const TASK_SELECT = `
     LEFT JOIN users r ON r.id = t.reporter_id
     LEFT JOIN users c ON c.id = t.created_by
     LEFT JOIN tasks p ON p.id = t.parent_task_id
+    LEFT JOIN accounts acc ON acc.id = t.account_id
 `;
 
 /**
@@ -121,6 +123,8 @@ const taskInput = z.object({
   blocked_reason: z.string().max(500).nullable().optional(),
   recurrence: z.enum(['none', 'daily', 'weekdays', 'weekly', 'monthly']).optional(),
   completion_note: z.string().max(5000).nullable().optional(),
+  // the lead or partner this task is helping — NULL for an ordinary task
+  account_id: z.number().int().positive().nullable().optional(),
 });
 
 // ---------------------------------------------------------------- list
@@ -149,6 +153,7 @@ router.get(
     if (req.query.assignee_id === 'none') filters.push('t.assignee_id IS NULL');
     else if (req.query.assignee_id) filters.push(`t.assignee_id = ${push(Number(req.query.assignee_id))}`);
     if (req.query.task_type) filters.push(`t.task_type = ${push(req.query.task_type)}`);
+    if (req.query.account_id) filters.push(`t.account_id = ${push(Number(req.query.account_id))}`);
     if (req.query.tag) filters.push(`${push(req.query.tag)} = ANY(t.tags)`);
     if (req.query.overdue === 'true') {
       filters.push(`t.due_date < now() AND s.stage NOT IN ('done','cancelled')`);
@@ -362,6 +367,14 @@ router.post(
       );
 
       const created = rows[0];
+
+      // a task can belong to a lead/partner. Set it after the insert so the big
+      // insert above stays exactly as it shipped.
+      if (data.account_id) {
+        await client.query('UPDATE tasks SET account_id = $1 WHERE id = $2', [data.account_id, created.id]);
+        created.account_id = data.account_id;
+      }
+
       await logActivity(client, {
         taskId: created.id,
         actorId: req.currentUser.id,
@@ -400,7 +413,7 @@ router.post(
 const TRACKED_FIELDS = [
   'title', 'description', 'department_id', 'status_id', 'priority', 'task_type',
   'assignee_id', 'follower_id', 'parent_task_id', 'reporter_id', 'start_date', 'due_date',
-  'estimate_hours', 'spent_hours', 'progress', 'tags', 'blocked_reason',
+  'estimate_hours', 'spent_hours', 'progress', 'tags', 'blocked_reason', 'account_id',
 ];
 
 router.patch(
