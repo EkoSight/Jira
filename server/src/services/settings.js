@@ -48,6 +48,22 @@ export const DEFAULT_SETTINGS = {
       atRiskBehindPoints: 10,
       offTrackBehindPoints: 25,
     },
+    // the intelligence layer: what "not moving" and "not active" mean, in days,
+    // and how often the system is allowed to nudge the person accountable
+    attention: {
+      // watch and remind, or stay silent
+      enabled: true,
+      // a key result nobody has touched for this long is going stale
+      staleKeyResultDays: 7,
+      // a whole goal with no check-in on any of its results for this long has stalled
+      stalledObjectiveDays: 10,
+      // a department with active goals but no check-in activity for this long is idle
+      idleDepartmentDays: 10,
+      // at most one reminder to the same person inside this many hours
+      reminderHours: 24,
+      // also copy the objective owner's manager on a reminder
+      notifyManagers: false,
+    },
   },
 };
 

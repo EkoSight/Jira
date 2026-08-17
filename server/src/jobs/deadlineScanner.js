@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { query } from '../db/pool.js';
 import { runBlackMarkScan } from '../services/blackmarks.js';
+import { runOkrScan } from './okrScanner.js';
 import { getSettings } from '../services/settings.js';
 
 let timer = null;
@@ -40,6 +41,18 @@ export async function runScanOnce() {
   if (result.created.length) {
     console.log(`[taskflow] deadline scan created ${result.created.length} black mark(s)`);
   }
+
+  // the OKR nudges ride the same interval; a failure here must not stop the
+  // black-mark scan from having run
+  try {
+    const okr = await runOkrScan();
+    if (okr.notified?.length) {
+      console.log(`[taskflow] OKR scan reminded ${okr.notified.length} person(s)`);
+    }
+  } catch (err) {
+    console.error('[taskflow] OKR scan failed:', err.message);
+  }
+
   return result;
 }
 

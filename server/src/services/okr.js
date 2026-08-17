@@ -18,7 +18,7 @@ import { HEALTH, DEFAULT_HEALTH_THRESHOLDS } from '../lib/okrConstants.js';
  * Returns NULL rather than 0 when it cannot be measured, so "not measurable" is
  * never mistaken for "no progress".
  */
-const RESULT_PROGRESS = `
+export const RESULT_PROGRESS = `
   CASE
     WHEN kr.measurement_type = 'BINARY'
       THEN CASE WHEN kr.current_value >= 1 THEN 100 ELSE 0 END
@@ -35,7 +35,7 @@ const RESULT_PROGRESS = `
 `;
 
 /** Execution progress: how much of the linked work is finished? */
-const EXECUTION_PROGRESS = `
+export const EXECUTION_PROGRESS = `
   (SELECT CASE WHEN COUNT(*) = 0 THEN NULL
                ELSE (COUNT(*) FILTER (WHERE ws.stage = 'done')::numeric / COUNT(*)) * 100 END
      FROM task_key_result_links l
@@ -44,7 +44,7 @@ const EXECUTION_PROGRESS = `
     WHERE l.key_result_id = kr.id)
 `;
 
-const LINKED_TASK_COUNT = `
+export const LINKED_TASK_COUNT = `
   (SELECT COUNT(*)::int FROM task_key_result_links l
      JOIN tasks t ON t.id = l.task_id AND t.is_archived = FALSE
     WHERE l.key_result_id = kr.id)
@@ -55,7 +55,7 @@ const LINKED_TASK_COUNT = `
  * one type where finishing the work IS the outcome, so they fall back to
  * execution progress; everything else must be measured on its own terms.
  */
-const EFFECTIVE_PROGRESS = `
+export const EFFECTIVE_PROGRESS = `
   CASE WHEN kr.measurement_type = 'TASK_ROLLUP'
        THEN ${EXECUTION_PROGRESS}
        ELSE ${RESULT_PROGRESS}

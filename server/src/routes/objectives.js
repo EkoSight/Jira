@@ -18,6 +18,8 @@ import {
   dashboard,
   logOkrActivity,
 } from '../services/okr.js';
+import { analyse } from '../services/okrInsights.js';
+import { runOkrScan } from '../jobs/okrScanner.js';
 
 const router = Router();
 
@@ -100,6 +102,36 @@ router.get(
       to: req.query.to,
     });
     res.json(data);
+  }),
+);
+
+// ---------------------------------------------------------------- insights
+
+// what the system has noticed on its own: goals not moving, key results stuck,
+// departments gone quiet, people falling behind
+router.get(
+  '/insights',
+  asyncHandler(async (req, res) => {
+    const data = await analyse({
+      departmentId: req.query.department_id,
+      ownerId: req.query.owner_id,
+      scopeType: req.query.scope_type,
+      from: req.query.from,
+      to: req.query.to,
+    });
+    res.json(data);
+  }),
+);
+
+// let an admin fire the reminder pass now instead of waiting for the interval
+router.post(
+  '/scan',
+  asyncHandler(async (req, res) => {
+    if (!hasPermission(req.currentUser, 'settings.manage')) {
+      throw forbidden('Only an administrator can run the scan');
+    }
+    const result = await runOkrScan({ force: req.body?.force === true });
+    res.json(result);
   }),
 );
 
