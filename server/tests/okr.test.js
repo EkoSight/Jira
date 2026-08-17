@@ -660,6 +660,44 @@ test('linking tasks to a key result drives its execution progress', async (t) =>
   assert.equal(half.body.key_result.execution_progress, 50);
 });
 
+test('a task can be aligned the moment it is created', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // what the new-task dialog does: create, then send the staged links
+  const created = await call('POST', '/tasks', {
+    token: tokens.member,
+    body: {
+      title: 'Draft the dealer onboarding checklist',
+      department_id: ids.growth,
+      assignee_id: ids.member,
+      status_id: ids.todo,
+    },
+  });
+  assert.equal(created.status, 201);
+  const taskId = created.body.task.id;
+
+  const staged = [ids.rollupKeyResult, ids.visitsKeyResult];
+  for (const [index, keyResultId] of staged.entries()) {
+    const linked = await call('POST', `/key-results/${keyResultId}/tasks`, {
+      token: tokens.member,
+      body: { task_id: taskId, is_primary: index === 0 },
+    });
+    assert.equal(linked.status, 201);
+  }
+
+  const detail = await call('GET', `/tasks/${taskId}`, { token: tokens.member });
+  assert.equal(detail.body.key_results.length, 2);
+  // the first one chosen is the primary alignment
+  assert.equal(detail.body.key_results.filter((k) => k.is_primary).length, 1);
+  assert.equal(detail.body.key_results.find((k) => k.is_primary).id, ids.rollupKeyResult);
+  // and every row carries the goal it belongs to, so the dialog can show the breadcrumb
+  assert.ok(detail.body.key_results.every((k) => k.objective_id && k.objective_title));
+
+  // the goal it was pointed at sees the new work straight away
+  const keyResult = await call('GET', `/key-results/${ids.rollupKeyResult}`, { token: tokens.member });
+  assert.equal(keyResult.body.key_result.linked_task_count, 3);
+});
+
 test('a task has one primary key result at most', async (t) => {
   if (skipIfUnavailable(t)) return;
 

@@ -25,27 +25,216 @@ import {
 import { measurementSummary } from '../lib/okr.js';
 
 /**
- * Optional strategic alignment.
+ * Loads every objective and its key results once, so the picker can offer the
+ * goal first and then only the key results defined under it.
+ */
+function useGoalCatalogue(active) {
+  const toast = useToast();
+  const [catalogue, setCatalogue] = useState(null);
+
+  useEffect(() => {
+    if (!active || catalogue) return;
+    let live = true;
+    Promise.all([api.objectives(), api.keyResults()])
+      .then(([objectiveData, keyResultData]) => {
+        if (!live) return;
+        const keyResults = keyResultData.key_results || [];
+        const byObjective = new Map();
+        for (const keyResult of keyResults) {
+          if (!byObjective.has(keyResult.objective_id)) byObjective.set(keyResult.objective_id, []);
+          byObjective.get(keyResult.objective_id).push(keyResult);
+        }
+        setCatalogue({ objectives: objectiveData.objectives || [], byObjective });
+      })
+      .catch((err) => toast.error(err));
+    return () => {
+      live = false;
+    };
+  }, [active, catalogue]);
+
+  return catalogue;
+}
+
+/**
+ * Pick a goal, then a key result under it. Two steps rather than one long list,
+ * because people know which goal they are serving before they know which number.
+ */
+function GoalPicker({ catalogue, alreadyLinked, onPick, onCancel }) {
+  const [objectiveId, setObjectiveId] = useState('');
+
+  const keyResults = catalogue?.byObjective.get(Number(objectiveId)) || [];
+  const available = keyResults.filter((keyResult) => !alreadyLinked.includes(keyResult.id));
+
+  if (!catalogue) return <div className="small muted">Loading goals…</div>;
+
+  if (catalogue.objectives.length === 0) {
+    return (
+      <div className="small muted">
+        No goals have been set yet. Once someone creates one under Goals, you can point work at it.
+      </div>
+    );
+  }
+
+  return (
+    <div className="stack-sm">
+      <Field label="Which goal does this serve?">
+        <select className="select" value={objectiveId} onChange={(e) => setObjectiveId(e.target.value)}>
+          <option value="">Choose a goal…</option>
+          {catalogue.objectives.map((objective) => (
+            <option key={objective.id} value={objective.id}>
+              {objective.scope_type === 'COMPANY' ? 'Company' : objective.department_name} · {objective.title}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      {objectiveId && (
+        <Field
+          label="And which key result does it move?"
+          hint={
+            keyResults.length === 0
+              ? 'That goal has no key results yet, so there is no number to attach this to.'
+              : undefined
+          }
+        >
+          <select
+            className="select"
+            value=""
+            disabled={available.length === 0}
+            onChange={(e) => {
+              const chosen = available.find((keyResult) => String(keyResult.id) === e.target.value);
+              if (chosen) {
+                onPick(chosen);
+                setObjectiveId('');
+              }
+            }}
+          >
+            <option value="">
+              {keyResults.length === 0
+                ? 'Nothing to choose'
+                : available.length === 0
+                  ? 'All of them are linked already'
+                  : 'Choose a key result…'}
+            </option>
+            {available.map((keyResult) => (
+              <option key={keyResult.id} value={keyResult.id}>
+                {keyResult.title} — {measurementSummary(keyResult)}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+
+      {onCancel && (
+        <div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One linked key result, shown under the goal it belongs to. */
+function AlignmentRow({ keyResult, primary, onRemove }) {
+  return (
+    <div className="alignment">
+      <div className="small muted truncate">{keyResult.objective_title}</div>
+      <div className="row-between wrap" style={{ gap: 6 }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{keyResult.title}</span>
+        <div className="row">
+          {primary && <Badge tone="brand">primary</Badge>}
+          {onRemove && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              aria-label={`Unlink ${keyResult.title}`}
+              onClick={onRemove}
+            >
+              <Icon name="close" size={13} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Staged alignment for a card that does not exist yet. The links are sent the
+ * moment the task is created — see flushPendingAlignment below.
+ */
+function PendingAlignment({ selected, onChange }) {
+  const [picking, setPicking] = useState(true);
+  const catalogue = useGoalCatalogue(true);
+
+  return (
+    <div className="card card-pad stack-sm">
+      <div className="row-between">
+        <h3>Goal this supports</h3>
+        {!picking && (
+          <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}>
+            <Icon name="target" size={13} /> {selected.length ? 'Link another' : 'Link a goal'}
+          </button>
+        )}
+      </div>
+
+      {selected.map((keyResult, index) => (
+        <AlignmentRow
+          key={keyResult.id}
+          keyResult={keyResult}
+          primary={index === 0 && selected.length > 1}
+          onRemove={() => onChange(selected.filter((item) => item.id !== keyResult.id))}
+        />
+      ))}
+
+      {picking && (
+        <GoalPicker
+          catalogue={catalogue}
+          alreadyLinked={selected.map((keyResult) => keyResult.id)}
+          onPick={(keyResult) => {
+            onChange([...selected, keyResult]);
+            setPicking(false);
+          }}
+          onCancel={selected.length > 0 ? () => setPicking(false) : undefined}
+        />
+      )}
+
+      {selected.length === 0 && catalogue?.objectives.length > 0 && (
+        <div className="small muted">Optional. Most cards are day-to-day work and support no goal directly.</div>
+      )}
+    </div>
+  );
+}
+
+/** Sends the staged links once the card has an id. Returns how many failed. */
+async function flushPendingAlignment(taskId, keyResults) {
+  let failed = 0;
+  for (const [index, keyResult] of keyResults.entries()) {
+    try {
+      await api.linkTask(keyResult.id, { task_id: taskId, is_primary: index === 0 });
+    } catch {
+      failed += 1;
+    }
+  }
+  return failed;
+}
+
+/**
+ * Alignment on a card that already exists.
  *
- * A card that supports no goal shows nothing but the offer to link one, so
- * nothing about an ordinary task changes.
+ * A card that supports no goal shows one line offering to link one, so nothing
+ * about an ordinary task changes.
  */
 function Alignment({ taskId, keyResults, canLink, onChanged }) {
   const toast = useToast();
-  const [options, setOptions] = useState(null);
   const [picking, setPicking] = useState(false);
+  const catalogue = useGoalCatalogue(picking);
 
-  useEffect(() => {
-    if (!picking || options) return;
-    api
-      .keyResults()
-      .then((data) => setOptions(data.key_results || []))
-      .catch((err) => toast.error(err));
-  }, [picking, options]);
-
-  const link = async (keyResultId) => {
+  const link = async (keyResult) => {
     try {
-      await api.linkTask(Number(keyResultId), { task_id: taskId });
+      await api.linkTask(keyResult.id, { task_id: taskId, is_primary: keyResults.length === 0 });
       setPicking(false);
       onChanged();
     } catch (err) {
@@ -54,11 +243,6 @@ function Alignment({ taskId, keyResults, canLink, onChanged }) {
   };
 
   if (!keyResults.length && !canLink) return null;
-
-  const grouped = (options || []).reduce((acc, keyResult) => {
-    (acc[keyResult.objective_title] ||= []).push(keyResult);
-    return acc;
-  }, {});
 
   return (
     <div className="card card-pad stack-sm">
@@ -76,49 +260,32 @@ function Alignment({ taskId, keyResults, canLink, onChanged }) {
       )}
 
       {keyResults.map((keyResult) => (
-        <div key={keyResult.id} className="alignment">
-          <div className="small muted truncate">{keyResult.objective_title}</div>
-          <div className="row-between wrap" style={{ gap: 6 }}>
-            <span style={{ fontWeight: 600, fontSize: 13 }}>{keyResult.title}</span>
-            <div className="row">
-              {keyResult.is_primary && <Badge tone="brand">primary</Badge>}
-              {canLink && (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  aria-label="Unlink this goal"
-                  onClick={async () => {
-                    try {
-                      await api.unlinkTask(keyResult.id, taskId);
-                      onChanged();
-                    } catch (err) {
-                      toast.error(err);
-                    }
-                  }}
-                >
-                  <Icon name="close" size={13} />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        <AlignmentRow
+          key={keyResult.id}
+          keyResult={keyResult}
+          primary={keyResult.is_primary}
+          onRemove={
+            canLink
+              ? async () => {
+                  try {
+                    await api.unlinkTask(keyResult.id, taskId);
+                    onChanged();
+                  } catch (err) {
+                    toast.error(err);
+                  }
+                }
+              : undefined
+          }
+        />
       ))}
 
       {picking && (
-        <Field label="Which key result does this move?">
-          <select className="select" defaultValue="" onChange={(e) => e.target.value && link(e.target.value)}>
-            <option value="">{options === null ? 'Loading…' : 'Choose…'}</option>
-            {Object.entries(grouped).map(([objective, items]) => (
-              <optgroup key={objective} label={objective}>
-                {items.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.title} — {measurementSummary(item)}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </Field>
+        <GoalPicker
+          catalogue={catalogue}
+          alreadyLinked={keyResults.map((keyResult) => keyResult.id)}
+          onPick={link}
+          onCancel={() => setPicking(false)}
+        />
       )}
     </div>
   );
@@ -172,10 +339,13 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   // staged while the task does not exist yet
   const [pending, setPending] = useState([]);
   const [pendingTags, setPendingTags] = useState([]);
+  const [pendingGoals, setPendingGoals] = useState([]);
   // set when a done-transition needs the completion prompt
   const [completing, setCompleting] = useState(null);
 
   const taskTypes = settings?.taskTypes || ['task'];
+  // one condition for both the staged and the live alignment sections
+  const goalsAvailable = settings?.okr?.enabled !== false && can('okr.view') && can('okr.link.task');
 
   const reload = () => {
     if (!activeId) return;
@@ -263,18 +433,27 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
         // the card exists now, so anything staged can finally be sent
         const failed = pending.length ? await flushPendingAttachments(created.id, pending) : 0;
-        if (failed > 0) {
-          toast.error(`${created.ref} created, but ${failed} attachment(s) could not be added`);
+        const goalsFailed = pendingGoals.length
+          ? await flushPendingAlignment(created.id, pendingGoals)
+          : 0;
+
+        if (failed > 0 || goalsFailed > 0) {
+          const problems = [
+            failed > 0 && `${failed} attachment(s)`,
+            goalsFailed > 0 && `${goalsFailed} goal link(s)`,
+          ].filter(Boolean);
+          toast.error(`${created.ref} created, but ${problems.join(' and ')} could not be added`);
         } else {
-          toast.success(
-            pending.length
-              ? `${created.ref} created with ${pending.length} attachment(s)`
-              : `${created.ref} created`,
-          );
+          const extras = [
+            pending.length && `${pending.length} attachment(s)`,
+            pendingGoals.length && `${pendingGoals.length} goal link(s)`,
+          ].filter(Boolean);
+          toast.success(extras.length ? `${created.ref} created with ${extras.join(' and ')}` : `${created.ref} created`);
         }
 
         setPending([]);
         setPendingTags([]);
+        setPendingGoals([]);
         onSaved?.(created);
         // keep the dialog open on the new card so sub tasks and files are to hand
         setActiveId(created.id);
@@ -630,6 +809,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 />
               </Field>
 
+              {isNew && goalsAvailable && (
+                <PendingAlignment selected={pendingGoals} onChange={setPendingGoals} />
+              )}
               {isNew && <PendingAttachments pending={pending} onChange={setPending} />}
               {isNew && <PendingCollaborators selected={pendingTags} onChange={setPendingTags} />}
               {isNew && (
