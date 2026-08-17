@@ -48,6 +48,27 @@ export function nextDueDate(recurrence, fromDate) {
   }
 }
 
+/**
+ * The next due date that is still ahead of us.
+ *
+ * Rolling forward a single interval from the previous due date is wrong when that
+ * occurrence was completed late: "yesterday + 1 day" can already be in the past,
+ * so the new task is born overdue and earns a black mark the moment someone
+ * finishes the old one. Stepping until the slot is in the future keeps the
+ * cadence and the time of day, without penalising a person for catching up.
+ */
+export function nextDueDateAhead(recurrence, fromDate, now = new Date()) {
+  let next = nextDueDate(recurrence, fromDate);
+  if (!next) return null;
+
+  // a year of steps is far more than any real catch-up, and stops a runaway loop
+  for (let guard = 0; guard < 400 && next.getTime() <= now.getTime(); guard += 1) {
+    next = nextDueDate(recurrence, next);
+    if (!next) return null;
+  }
+  return next;
+}
+
 export const describeRecurrence = (recurrence) =>
   ({
     daily: 'every day',
@@ -76,7 +97,9 @@ export async function spawnNextOccurrence(client, task) {
   if (!statusRows[0]) return null;
   const statusId = statusRows[0].id;
 
-  const due = task.due_date ? nextDueDate(task.recurrence, task.due_date) : nextDueDate(task.recurrence, new Date());
+  // always lands in the future, so catching up on a late occurrence never creates
+  // a task that is already overdue
+  const due = nextDueDateAhead(task.recurrence, task.due_date || new Date());
 
   // reference stays within the department series (DEPT-N), allocated under the
   // same lock the normal create path uses so two simultaneous completions in one

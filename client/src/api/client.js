@@ -166,6 +166,9 @@ export const api = {
   runScan: () => request('POST', '/blackmarks/scan'),
 
   dashboard: (params) => request('GET', `/reports/dashboard${qs(params)}`),
+  performance: (userId, params) => request('GET', `/reports/performance/${userId}${qs(params)}`),
+  teamPerformance: (params) => request('GET', `/reports/performance${qs(params)}`),
+  sharePerformance: (userId, data) => request('POST', `/reports/performance/${userId}/share`, data),
   workloadReport: (params) => request('GET', `/reports/workload${qs(params)}`),
 
   settings: () => request('GET', '/settings'),

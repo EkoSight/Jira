@@ -409,6 +409,16 @@ export default function Team() {
                         >
                           <Icon name="board" size={14} />
                         </button>
+                        {(can('report.view') || member.id === user.id) && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-ghost"
+                            onClick={() => navigate(`/performance/${member.id}`)}
+                            title="Performance review"
+                          >
+                            <Icon name="dashboard" size={14} />
+                          </button>
+                        )}
                         {can('user.edit') && (
                           <>
                             <button type="button" className="btn btn-sm" onClick={() => setEditing(member)}>

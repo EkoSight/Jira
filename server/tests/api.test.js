@@ -1182,6 +1182,122 @@ test('completing a task after its deadline records a black mark against the owne
   assert.ok(member.missed_deadlines >= 1, 'a late delivery counts toward missed deadlines');
 });
 
+test('catching up on a late recurring task does not create an already-overdue successor', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // This is what penalised people for doing their work: the successor used to be
+  // "old due date + one interval", which for a task completed days late was
+  // already in the past, so it collected a missed-deadline mark immediately.
+  await query(`UPDATE blackmark_rules SET is_active = FALSE`);
+  await call('POST', '/blackmarks/rules', {
+    token: tokens.admin,
+    body: { name: 'Missed deadline', trigger_type: 'deadline_missed', points: 1, grace_hours: 0 },
+  });
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Daily routine that fell behind',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      recurrence: 'daily',
+      due_date: daysFromNow(-3), // three days overdue
+    },
+  });
+
+  const done = await call('POST', `/tasks/${created.body.task.id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Caught up today.' },
+  });
+
+  const next = done.body.next_occurrence;
+  assert.ok(next, 'a successor is still created');
+  assert.ok(
+    new Date(next.due_date) > new Date(),
+    `the successor must be due in the future, got ${next.due_date}`,
+  );
+
+  // and a scan must not punish the person for the freshly created task
+  await runBlackMarkScan();
+  const { rows } = await query('SELECT COUNT(*)::int AS n FROM black_marks WHERE task_id = $1', [next.id]);
+  assert.equal(rows[0].n, 0, 'the new occurrence carries no black mark');
+});
+
+test('nextDueDateAhead keeps the cadence and never lands in the past', async () => {
+  const { nextDueDateAhead } = await import('../src/services/recurrence.js');
+  const now = new Date('2026-08-17T09:00:00Z');
+
+  // a daily task last due three days ago rolls to the next day still ahead
+  const daily = nextDueDateAhead('daily', new Date('2026-08-14T18:00:00Z'), now);
+  assert.ok(daily > now);
+  assert.equal(daily.toISOString().slice(11), '18:00:00.000Z', 'time of day is preserved');
+
+  // one that is not overdue simply advances a single step
+  const ahead = nextDueDateAhead('daily', new Date('2026-08-17T18:00:00Z'), now);
+  assert.equal(ahead.toISOString().slice(0, 10), '2026-08-18');
+
+  for (const recurrence of ['daily', 'weekdays', 'weekly', 'monthly']) {
+    const next = nextDueDateAhead(recurrence, new Date('2026-01-05T09:00:00Z'), now);
+    assert.ok(next > now, `${recurrence} must land in the future`);
+  }
+});
+
+test('a performance review explains what is wrong and what would help', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const result = await call('GET', `/reports/performance/${ids.member}`, { token: tokens.admin });
+  assert.equal(result.status, 200);
+
+  const { review } = result.body;
+  assert.equal(review.user.id, ids.member);
+  assert.ok(review.summary.length > 0);
+  assert.ok(['strong', 'good', 'watch', 'needs_action'].includes(review.standing));
+  assert.ok(Array.isArray(review.concerns));
+  assert.ok(Array.isArray(review.suggestions));
+  assert.ok(Array.isArray(review.strengths));
+
+  // the member has overdue work in this suite, so there is something to say
+  assert.ok(review.metrics.overdueNow >= 1);
+  assert.ok(review.concerns.length > 0, 'concerns are raised when there is a problem');
+  assert.ok(review.suggestions.length > 0, 'and every review with a concern offers a way forward');
+
+  // each concern carries its evidence rather than being a bare judgement
+  for (const concern of review.concerns) {
+    assert.ok(concern.detail && concern.detail.length > 10, `"${concern.title}" needs evidence`);
+  }
+});
+
+test('people can read their own review but not each other’s', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const own = await call('GET', `/reports/performance/${ids.member}`, { token: tokens.member });
+  assert.equal(own.status, 200, 'your own review is always readable');
+
+  const someoneElse = await call('GET', `/reports/performance/${ids.admin}`, { token: tokens.member });
+  assert.equal(someoneElse.status, 403, 'someone else’s needs the reporting permission');
+
+  const teamList = await call('GET', '/reports/performance', { token: tokens.member });
+  assert.equal(teamList.status, 403, 'and so does the whole-team list');
+});
+
+test('sharing a review notifies the person it is about', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const shared = await call('POST', `/reports/performance/${ids.member}/share`, {
+    token: tokens.admin,
+    body: { message: 'Let us talk through the overdue list on Monday.' },
+  });
+  assert.equal(shared.status, 200);
+
+  const { rows } = await query(
+    `SELECT title, body FROM notifications
+      WHERE user_id = $1 AND type = 'performance_review' ORDER BY id DESC LIMIT 1`,
+    [ids.member],
+  );
+  assert.equal(rows.length, 1, 'the person is told');
+  assert.match(rows[0].body, /Let us talk through the overdue list/, 'the manager’s note is included');
+});
+
 test('a task created straight into a done status counts as completed this month', async (t) => {
   if (skipIfUnavailable(t)) return;
 

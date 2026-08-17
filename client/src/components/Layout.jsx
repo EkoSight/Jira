@@ -21,6 +21,7 @@ const NAV = [
   { to: '/notes', label: 'My notes', icon: 'note', permission: 'note.use' },
   { to: '/team', label: 'Team', icon: 'team', permission: 'user.view' },
   { to: '/recognition', label: 'Recognition', icon: 'trophy' },
+  { to: '/performance', label: 'Performance', icon: 'dashboard' },
   { to: '/black-marks', label: 'Black marks', icon: 'flag', permission: 'blackmark.view' },
   { to: '/feature-requests', label: 'Ideas & requests', icon: 'bulb', permission: 'feature.request' },
   { to: '/settings', label: 'Settings', icon: 'settings' },

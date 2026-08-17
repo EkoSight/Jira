@@ -12,6 +12,7 @@ import Settings from './pages/Settings.jsx';
 import Notes from './pages/Notes.jsx';
 import FeatureRequests from './pages/FeatureRequests.jsx';
 import Recognition from './pages/Recognition.jsx';
+import Performance from './pages/Performance.jsx';
 
 function Protected({ permission, children }) {
   const { can } = useAuth();
@@ -54,6 +55,8 @@ function Shell() {
           }
         />
         <Route path="/recognition" element={<Recognition />} />
+        <Route path="/performance" element={<Performance />} />
+        <Route path="/performance/:userId" element={<Performance />} />
         <Route
           path="/feature-requests"
           element={
