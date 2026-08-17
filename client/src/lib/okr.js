@@ -120,6 +120,26 @@ export function daysLeftLabel(endDate) {
   return `${Math.round(days / 7)} weeks left`;
 }
 
+/**
+ * How each attention signal reads. The label is the headline; the detail comes
+ * from the server so the wording stays in one place.
+ */
+export const SIGNAL_META = {
+  objective_overdue: { label: 'Past deadline', severity: 'critical' },
+  objective_off_track: { label: 'Off track', severity: 'critical' },
+  objective_stalled: { label: 'Not moving', severity: 'warning' },
+  objective_at_risk: { label: 'Slipping', severity: 'warning' },
+  objective_no_key_results: { label: 'Nothing measured', severity: 'warning' },
+  key_result_off_track: { label: 'Off track', severity: 'critical' },
+  key_result_stale: { label: 'Not checked in', severity: 'warning' },
+  key_result_flat: { label: 'Stuck', severity: 'warning' },
+  department_inactive: { label: 'Gone quiet', severity: 'warning' },
+};
+
+export const signalMeta = (kind) => SIGNAL_META[kind] || { label: 'Attention', severity: 'warning' };
+
+export const SEVERITY_TONE = { critical: 'critical', warning: 'warning', info: 'neutral' };
+
 export const describeOkrActivity = (item) => {
   const field = item.field ? item.field.replace(/_/g, ' ').replace(' id', '') : '';
   switch (item.action) {

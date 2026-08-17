@@ -118,6 +118,8 @@ export const api = {
   removeCollaborator: (taskId, userId) => request('DELETE', `/tasks/${taskId}/collaborators/${userId}`),
 
   goalsDashboard: (params) => request('GET', `/objectives/dashboard${qs(params)}`),
+  goalInsights: (params) => request('GET', `/objectives/insights${qs(params)}`),
+  runGoalScan: (force) => request('POST', '/objectives/scan', { force: force === true }),
   objectives: (params) => request('GET', `/objectives${qs(params)}`),
   objective: (id) => request('GET', `/objectives/${id}`),
   createObjective: (data) => request('POST', '/objectives', data),

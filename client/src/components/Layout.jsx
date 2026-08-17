@@ -70,7 +70,10 @@ export default function Layout({ children }) {
             return;
           }
           announce(data.notifications, {
-            onOpen: (notification) => notification.task_id && setOpenTaskId(notification.task_id),
+            onOpen: (notification) => {
+              if (notification.task_id) setOpenTaskId(notification.task_id);
+              else if (notification.objective_id) navigate(`/goals/${notification.objective_id}`);
+            },
           });
         })
         .catch(() => {}),
@@ -267,12 +270,16 @@ export default function Layout({ children }) {
                   borderBottomColor: 'var(--border)',
                   width: '100%',
                   textAlign: 'left',
-                  cursor: n.task_id ? 'pointer' : 'default',
+                  cursor: n.task_id || n.objective_id ? 'pointer' : 'default',
                 }}
                 onClick={() => {
-                  if (!n.task_id) return;
-                  setShowNotifications(false);
-                  setOpenTaskId(n.task_id);
+                  if (n.task_id) {
+                    setShowNotifications(false);
+                    setOpenTaskId(n.task_id);
+                  } else if (n.objective_id) {
+                    setShowNotifications(false);
+                    navigate(`/goals/${n.objective_id}`);
+                  }
                 }}
               >
                 <Icon
@@ -282,6 +289,7 @@ export default function Layout({ children }) {
                     : n.type === 'kudos' || n.type === 'recognition' ? 'trophy'
                     : n.type === 'tagged' ? 'team'
                     : n.type === 'feature_request' || n.type === 'feature_update' ? 'bulb'
+                    : n.type === 'okr_digest' || n.type === 'okr_department' || n.type === 'okr_check_in' ? 'target'
                     : 'bell'
                   }
                 />
@@ -289,6 +297,7 @@ export default function Layout({ children }) {
                   <div style={{ fontWeight: 600 }}>{n.title}</div>
                   {n.body && <div className="small muted">{n.body}</div>}
                   {n.task_ref && <span className="task-ref">{n.task_ref}</span>}
+                  {n.objective_title && <span className="small muted">{n.objective_title}</span>}
                 </div>
                 <span className="small muted">{new Date(n.created_at).toLocaleDateString()}</span>
               </button>

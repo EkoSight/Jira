@@ -4,6 +4,7 @@ import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import ObjectiveWizard from '../components/ObjectiveWizard.jsx';
+import AttentionPanel, { PeopleBehind } from '../components/AttentionPanel.jsx';
 import { HEALTH_META, daysLeftLabel, health, periodPresets, STATUS_LABEL } from '../lib/okr.js';
 import { formatDate } from '../lib/format.js';
 
@@ -127,6 +128,7 @@ export default function Goals() {
   const [healthFilter, setHealthFilter] = useState('');
   const [scope, setScope] = useState('');
   const [data, setData] = useState(null);
+  const [insights, setInsights] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
 
@@ -134,20 +136,36 @@ export default function Goals() {
 
   const load = () => {
     setLoading(true);
+    const filters = {
+      from: range?.start_date,
+      to: range?.end_date,
+      department_id: departmentId || undefined,
+      owner_id: ownerId || undefined,
+      scope_type: scope || undefined,
+    };
     api
-      .goalsDashboard({
-        from: range?.start_date,
-        to: range?.end_date,
-        department_id: departmentId || undefined,
-        owner_id: ownerId || undefined,
-        scope_type: scope || undefined,
-      })
+      .goalsDashboard(filters)
       .then(setData)
       .catch((err) => toast.error(err))
       .finally(() => setLoading(false));
+    // the attention layer loads alongside, and never blocks the board
+    api.goalInsights(filters).then(setInsights).catch(() => setInsights(null));
   };
 
   useEffect(load, [period, departmentId, ownerId, scope]);
+
+  const runScan = async () => {
+    try {
+      const result = await api.runGoalScan();
+      toast.success(
+        result.notified?.length
+          ? `Reminded ${result.notified.length} ${result.notified.length === 1 ? 'person' : 'people'}`
+          : 'Everyone up to date has already been reminded today',
+      );
+    } catch (err) {
+      toast.error(err);
+    }
+  };
 
   if (loading && !data) return <Spinner label="Pulling the goals together" />;
   if (!data) return <EmptyState title="Could not load the goals" />;
@@ -163,6 +181,7 @@ export default function Goals() {
   const company = rest.filter((o) => o.scope_type === 'COMPANY');
   const byDepartment = rest.filter((o) => o.scope_type === 'DEPARTMENT');
   const mayCreate = can('okr.create.company') || can('okr.create.department');
+  const idleByDepartment = new Map((insights?.by_department || []).map((d) => [d.department_id, d]));
 
   return (
     <div className="stack" style={{ gap: 16 }}>
@@ -209,6 +228,10 @@ export default function Goals() {
       </div>
 
       <HealthStrip summary={data.summary} active={healthFilter} onPick={setHealthFilter} />
+
+      {data.summary.total > 0 && (
+        <AttentionPanel insights={insights} onRunScan={runScan} canScan={can('settings.manage')} />
+      )}
 
       {data.summary.total === 0 ? (
         <EmptyState
@@ -279,27 +302,40 @@ export default function Goals() {
                     <th>Department</th>
                     <th className="num">Goals</th>
                     <th className="num">Needing attention</th>
+                    <th className="num">Activity</th>
                     <th className="num">Progress</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.by_department.map((row) => (
-                    <tr key={row.department_id ?? 'company'}>
-                      <td>
-                        <span className="row">
-                          {row.color && <span className="stat-accent" style={{ background: row.color }} />}
-                          {row.name}
-                        </span>
-                      </td>
-                      <td className="num tnum">{row.count}</td>
-                      <td className="num tnum" style={{ color: row.at_risk ? 'var(--critical-text)' : 'inherit' }}>
-                        {row.at_risk}
-                      </td>
-                      <td className="num tnum">
-                        {row.progress_percent === null ? '—' : `${row.progress_percent}%`}
-                      </td>
-                    </tr>
-                  ))}
+                  {data.by_department.map((row) => {
+                    const activity = idleByDepartment.get(row.department_id);
+                    return (
+                      <tr key={row.department_id ?? 'company'}>
+                        <td>
+                          <span className="row">
+                            {row.color && <span className="stat-accent" style={{ background: row.color }} />}
+                            {row.name}
+                          </span>
+                        </td>
+                        <td className="num tnum">{row.count}</td>
+                        <td className="num tnum" style={{ color: row.at_risk ? 'var(--critical-text)' : 'inherit' }}>
+                          {row.at_risk}
+                        </td>
+                        <td className="num">
+                          {activity?.is_idle ? (
+                            <Badge tone="warning">
+                              {activity.idle_days === null ? 'no check-ins' : `quiet ${activity.idle_days}d`}
+                            </Badge>
+                          ) : (
+                            <span className="small muted">active</span>
+                          )}
+                        </td>
+                        <td className="num tnum">
+                          {row.progress_percent === null ? '—' : `${row.progress_percent}%`}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </section>
@@ -327,6 +363,8 @@ export default function Goals() {
               )}
             </section>
           </div>
+
+          {insights?.by_person?.length > 0 && <PeopleBehind people={insights.by_person} />}
         </>
       )}
 
