@@ -37,6 +37,13 @@ export const PERMISSIONS = {
   'feature.manage': 'Triage and respond to feature requests',
   'kudos.give': 'Give kudos to a colleague',
   'recognition.manage': 'Award performer of the month',
+
+  'okr.view': 'See objectives and key results',
+  'okr.create.company': 'Create company-wide objectives',
+  'okr.create.department': 'Create objectives for a department',
+  'okr.manage.any': 'Edit any objective or key result',
+  'okr.checkin': 'Update key result values and post check-ins',
+  'okr.link.task': 'Link tasks to key results',
 };
 
 export const PERMISSION_KEYS = Object.keys(PERMISSIONS);
@@ -65,6 +72,10 @@ export const ROLE_PERMISSIONS = {
     'feature.manage',
     'kudos.give',
     'recognition.manage',
+    'okr.view',
+    'okr.create.department',
+    'okr.checkin',
+    'okr.link.task',
   ],
 
   member: [
@@ -79,6 +90,9 @@ export const ROLE_PERMISSIONS = {
     'note.use',
     'feature.request',
     'kudos.give',
+    'okr.view',
+    'okr.checkin',
+    'okr.link.task',
   ],
 
   viewer: [
@@ -87,6 +101,7 @@ export const ROLE_PERMISSIONS = {
     'blackmark.view',
     'note.use',
     'feature.request',
+    'okr.view',
   ],
 };
 

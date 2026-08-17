@@ -12,6 +12,10 @@ import notificationRoutes from './routes/notifications.js';
 import noteRoutes from './routes/notes.js';
 import featureRequestRoutes from './routes/featureRequests.js';
 import recognitionRoutes from './routes/recognition.js';
+import objectiveRoutes from './routes/objectives.js';
+import keyResultRoutes from './routes/keyResults.js';
+import { requireOkrEnabled } from './middleware/okr.js';
+import { requirePermission } from './middleware/auth.js';
 
 /**
  * The whole TaskFlow API as a single Express router.
@@ -40,6 +44,11 @@ export function createTaskFlowRouter() {
   router.use('/notes', noteRoutes);
   router.use('/feature-requests', featureRequestRoutes);
   router.use('/recognition', recognitionRoutes);
+
+  // Goals / OKR. Mounted alongside the rest rather than woven through it, so the
+  // routes above are byte-for-byte the ones that shipped before this module.
+  router.use('/objectives', requireOkrEnabled, requirePermission('okr.view'), objectiveRoutes);
+  router.use('/key-results', requireOkrEnabled, requirePermission('okr.view'), keyResultRoutes);
 
   return router;
 }

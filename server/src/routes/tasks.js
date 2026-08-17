@@ -61,7 +61,7 @@ const TASK_SELECT = `
  * Being tagged on a card grants access to it regardless of department — that is
  * the whole point of tagging someone from another team.
  */
-function visibilityClause(user, params) {
+export function visibilityClause(user, params) {
   if (hasPermission(user, 'task.view.all')) return '1=1';
   params.push(user.id, user.department_id);
   const uid = `$${params.length - 1}`;
@@ -84,7 +84,7 @@ function canEdit(user, task) {
 }
 
 /** Tagged people and the follower may comment even when they cannot edit. */
-async function canAccess(user, taskId) {
+export async function canAccess(user, taskId) {
   if (hasPermission(user, 'task.view.all')) return true;
   const { rows } = await query(
     `SELECT 1 FROM tasks t
@@ -213,7 +213,7 @@ router.get(
     const task = rows[0];
     if (!task) throw notFound('Task not found');
 
-    const [comments, activity, checklist, attachments, collaborators, subtasks] = await Promise.all([
+    const [comments, activity, checklist, attachments, collaborators, subtasks, keyResults] = await Promise.all([
       query(
         `SELECT c.*, u.full_name AS author_name, u.avatar_color
            FROM task_comments c LEFT JOIN users u ON u.id = c.author_id
@@ -253,6 +253,20 @@ router.get(
           ORDER BY t.position, t.id`,
         [task.id],
       ),
+      // strategic alignment, if this card has any. An empty array is the normal
+      // case and nothing on the card depends on it.
+      query(
+        `SELECT kr.id, kr.title, kr.unit, kr.measurement_type, kr.status,
+                l.is_primary, l.contribution_weight,
+                o.id AS objective_id, o.title AS objective_title,
+                o.scope_type, o.department_id AS objective_department_id
+           FROM task_key_result_links l
+           JOIN key_results kr ON kr.id = l.key_result_id
+           JOIN objectives o ON o.id = kr.objective_id
+          WHERE l.task_id = $1 AND kr.is_archived = FALSE AND o.is_archived = FALSE
+          ORDER BY l.is_primary DESC, kr.id`,
+        [task.id],
+      ),
     ]);
 
     res.json({
@@ -263,6 +277,7 @@ router.get(
       attachments: attachments.rows,
       collaborators: collaborators.rows,
       subtasks: subtasks.rows,
+      key_results: keyResults.rows,
       can_edit: canEdit(req.currentUser, task),
       // handing the task to someone else is open to anyone who can see it
       can_reassign: hasPermission(req.currentUser, 'task.assign'),

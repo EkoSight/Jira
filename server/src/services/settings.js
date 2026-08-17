@@ -39,6 +39,16 @@ export const DEFAULT_SETTINGS = {
     name: 'EkoSight',
     workingDays: [1, 2, 3, 4, 5, 6],
   },
+  okr: {
+    // the module's on/off switch — no separate feature-flag framework needed,
+    // since this settings store already exists and is editable without a deploy
+    enabled: true,
+    health: {
+      // percentage points behind the expected pace before a goal changes state
+      atRiskBehindPoints: 10,
+      offTrackBehindPoints: 25,
+    },
+  },
 };
 
 const isPlainObject = (v) => v && typeof v === 'object' && !Array.isArray(v);
