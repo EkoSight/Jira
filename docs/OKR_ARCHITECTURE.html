@@ -1,0 +1,814 @@
+<title>OKR Module Architecture</title>
+<style>
+  :root {
+    color-scheme: light;
+    --paper:      #f6f7f8;
+    --surface:    #ffffff;
+    --surface-2:  #eef1f2;
+    --ink:        #12171c;
+    --ink-2:      #4a545e;
+    --ink-3:      #79838d;
+    --hairline:   #e2e6e9;
+    --rule:       #cdd4d8;
+    --accent:     #0d6b6b;
+    --accent-ink: #0a5252;
+    --accent-wash:#e4f0ef;
+    --new:        #2f7d5d;
+    --additive:   #8a6410;
+    --change:     #a33a3a;
+    --new-wash:   #e6f2ec;
+    --additive-wash:#f7efdd;
+    --change-wash:#f7e7e7;
+
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --paper:      #0e1214;
+      --surface:    #161c1f;
+      --surface-2:  #1d2427;
+      --ink:        #eef2f3;
+      --ink-2:      #b3bec4;
+      --ink-3:      #87949c;
+      --hairline:   #262f33;
+      --rule:       #333f44;
+      --accent:     #4fb3ae;
+      --accent-ink: #7ccfc9;
+      --accent-wash:#122b2c;
+      --new:        #5fbc90;
+      --additive:   #d3a44a;
+      --change:     #e08585;
+      --new-wash:   #12251d;
+      --additive-wash:#2a2314;
+      --change-wash:#2b1818;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --paper:      #0e1214;
+    --surface:    #161c1f;
+    --surface-2:  #1d2427;
+    --ink:        #eef2f3;
+    --ink-2:      #b3bec4;
+    --ink-3:      #87949c;
+    --hairline:   #262f33;
+    --rule:       #333f44;
+    --accent:     #4fb3ae;
+    --accent-ink: #7ccfc9;
+    --accent-wash:#122b2c;
+    --new:        #5fbc90;
+    --additive:   #d3a44a;
+    --change:     #e08585;
+    --new-wash:   #12251d;
+    --additive-wash:#2a2314;
+    --change-wash:#2b1818;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 78ch;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  header.doc { display: flex; flex-direction: column; gap: 14px; }
+
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    background: var(--accent-wash);
+    border: 1px solid var(--accent);
+    padding: 5px 11px;
+    border-radius: 3px;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(30px, 5vw, 42px);
+    line-height: 1.1;
+    letter-spacing: -0.028em;
+    font-weight: 680;
+    text-wrap: balance;
+  }
+  .standfirst { margin: 0; font-size: 17.5px; color: var(--ink-2); max-width: 62ch; }
+
+  h2 {
+    margin: 0 0 4px;
+    font-size: 23px;
+    letter-spacing: -0.02em;
+    font-weight: 660;
+    text-wrap: balance;
+  }
+  h3 {
+    margin: 0 0 4px;
+    font-size: 16.5px;
+    font-weight: 660;
+    letter-spacing: -0.01em;
+  }
+
+  section { display: flex; flex-direction: column; gap: 16px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 6px;
+  }
+
+  .sec-head { border-top: 2px solid var(--ink); padding-top: 14px; }
+
+  p { margin: 0; max-width: 68ch; }
+  p + p { margin-top: 12px; }
+
+  a { color: var(--accent-ink); }
+
+  ul, ol { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 7px; max-width: 68ch; }
+  li::marker { color: var(--ink-3); }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.875em;
+    background: var(--surface-2);
+    padding: 1.5px 5px;
+    border-radius: 3px;
+    color: var(--ink);
+  }
+
+  pre {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12.6px;
+    line-height: 1.6;
+    color: var(--ink-2);
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .k { color: var(--accent-ink); font-weight: 600; }
+  pre .c { color: var(--ink-3); font-style: italic; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 5px;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .grid { display: grid; gap: 12px; }
+  .grid-2 { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .grid-4 { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+  .stat { background: var(--surface); border: 1px solid var(--hairline); border-radius: 5px; padding: 14px 16px; }
+  .stat b {
+    display: block;
+    font-size: 27px;
+    font-weight: 680;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.15;
+  }
+  .stat span { font-size: 12.5px; color: var(--ink-3); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: 5px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th {
+    text-align: left;
+    font-family: var(--mono);
+    font-size: 10.8px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 600;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  td { padding: 11px 14px; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.path { font-family: var(--mono); font-size: 12.4px; white-space: nowrap; }
+  td.num { font-variant-numeric: tabular-nums; }
+
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 3px 7px;
+    border-radius: 3px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .chip-new { color: var(--new); background: var(--new-wash); }
+  .chip-add { color: var(--additive); background: var(--additive-wash); }
+  .chip-chg { color: var(--change); background: var(--change-wash); }
+
+  tr.is-new td:first-child { box-shadow: inset 3px 0 0 var(--new); }
+  tr.is-add td:first-child { box-shadow: inset 3px 0 0 var(--additive); }
+  tr.is-chg td:first-child { box-shadow: inset 3px 0 0 var(--change); }
+
+  .callout {
+    background: var(--accent-wash);
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .callout h3 { color: var(--accent-ink); }
+
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 15px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .decision .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .rec { font-size: 14.5px; color: var(--ink-2); }
+  .rec b { color: var(--ink); }
+
+  .flow {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.9;
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 5px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    color: var(--ink-2);
+  }
+  .flow b { color: var(--ink); font-weight: 600; }
+  .flow .muted { color: var(--ink-3); }
+
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+
+  footer.doc { color: var(--ink-3); font-size: 13.5px; border-top: 1px solid var(--rule); padding-top: 18px; }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 36px 16px 64px; gap: 32px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="doc">
+    <span class="status">Phase 1 · for review · no code written</span>
+    <h1>OKR Module Architecture</h1>
+    <p class="standfirst">
+      A codebase audit of TaskFlow, an impact analysis of every file the OKR layer would touch, and the
+      proposed schema, API and UI. Six decisions need your sign-off before implementation starts.
+    </p>
+  </header>
+
+  <section>
+    <div class="grid grid-4">
+      <div class="stat"><b>19</b><span>existing tables</span></div>
+      <div class="stat"><b>69</b><span>tests, all passing</span></div>
+      <div class="stat"><b>5</b><span>migrations applied</span></div>
+      <div class="stat"><b>0</b><span>conflicting entities</span></div>
+    </div>
+    <p>
+      The most important audit result: <b>there is no existing project, goal, milestone or objective entity
+      anywhere in the codebase.</b> The OKR module has nothing to collide with, and no existing concept needs
+      renaming or reinterpreting to make room for it.
+    </p>
+  </section>
+
+  <!-- ============================================ PHASE 1 AUDIT -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Phase 1</span>
+      <h2>Codebase audit</h2>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>#</th><th>Area</th><th>What is actually there</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">1</td><td>Frontend</td><td>React 18.3 + Vite 5, <code>react-router-dom</code> 6.30. Installable PWA with a service worker.</td></tr>
+          <tr><td class="num">2</td><td>Backend</td><td>Node 20+, Express 4.21, ES modules. Exported as a mountable router (<code>createTaskFlowRouter()</code>) so it can embed in the main EkoSight app.</td></tr>
+          <tr><td class="num">3</td><td>Database</td><td>PostgreSQL. Every object lives in a dedicated <code>taskflow</code> schema, set per-connection via <code>options=-c search_path</code>.</td></tr>
+          <tr><td class="num">4</td><td>ORM / data access</td><td><b>No ORM.</b> Raw parameterised SQL through <code>pg</code>, with <code>query()</code> and <code>withTransaction()</code> helpers in <code>db/pool.js</code>. There are no model classes to extend — a "model" here is a table plus the SQL in its route/service.</td></tr>
+          <tr><td class="num">5</td><td>User model</td><td><code>users</code> — role, <code>department_id</code>, capacity fields, <code>extra_permissions[]</code> / <code>revoked_permissions[]</code>, <code>external_user_id</code> for mapping onto the host app.</td></tr>
+          <tr><td class="num">6</td><td>Department model</td><td><code>departments</code> — <code>key</code> (drives task references like <code>MKT-14</code>), name, colour, <code>is_active</code>.</td></tr>
+          <tr><td class="num">7</td><td>Task model</td><td><code>tasks</code>, 31 columns. Already carries <code>parent_task_id</code> (sub tasks), <code>recurrence</code>, <code>follower_id</code>, <code>completion_note</code>.</td></tr>
+          <tr><td class="num">8</td><td>Assignment</td><td><code>assignee_id</code> is the accountable owner; <code>follower_id</code> is a second worker; <code>task_collaborators</code> is a many-to-many tag for cross-department visibility.</td></tr>
+          <tr><td class="num">9</td><td>Status / progress</td><td><code>workflow_statuses</code> are user-configurable columns, each mapped to a fixed <code>stage</code> (<code>backlog…done</code>). Dashboards group by stage, never by status name. Parent task progress is derived from sub tasks.</td></tr>
+          <tr><td class="num">10</td><td>Authentication</td><td>JWT (HS256) with scrypt password hashing; <code>authenticate</code> middleware populates <code>req.currentUser</code> and <code>req.permissions</code>. <code>TRUST_HOST_AUTH</code> mode reuses the host app's session.</td></tr>
+          <tr><td class="num">11</td><td>Authorization</td><td>26 named permissions, 4 roles, plus per-user grant/revoke arrays. Route guard <code>requirePermission(...)</code>; row-level rules via <code>visibilityClause()</code>, <code>canAccess()</code>, <code>canEdit()</code> in <code>routes/tasks.js</code>.</td></tr>
+          <tr><td class="num">12</td><td>API</td><td>REST under <code>/api/taskflow</code>, 12 routers mounted in <code>router.js</code>. Zod validation, <code>asyncHandler</code>, typed <code>HttpError</code> → error middleware. Responses are named envelopes: <code>{ task }</code>, <code>{ tasks }</code>.</td></tr>
+          <tr><td class="num">13</td><td>Service pattern</td><td>7 modules in <code>services/</code> (metrics, blackmarks, recognition, performance, recurrence, settings, activity). Plain exported functions taking a scope object — no repository classes, no DI container.</td></tr>
+          <tr><td class="num">14</td><td>UI patterns</td><td><code>pages/</code> + <code>components/</code>. Shared primitives in <code>ui.jsx</code> (Modal, Badge, Field, Avatar, Icon), charts in <code>charts.jsx</code>. State via React Context in <code>state/AppState.jsx</code> — no Redux, no data-fetching library.</td></tr>
+          <tr><td class="num">15</td><td>Dashboard</td><td>One aggregate endpoint <code>GET /reports/dashboard</code> returns summary, breakdowns, workload, trend and activity in a single round trip. Client renders tiles + tables from that one payload.</td></tr>
+          <tr><td class="num">16</td><td>Migrations</td><td>Numbered <code>.sql</code> files, tracked in <code>schema_migrations</code>, each applied inside its own transaction. <b>Additive-only is enforced by a test</b> that fails the build on <code>DROP</code>, <code>TRUNCATE</code>, <code>DELETE FROM</code>, table renames, or a <code>NOT NULL</code> column added without a default.</td></tr>
+          <tr><td class="num">17</td><td>Testing</td><td><code>node:test</code>, 69 tests across 3 files, run serially against an isolated <code>taskflow_test</code> schema. Includes a test that applies migrations to a populated database and asserts every row is unchanged.</td></tr>
+          <tr><td class="num">18</td><td>Conflicts</td><td><b>None.</b> No project, goal, milestone or objective concept exists. Adjacent features (black marks, recognition, performance reviews) read task data but define no competing hierarchy.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <h3>Two audit findings that change the brief</h3>
+      <p>
+        <b>There is no Organization entity.</b> TaskFlow is single-tenant — one company, many departments. Adding
+        <code>organization_id</code> would introduce a table with exactly one row and a foreign key on every
+        objective that never varies. See decision <b>D1</b>.
+      </p>
+      <p>
+        <b>Soft deletion here is <code>is_archived BOOLEAN</code>, not <code>archived_at</code>.</b> That is the
+        convention on <code>tasks</code> and <code>notes</code>. See decision <b>D2</b>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================ A. ARCHITECTURE MAP -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Part A</span>
+      <h2>Existing architecture map</h2>
+    </div>
+
+    <p>How <b>User → Department → Task</b> works today, including the parts the OKR layer must not disturb.</p>
+
+    <div class="flow">
+<b>departments</b> <span class="muted">(id, key, name, colour, is_active)</span>
+   │
+   ├── <b>users</b>.department_id <span class="muted">→ a person belongs to one department (nullable)</span>
+   │        │
+   │        └── role + extra_permissions[] − revoked_permissions[]
+   │                    = effective permissions <span class="muted">(computed per request)</span>
+   │
+   └── <b>tasks</b>.department_id <span class="muted">→ NOT NULL. Sets the task reference: MKT-14</span>
+            │
+            ├── assignee_id  <span class="muted">→ accountable owner (carries the black mark)</span>
+            ├── follower_id  <span class="muted">→ second worker, no deadline accountability</span>
+            ├── task_collaborators <span class="muted">→ tagged for cross-department visibility</span>
+            ├── parent_task_id <span class="muted">→ sub tasks; parent progress = avg(children)</span>
+            └── status_id → <b>workflow_statuses</b>.stage <span class="muted">→ drives every dashboard</span>
+    </div>
+
+    <div class="grid grid-2">
+      <div class="card">
+        <h3>Visibility</h3>
+        <p>A caller with <code>task.view.all</code> sees everything. Otherwise a task is visible if they are the
+        assignee, follower, reporter or creator, <em>or</em> it belongs to their department, <em>or</em> they are
+        tagged on it. This is one SQL fragment, <code>visibilityClause()</code>, reused by every task query.</p>
+      </div>
+      <div class="card">
+        <h3>Editing</h3>
+        <p><code>canEdit()</code> grants full edit to assignee, follower, reporter, creator, or anyone with
+        <code>task.edit.any</code>. A narrower path lets anyone with <code>task.assign</code> change only
+        ownership on a task they can see.</p>
+      </div>
+      <div class="card">
+        <h3>Audit trail</h3>
+        <p><code>task_activity</code> records every field change, completion, reopen and link. Its
+        <code>task_id</code> is <code>NOT NULL</code> with a foreign key to <code>tasks</code> — so it
+        <b>cannot</b> hold objective or key-result events without altering an existing table. See <b>D5</b>.</p>
+      </div>
+      <div class="card">
+        <h3>Configuration</h3>
+        <p>A <code>settings</code> table holds JSONB values merged over code defaults (<code>blackmarks</code>,
+        <code>workload</code>, <code>taskTypes</code>, <code>organisation</code>). This is the natural home for
+        OKR health thresholds and the module's on/off flag.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ B. IMPACT ANALYSIS -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Part B</span>
+      <h2>Impact analysis</h2>
+    </div>
+
+    <p>
+      Every file the module would touch, classified. The headline: <b>no existing behaviour is modified</b> —
+      the entire OKR layer is new files plus additive extension points.
+    </p>
+
+    <div class="grid grid-4">
+      <div class="stat"><b>11</b><span><span class="chip chip-new">New</span> files</span></div>
+      <div class="stat"><b>9</b><span><span class="chip chip-add">Additive</span> edits</span></div>
+      <div class="stat"><b>0</b><span><span class="chip chip-chg">Behaviour</span> changes</span></div>
+      <div class="stat"><b>0</b><span>existing columns altered</span></div>
+    </div>
+
+    <h3>Server</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>File</th><th>Class</th><th>What happens to it</th></tr></thead>
+        <tbody>
+          <tr class="is-new"><td class="path">db/migrations/006_okr.sql</td><td><span class="chip chip-new">New</span></td><td>5 new tables, indexes, foreign keys. No <code>ALTER</code> of any existing table.</td></tr>
+          <tr class="is-new"><td class="path">services/okr.js</td><td><span class="chip chip-new">New</span></td><td>Progress maths (result + execution), objective rollup, health engine.</td></tr>
+          <tr class="is-new"><td class="path">routes/objectives.js</td><td><span class="chip chip-new">New</span></td><td>Objective CRUD, list/filter, dashboard aggregate. Nested key-result routes.</td></tr>
+          <tr class="is-new"><td class="path">routes/keyResults.js</td><td><span class="chip chip-new">New</span></td><td>KR CRUD, check-ins, task link/unlink.</td></tr>
+          <tr class="is-new"><td class="path">lib/okrConstants.js</td><td><span class="chip chip-new">New</span></td><td>Enums and health thresholds as named constants, not magic numbers.</td></tr>
+          <tr class="is-new"><td class="path">tests/okr.test.js</td><td><span class="chip chip-new">New</span></td><td>All 22 required scenarios.</td></tr>
+          <tr class="is-add"><td class="path">router.js</td><td><span class="chip chip-add">Additive</span></td><td>Two <code>router.use()</code> lines. No existing mount touched.</td></tr>
+          <tr class="is-add"><td class="path">lib/permissions.js</td><td><span class="chip chip-add">Additive</span></td><td>Add <code>okr.*</code> keys to the catalogue and to role defaults. No existing permission changes meaning.</td></tr>
+          <tr class="is-add"><td class="path">services/settings.js</td><td><span class="chip chip-add">Additive</span></td><td>New <code>okr</code> defaults block (enabled flag + health thresholds). Existing keys untouched.</td></tr>
+          <tr class="is-add"><td class="path">routes/tasks.js</td><td><span class="chip chip-add">Additive</span></td><td>Task detail response gains a <code>key_results: []</code> array. <b>Additive field only</b> — no query, filter, permission or status logic changes. Tasks with no links return <code>[]</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Client</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>File</th><th>Class</th><th>What happens to it</th></tr></thead>
+        <tbody>
+          <tr class="is-new"><td class="path">pages/Goals.jsx</td><td><span class="chip chip-new">New</span></td><td>Company goals dashboard + objective list with filters.</td></tr>
+          <tr class="is-new"><td class="path">pages/ObjectiveDetail.jsx</td><td><span class="chip chip-new">New</span></td><td>Objective header, key results, linked tasks.</td></tr>
+          <tr class="is-new"><td class="path">components/KeyResultPanel.jsx</td><td><span class="chip chip-new">New</span></td><td>KR detail, check-in form, history, task linking.</td></tr>
+          <tr class="is-new"><td class="path">components/ObjectiveWizard.jsx</td><td><span class="chip chip-new">New</span></td><td>The 5-step create flow.</td></tr>
+          <tr class="is-new"><td class="path">lib/okr.js</td><td><span class="chip chip-new">New</span></td><td>Date presets, progress formatting, health labels.</td></tr>
+          <tr class="is-add"><td class="path">api/client.js</td><td><span class="chip chip-add">Additive</span></td><td>New methods appended. No existing method signature changes.</td></tr>
+          <tr class="is-add"><td class="path">App.jsx</td><td><span class="chip chip-add">Additive</span></td><td>Two routes added.</td></tr>
+          <tr class="is-add"><td class="path">components/Layout.jsx</td><td><span class="chip chip-add">Additive</span></td><td>One nav entry, "Goals". <b>The Tasks/Board entries are not renamed.</b></td></tr>
+          <tr class="is-add"><td class="path">components/TaskDialog.jsx</td><td><span class="chip chip-add">Additive</span></td><td>Optional "Strategic alignment" section + breadcrumb, rendered only when the module is enabled. No validation added — a task with no KR saves exactly as today.</td></tr>
+          <tr class="is-add"><td class="path">styles.css</td><td><span class="chip chip-add">Additive</span></td><td>New classes appended; no existing selector modified.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <h3>Backward-compatibility guarantees</h3>
+      <ul>
+        <li>No existing table, column, route, status, permission or component is renamed or removed.</li>
+        <li>The <code>tasks</code> table gains <b>no</b> columns — the relationship lives entirely in a join table.</li>
+        <li>A task with zero OKR links behaves identically to today, on every screen and endpoint.</li>
+        <li>All 69 existing tests must still pass unchanged; the migration-safety test already enforces the rest.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============================================ C. IMPLEMENTATION PLAN -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Part C</span>
+      <h2>Implementation plan</h2>
+    </div>
+
+    <h3>Database schema</h3>
+    <p>Five new tables. Written to satisfy the existing additive-only migration test.</p>
+
+<pre><code><span class="c">-- 006_okr.sql — additive only: creates new tables, alters nothing.</span>
+
+<span class="k">CREATE TABLE</span> objectives (
+  id                  SERIAL PRIMARY KEY,
+  title               TEXT NOT NULL,
+  description         TEXT,
+  scope_type          TEXT NOT NULL DEFAULT 'DEPARTMENT'
+                        CHECK (scope_type IN ('COMPANY','DEPARTMENT')),
+  department_id       INTEGER REFERENCES departments(id) ON DELETE RESTRICT,
+  parent_objective_id INTEGER REFERENCES objectives(id)  ON DELETE SET NULL,
+  owner_user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  start_date          DATE NOT NULL,
+  end_date            DATE NOT NULL,
+  priority            TEXT NOT NULL DEFAULT 'medium'
+                        CHECK (priority IN ('low','medium','high','critical')),
+  status              TEXT NOT NULL DEFAULT 'DRAFT'
+                        CHECK (status IN ('DRAFT','ACTIVE','ON_HOLD','COMPLETED','CANCELLED')),
+  manual_health       TEXT CHECK (manual_health IN
+                        ('ON_TRACK','AT_RISK','OFF_TRACK','COMPLETED','NOT_STARTED')),
+  health_override_reason TEXT,
+  is_archived         BOOLEAN NOT NULL DEFAULT FALSE,
+  created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  <span class="c">-- a company objective has no department; a department one must have it</span>
+  CHECK ((scope_type = 'COMPANY'    AND department_id IS NULL)
+      OR (scope_type = 'DEPARTMENT' AND department_id IS NOT NULL)),
+  CHECK (end_date >= start_date)
+);
+
+<span class="k">CREATE TABLE</span> key_results (
+  id               SERIAL PRIMARY KEY,
+  objective_id     INTEGER NOT NULL REFERENCES objectives(id) ON DELETE CASCADE,
+  title            TEXT NOT NULL,
+  description      TEXT,
+  owner_user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  start_date       DATE,
+  end_date         DATE,
+  measurement_type TEXT NOT NULL DEFAULT 'NUMBER' CHECK (measurement_type IN
+                     ('NUMBER','PERCENTAGE','CURRENCY','BINARY','MILESTONE','TASK_ROLLUP')),
+  direction        TEXT NOT NULL DEFAULT 'INCREASE'
+                     CHECK (direction IN ('INCREASE','DECREASE')),
+  baseline_value   NUMERIC(16,4) NOT NULL DEFAULT 0,
+  target_value     NUMERIC(16,4),
+  current_value    NUMERIC(16,4) NOT NULL DEFAULT 0,
+  unit             TEXT,
+  weight           NUMERIC(6,2) NOT NULL DEFAULT 1 CHECK (weight >= 0),
+  status           TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN
+                     ('DRAFT','ACTIVE','ON_HOLD','COMPLETED','CANCELLED')),
+  manual_health    TEXT,
+  health_override_reason TEXT,
+  last_check_in_at TIMESTAMPTZ,
+  created_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+<span class="c">-- history is append-only; a check-in never overwrites the last one</span>
+<span class="k">CREATE TABLE</span> key_result_check_ins (
+  id                SERIAL PRIMARY KEY,
+  key_result_id     INTEGER NOT NULL REFERENCES key_results(id) ON DELETE CASCADE,
+  user_id           INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  previous_value    NUMERIC(16,4),
+  current_value     NUMERIC(16,4),
+  resulting_progress NUMERIC(6,2),
+  confidence        TEXT CHECK (confidence IN ('HIGH','MEDIUM','LOW')),
+  health_status     TEXT,
+  note              TEXT,
+  next_action       TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+<span class="c">-- the ONLY connection between tasks and OKRs. tasks table is untouched.</span>
+<span class="k">CREATE TABLE</span> task_key_result_links (
+  id                  SERIAL PRIMARY KEY,
+  task_id             INTEGER NOT NULL REFERENCES tasks(id)       ON DELETE CASCADE,
+  key_result_id       INTEGER NOT NULL REFERENCES key_results(id) ON DELETE CASCADE,
+  is_primary          BOOLEAN NOT NULL DEFAULT FALSE,
+  contribution_weight NUMERIC(6,2),
+  created_by          INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (task_id, key_result_id)
+);
+<span class="c">-- at most one primary key result per task</span>
+<span class="k">CREATE UNIQUE INDEX</span> tkr_one_primary_idx
+  ON task_key_result_links (task_id) WHERE is_primary;
+
+<span class="c">-- mirrors task_activity, which cannot be reused (its task_id is NOT NULL)</span>
+<span class="k">CREATE TABLE</span> okr_activity (
+  id          SERIAL PRIMARY KEY,
+  entity_type TEXT NOT NULL CHECK (entity_type IN ('OBJECTIVE','KEY_RESULT','LINK')),
+  entity_id   INTEGER NOT NULL,
+  actor_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  action      TEXT NOT NULL,
+  field       TEXT,
+  from_value  TEXT,
+  to_value    TEXT,
+  meta        JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+<span class="c">-- indexes for the dashboard access paths called out in the brief</span>
+<span class="k">CREATE INDEX</span> objectives_department_idx ON objectives (department_id);
+<span class="k">CREATE INDEX</span> objectives_owner_idx      ON objectives (owner_user_id);
+<span class="k">CREATE INDEX</span> objectives_dates_idx      ON objectives (start_date, end_date);
+<span class="k">CREATE INDEX</span> objectives_status_idx     ON objectives (status) WHERE is_archived = FALSE;
+<span class="k">CREATE INDEX</span> objectives_parent_idx     ON objectives (parent_objective_id);
+<span class="k">CREATE INDEX</span> key_results_objective_idx ON key_results (objective_id);
+<span class="k">CREATE INDEX</span> key_results_owner_idx     ON key_results (owner_user_id);
+<span class="k">CREATE INDEX</span> check_ins_kr_idx          ON key_result_check_ins (key_result_id, created_at DESC);
+<span class="k">CREATE INDEX</span> tkr_task_idx              ON task_key_result_links (task_id);
+<span class="k">CREATE INDEX</span> tkr_kr_idx                ON task_key_result_links (key_result_id);
+<span class="k">CREATE INDEX</span> okr_activity_entity_idx   ON okr_activity (entity_type, entity_id, created_at DESC);
+</code></pre>
+
+    <h3>Progress engine — the two numbers</h3>
+    <p>
+      Result and execution progress answer different questions and are computed from different sources. They are
+      never conflated, and completing tasks never moves the result number.
+    </p>
+
+<pre><code><span class="c">// RESULT PROGRESS — did the outcome actually happen?</span>
+INCREASE:  (current − baseline) / (target − baseline)
+DECREASE:  (baseline − current) / (baseline − target)
+BINARY:    current >= 1 ? 100% : 0%
+TASK_ROLLUP: falls back to execution progress (this is the one type where
+             the outcome IS the work being done)
+
+<span class="c">// guards: denominator 0 → null (shown as "not measurable", not 0%)</span>
+<span class="c">//         target null   → null</span>
+<span class="c">//         clamp 0–100 for display; raw value kept for over-achievement</span>
+
+<span class="c">// EXECUTION PROGRESS — how much of the linked work is finished?</span>
+   count(linked tasks where stage = 'done') / count(linked tasks)
+   <span class="c">// weighted by contribution_weight when present; null when no tasks linked</span>
+
+<span class="c">// OBJECTIVE PROGRESS — weighted roll-up of its key results</span>
+   Σ(KR result progress × KR weight) / Σ(KR weight)
+   <span class="c">// KRs with null progress are excluded from both sums, not counted as 0</span>
+</code></pre>
+
+    <h3>Health engine</h3>
+    <p>Thresholds live in <code>settings.okr.health</code>, editable without a deploy, defaulting to the values in the brief.</p>
+
+<pre><code>time_elapsed = (today − start_date) / (end_date − start_date)
+
+COMPLETED    progress = 100
+NOT_STARTED  today &lt; start_date
+ON_TRACK     progress >= time_elapsed − 10pp
+AT_RISK      progress >= time_elapsed − 25pp
+OFF_TRACK    otherwise, OR end_date passed and progress &lt; 100
+
+<span class="c">// auto_health is always computed and stored alongside any manual override,</span>
+<span class="c">// so the UI can show "Manually set to ON_TRACK — system says AT_RISK".</span>
+</code></pre>
+
+    <h3>API surface</h3>
+    <p>Same conventions as the rest of the app: zod-validated bodies, named response envelopes, <code>requirePermission</code> guards, capped <code>limit</code> pagination.</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Method</th><th>Route</th><th>Permission</th></tr></thead>
+        <tbody>
+          <tr><td class="path">GET</td><td class="path">/objectives</td><td>okr.view</td></tr>
+          <tr><td class="path">POST</td><td class="path">/objectives</td><td>okr.create.company / okr.create.department</td></tr>
+          <tr><td class="path">GET</td><td class="path">/objectives/:id</td><td>okr.view</td></tr>
+          <tr><td class="path">PATCH</td><td class="path">/objectives/:id</td><td>owner, or okr.manage.any</td></tr>
+          <tr><td class="path">DELETE</td><td class="path">/objectives/:id</td><td>owner, or okr.manage.any (archives)</td></tr>
+          <tr><td class="path">GET</td><td class="path">/objectives/dashboard</td><td>okr.view</td></tr>
+          <tr><td class="path">POST</td><td class="path">/objectives/:id/key-results</td><td>objective owner, or okr.manage.any</td></tr>
+          <tr><td class="path">GET</td><td class="path">/key-results/:id</td><td>okr.view</td></tr>
+          <tr><td class="path">PATCH</td><td class="path">/key-results/:id</td><td>KR owner, objective owner, or okr.manage.any</td></tr>
+          <tr><td class="path">POST</td><td class="path">/key-results/:id/check-ins</td><td>okr.checkin (KR owner)</td></tr>
+          <tr><td class="path">GET</td><td class="path">/key-results/:id/check-ins</td><td>okr.view</td></tr>
+          <tr><td class="path">POST</td><td class="path">/key-results/:id/tasks</td><td>okr.link.task</td></tr>
+          <tr><td class="path">DELETE</td><td class="path">/key-results/:id/tasks/:taskId</td><td>okr.link.task</td></tr>
+          <tr><td class="path">GET</td><td class="path">/tasks/:id/key-results</td><td>existing task visibility</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>Permissions</h3>
+    <p>Six new keys added to the existing catalogue — no parallel permission system, no change to any existing key.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Permission</th><th>admin</th><th>manager</th><th>member</th><th>viewer</th></tr></thead>
+        <tbody>
+          <tr><td class="path">okr.view</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          <tr><td class="path">okr.create.company</td><td>✓</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td class="path">okr.create.department</td><td>✓</td><td>✓</td><td>—</td><td>—</td></tr>
+          <tr><td class="path">okr.manage.any</td><td>✓</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td class="path">okr.checkin</td><td>✓</td><td>✓</td><td>✓ <span class="rec">(own KRs)</span></td><td>—</td></tr>
+          <tr><td class="path">okr.link.task</td><td>✓</td><td>✓</td><td>✓</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="rec">
+      Row-level ownership sits on top, mirroring <code>canEdit()</code>: an objective owner manages their own
+      objective and its key results without needing <code>okr.manage.any</code>. Per-user grants and revokes work
+      on these keys exactly as they do on existing ones.
+    </p>
+
+    <h3>UI</h3>
+    <ul>
+      <li><b>Goals dashboard</b> — counts by health, overall progress, objectives by department and by owner,
+          upcoming deadlines. Filters: date range, department, owner, status, health, priority. Presets populate
+          nothing but <code>start_date</code>/<code>end_date</code>; the filter matches objectives whose period
+          <em>overlaps</em> the range.</li>
+      <li><b>Objective detail</b> — header with scope, owner, parent, dates, priority, status, progress, health,
+          time elapsed; then key results, each showing result and execution progress side by side.</li>
+      <li><b>Key result panel</b> — baseline / current / target, both progress bars, check-in history as a dated
+          list, linked tasks with link and unlink.</li>
+      <li><b>Objective wizard</b> — the 5 steps from the brief. Step 5 (tasks) is skippable; an equal-weight
+          button fills KR weights in one click.</li>
+      <li><b>Task dialog</b> — an optional "Strategic alignment" section: pick a key result, the objective shows
+          read-only beside it, derived from the KR. Plus a breadcrumb on linked tasks.</li>
+    </ul>
+
+    <h3>Feature flag</h3>
+    <p>
+      No flag framework exists and the brief says not to build one. The <code>settings</code> table already stores
+      JSONB config merged over code defaults — so the flag is one key, <code>settings.okr.enabled</code>, default
+      <code>false</code>. The router mounts unconditionally but returns <code>404</code> while disabled; the nav
+      entry and the task-dialog section are hidden from the settings payload the client already fetches. Turning
+      it on is a settings change, not a deploy.
+    </p>
+
+    <h3>Testing</h3>
+    <p>
+      A new <code>tests/okr.test.js</code> covering all 22 listed scenarios, including the four that are really
+      regression tests: <b>task with no KR</b>, <b>existing task creation behaviour</b>, <b>result vs execution
+      progress</b>, and <b>permission enforcement</b>. The existing 69 tests run unchanged — any failure among
+      them is a defect in this work, not an expected consequence of it.
+    </p>
+  </section>
+
+  <!-- ============================================ DECISIONS -->
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Sign-off required</span>
+      <h2>Six decisions</h2>
+    </div>
+    <p>Each of these is a place where the brief and the existing codebase disagree, or where storing a value risks
+       a second source of truth. I have a recommendation for each; I will follow your call.</p>
+
+    <div class="decision">
+      <span class="tag">D1 · organization_id</span>
+      <h3>Do not add an Organization entity</h3>
+      <p class="rec">The brief says "if the current architecture supports organizations" — it does not. TaskFlow is
+      single-tenant. <b>Recommendation: omit <code>organization_id</code>.</b> <code>scope_type = 'COMPANY'</code>
+      already expresses company-wide. If multi-tenancy ever arrives it belongs on <code>departments</code> and
+      <code>users</code> first, as its own project.</p>
+    </div>
+
+    <div class="decision">
+      <span class="tag">D2 · soft deletion</span>
+      <h3>Use <code>is_archived</code>, not <code>archived_at</code></h3>
+      <p class="rec">The brief suggests <code>archived_at</code>; the codebase uses
+      <code>is_archived BOOLEAN</code> on <code>tasks</code> and <code>notes</code>.
+      <b>Recommendation: match the existing convention</b> so one archive idiom covers the whole app.</p>
+    </div>
+
+    <div class="decision">
+      <span class="tag">D3 · stored vs derived progress</span>
+      <h3>Derive progress and health; do not store them</h3>
+      <p class="rec">The brief lists <code>progress_percent</code> and <code>auto_health_status</code> as columns.
+      Storing them creates a second source of truth that silently goes stale whenever a task is completed, a
+      check-in lands, or midnight passes. <b>Recommendation: compute both in SQL on read</b> — the inputs
+      (<code>current_value</code>, weights, task links, dates) are all stored, so the numbers are always right.
+      At your data volumes this costs nothing. If a dashboard ever gets slow, the fix is a materialised view,
+      which we can add without changing the API.</p>
+    </div>
+
+    <div class="decision">
+      <span class="tag">D4 · objective on task</span>
+      <h3>No <code>objective_id</code> on tasks — confirmed</h3>
+      <p class="rec">Following your rule exactly: the objective is reached via
+      <code>task → link → key_result → objective</code>. The task dialog shows it read-only, derived from the
+      chosen key result. <b>No change to the <code>tasks</code> table at all.</b></p>
+    </div>
+
+    <div class="decision">
+      <span class="tag">D5 · audit trail</span>
+      <h3>New <code>okr_activity</code> table rather than widening <code>task_activity</code></h3>
+      <p class="rec"><code>task_activity.task_id</code> is <code>NOT NULL</code> with a foreign key to
+      <code>tasks</code>. Reusing it would mean making that column nullable — an existing-behaviour modification to
+      a table with live data, which the brief forbids. <b>Recommendation: a parallel table with the same shape</b>,
+      so the pattern is familiar and the existing audit trail is untouched.</p>
+    </div>
+
+    <div class="decision">
+      <span class="tag">D6 · scope of phase 2</span>
+      <h3>Ship the core before the extras</h3>
+      <p class="rec">The full brief is large. <b>Recommendation: build objectives, key results, check-ins, task
+      linking, the health engine, the goals dashboard and the task-dialog integration first</b> — that is a
+      complete, usable OKR loop. Then, as a second pass: contributors, cascading parent objectives beyond one
+      level, department-page embedding, and the milestone measurement type. Say if you would rather have all of it
+      in one delivery.</p>
+    </div>
+  </section>
+
+  <footer class="doc">
+    <p>
+      Nothing in this plan has been implemented. On approval — including your answers to D1–D6 — the work lands as
+      one migration, five new server files, five new client files, nine additive edits, and a new test file, behind
+      <code>settings.okr.enabled</code>.
+    </p>
+  </footer>
+
+</div>
