@@ -1112,3 +1112,34 @@ a.sig-row:hover { border-color: var(--border-strong); box-shadow: var(--shadow-s
 .sig-good { background: var(--good); }
 
 .crit-count { color: var(--critical-text); font-weight: 650; }
+
+/* ---------------------------------------------------------- pipeline */
+
+.account-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+.account-card.is-stalled { border-left-color: var(--warning); }
+.account-card .task-card-title { font-weight: 600; }
+
+.timeline-row {
+  display: flex;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+.timeline-row:last-child { border-bottom: 0; }
+.timeline-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--ink-2);
+}

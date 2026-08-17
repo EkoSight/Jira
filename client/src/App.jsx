@@ -15,6 +15,8 @@ import Recognition from './pages/Recognition.jsx';
 import Performance from './pages/Performance.jsx';
 import Goals from './pages/Goals.jsx';
 import ObjectiveDetail from './pages/ObjectiveDetail.jsx';
+import Pipeline from './pages/Pipeline.jsx';
+import AccountDetail from './pages/AccountDetail.jsx';
 
 function Protected({ permission, children }) {
   const { can } = useAuth();
@@ -69,6 +71,22 @@ function Shell() {
           element={
             <Protected permission="okr.view">
               <ObjectiveDetail />
+            </Protected>
+          }
+        />
+        <Route
+          path="/pipeline"
+          element={
+            <Protected permission="crm.view">
+              <Pipeline />
+            </Protected>
+          }
+        />
+        <Route
+          path="/accounts/:id"
+          element={
+            <Protected permission="crm.view">
+              <AccountDetail />
             </Protected>
           }
         />

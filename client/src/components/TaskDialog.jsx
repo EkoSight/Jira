@@ -292,19 +292,21 @@ function Alignment({ taskId, keyResults, canLink, onChanged }) {
 }
 
 const blankTask = (defaults = {}) => ({
-  title: '',
-  description: '',
+  title: defaults.title || '',
+  description: defaults.description || '',
   department_id: defaults.department_id || '',
   status_id: defaults.status_id || '',
   priority: 'medium',
   task_type: 'task',
   assignee_id: defaults.assignee_id || '',
   follower_id: '',
-  due_date: '',
+  due_date: defaults.due_date || '',
   estimate_hours: '',
   progress: 0,
   tags: [],
   recurrence: 'none',
+  // a task created against a lead/partner carries it through
+  account_id: defaults.account_id || null,
 });
 
 const RECURRENCE_OPTIONS = [
@@ -415,6 +417,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       recurrence: form.recurrence || 'none',
     };
     if (form.status_id) data.status_id = Number(form.status_id);
+    if (form.account_id) data.account_id = Number(form.account_id);
     return data;
   };
 
@@ -620,6 +623,13 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
           {tab === 'details' && (
             <div className="stack">
+              {detail?.task?.account_name && (
+                <div className="alignment">
+                  <div className="small muted">Part of the work on</div>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{detail.task.account_name}</span>
+                </div>
+              )}
+
               <Field label="Title">
                 <input
                   className="input"

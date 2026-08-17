@@ -19,6 +19,7 @@ const NAV = [
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
   { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },
+  { to: '/pipeline', label: 'Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
   { to: '/notes', label: 'My notes', icon: 'note', permission: 'note.use' },
   { to: '/team', label: 'Team', icon: 'team', permission: 'user.view' },
   { to: '/recognition', label: 'Recognition', icon: 'trophy' },
@@ -73,6 +74,7 @@ export default function Layout({ children }) {
             onOpen: (notification) => {
               if (notification.task_id) setOpenTaskId(notification.task_id);
               else if (notification.objective_id) navigate(`/goals/${notification.objective_id}`);
+              else if (notification.account_id) navigate(`/accounts/${notification.account_id}`);
             },
           });
         })
@@ -270,7 +272,7 @@ export default function Layout({ children }) {
                   borderBottomColor: 'var(--border)',
                   width: '100%',
                   textAlign: 'left',
-                  cursor: n.task_id || n.objective_id ? 'pointer' : 'default',
+                  cursor: n.task_id || n.objective_id || n.account_id ? 'pointer' : 'default',
                 }}
                 onClick={() => {
                   if (n.task_id) {
@@ -279,6 +281,9 @@ export default function Layout({ children }) {
                   } else if (n.objective_id) {
                     setShowNotifications(false);
                     navigate(`/goals/${n.objective_id}`);
+                  } else if (n.account_id) {
+                    setShowNotifications(false);
+                    navigate(`/accounts/${n.account_id}`);
                   }
                 }}
               >
@@ -290,6 +295,7 @@ export default function Layout({ children }) {
                     : n.type === 'tagged' ? 'team'
                     : n.type === 'feature_request' || n.type === 'feature_update' ? 'bulb'
                     : n.type === 'okr_digest' || n.type === 'okr_department' || n.type === 'okr_check_in' ? 'target'
+                    : n.type === 'crm_digest' || n.type === 'crm_activity' || n.type === 'crm_assigned' ? 'pipeline'
                     : 'bell'
                   }
                 />
@@ -298,6 +304,7 @@ export default function Layout({ children }) {
                   {n.body && <div className="small muted">{n.body}</div>}
                   {n.task_ref && <span className="task-ref">{n.task_ref}</span>}
                   {n.objective_title && <span className="small muted">{n.objective_title}</span>}
+                  {n.account_name && <span className="small muted">{n.account_name}</span>}
                 </div>
                 <span className="small muted">{new Date(n.created_at).toLocaleDateString()}</span>
               </button>
