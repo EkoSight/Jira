@@ -13,6 +13,8 @@ import Notes from './pages/Notes.jsx';
 import FeatureRequests from './pages/FeatureRequests.jsx';
 import Recognition from './pages/Recognition.jsx';
 import Performance from './pages/Performance.jsx';
+import Goals from './pages/Goals.jsx';
+import ObjectiveDetail from './pages/ObjectiveDetail.jsx';
 
 function Protected({ permission, children }) {
   const { can } = useAuth();
@@ -51,6 +53,22 @@ function Shell() {
           element={
             <Protected permission="note.use">
               <Notes />
+            </Protected>
+          }
+        />
+        <Route
+          path="/goals"
+          element={
+            <Protected permission="okr.view">
+              <Goals />
+            </Protected>
+          }
+        />
+        <Route
+          path="/goals/:id"
+          element={
+            <Protected permission="okr.view">
+              <ObjectiveDetail />
             </Protected>
           }
         />

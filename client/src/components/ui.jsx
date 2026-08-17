@@ -115,6 +115,7 @@ const PATHS = {
   sound: 'M4 9v6h4l5 4V5L8 9H4zM17 8a5 5 0 0 1 0 8',
   mute: 'M4 9v6h4l5 4V5L8 9H4zM17 9l4 6M21 9l-4 6',
   subtask: 'M4 5h8M4 5v8a3 3 0 0 0 3 3h5M16 9l4 4-4 4',
+  target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0-4.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0-3.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
 };
 
 export function Icon({ name, size = 16, style }) {

@@ -18,6 +18,7 @@ const NAV = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
+  { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },
   { to: '/notes', label: 'My notes', icon: 'note', permission: 'note.use' },
   { to: '/team', label: 'Team', icon: 'team', permission: 'user.view' },
   { to: '/recognition', label: 'Recognition', icon: 'trophy' },
@@ -27,17 +28,14 @@ const NAV = [
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
 
-const MOBILE_NAV = [
-  NAV[0],
-  NAV[1],
-  NAV[2],
-  NAV[3],
-  NAV[5],
-];
+// picked by route rather than position, so adding a nav item never silently
+// reshuffles the phone tab bar
+const MOBILE_PATHS = ['/', '/board', '/my-tasks', '/goals', '/notes'];
+const MOBILE_NAV = MOBILE_PATHS.map((path) => NAV.find((item) => item.to === path)).filter(Boolean);
 
 export default function Layout({ children }) {
   const { user, signOut, can } = useAuth();
-  const { refresh } = useRefData();
+  const { refresh, settings } = useRefData();
   const online = useOnlineStatus();
   const [theme, toggleTheme] = useTheme();
   const navigate = useNavigate();
@@ -47,8 +45,12 @@ export default function Layout({ children }) {
   const [notifications, setNotifications] = useState({ notifications: [], unread: 0 });
   const [showNotifications, setShowNotifications] = useState(false);
 
-  const visible = NAV.filter((item) => !item.permission || can(item.permission));
-  const mobileVisible = MOBILE_NAV.filter((item) => !item.permission || can(item.permission));
+  // a module switched off in settings disappears from the navigation entirely
+  const enabled = (item) => !item.module || settings?.[item.module]?.enabled !== false;
+  const allowed = (item) => (!item.permission || can(item.permission)) && enabled(item);
+
+  const visible = NAV.filter(allowed);
+  const mobileVisible = MOBILE_NAV.filter(allowed);
 
   const [soundOn, setSoundOn] = useState(soundEnabled());
   const [openTaskId, setOpenTaskId] = useState(null);

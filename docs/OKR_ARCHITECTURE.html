@@ -723,10 +723,17 @@ OFF_TRACK    otherwise, OR end_date passed and progress &lt; 100
     <h3>Feature flag</h3>
     <p>
       No flag framework exists and the brief says not to build one. The <code>settings</code> table already stores
-      JSONB config merged over code defaults — so the flag is one key, <code>settings.okr.enabled</code>, default
-      <code>false</code>. The router mounts unconditionally but returns <code>404</code> while disabled; the nav
-      entry and the task-dialog section are hidden from the settings payload the client already fetches. Turning
-      it on is a settings change, not a deploy.
+      JSONB config merged over code defaults — so the flag is one key, <code>settings.okr.enabled</code>. The router
+      mounts unconditionally but returns <code>404</code> while disabled; the nav entry and the task-dialog section
+      are hidden from the settings payload the client already fetches. Turning it on or off is a settings change,
+      not a deploy.
+    </p>
+    <p class="rec">
+      <b>Shipped as <code>true</code>, not the <code>false</code> this plan proposed.</b> The instruction was that
+      the module "seamlessly be built into the existing app", and a module nobody can see until an admin finds a
+      settings key is not that. Everything the flag was meant to protect still holds: set it to
+      <code>false</code> under Settings and the API returns 404, the nav entry disappears and the task dialog stops
+      mentioning goals — with no deploy and nothing else in TaskFlow affected.
     </p>
 
     <h3>Testing</h3>
@@ -805,9 +812,15 @@ OFF_TRACK    otherwise, OR end_date passed and progress &lt; 100
 
   <footer class="doc">
     <p>
-      Nothing in this plan has been implemented. On approval — including your answers to D1–D6 — the work lands as
-      one migration, five new server files, five new client files, nine additive edits, and a new test file, behind
-      <code>settings.okr.enabled</code>.
+      <b>Built and shipped.</b> Migration <code>006_okr.sql</code> creates five tables and alters nothing; applied
+      to the populated database the task fingerprint came back identical and <code>tasks</code> still has its
+      31 columns. 33 new tests, 102 passing in total — the 69 that existed before this module all still pass.
+    </p>
+    <p>
+      Three things landed differently from the plan, each noted in place above: the flag ships <b>on</b>; a new key
+      result's <b>current value defaults to its baseline</b> rather than zero, because a "should come down" metric
+      starting at zero reads as already achieved; and the API <b>rejects</b> a company-scoped objective sent with a
+      department rather than silently dropping it, so a contradiction is reported instead of discarded.
     </p>
   </footer>
 

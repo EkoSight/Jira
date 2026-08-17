@@ -189,6 +189,8 @@ test('an admin creates a company objective with its key results in one call', as
       key_results: [
         { title: 'Onboard farmers', measurement_type: 'NUMBER', baseline_value: 0, target_value: 100, unit: 'farmers' },
         { title: 'Publish the playbook', measurement_type: 'BINARY' },
+        // a fractional weight sent through the wizard, which must not be read as an integer
+        { title: 'Hold the cost per farmer', baseline_value: 210.5, target_value: 150.25, weight: 0.5, unit: '₹' },
       ],
     },
   });
@@ -196,7 +198,7 @@ test('an admin creates a company objective with its key results in one call', as
   assert.equal(created.status, 201);
   assert.equal(created.body.objective.scope_type, 'COMPANY');
   assert.equal(created.body.objective.department_id, null);
-  assert.equal(created.body.objective.key_result_count, 2);
+  assert.equal(created.body.objective.key_result_count, 3);
   ids.companyObjective = created.body.objective.id;
 });
 
@@ -336,8 +338,26 @@ test('a numeric key result measures progress from baseline towards target', asyn
   assert.equal(Number(checkIn.body.check_in.resulting_progress), 40);
 });
 
-test('a decreasing key result counts progress downwards', async (t) => {
+test('a decreasing key result counts progress downwards, decimals and all', async (t) => {
   if (skipIfUnavailable(t)) return;
+
+  // page load seconds, purchase order days — real metrics are rarely whole numbers
+  const decimal = await call('POST', `/objectives/${ids.companyObjective}/key-results`, {
+    token: tokens.admin,
+    body: {
+      title: 'Cut page load time',
+      measurement_type: 'NUMBER',
+      direction: 'DECREASE',
+      baseline_value: 4.2,
+      target_value: 1.5,
+      current_value: 2.85,
+      unit: 's',
+      weight: 0.5,
+    },
+  });
+  assert.equal(decimal.status, 201);
+  const loadTime = decimal.body.key_results.find((k) => k.title === 'Cut page load time');
+  assert.equal(loadTime.progress_percent, 50);
 
   const created = await call('POST', `/objectives/${ids.companyObjective}/key-results`, {
     token: tokens.admin,
@@ -375,6 +395,43 @@ test('a yes/no key result is all or nothing', async (t) => {
     body: { current_value: 1, note: 'Published' },
   });
   assert.equal(done.body.key_result.progress_percent, 100);
+});
+
+test('a new key result starts at its baseline, not at zero', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // the trap: a "should come down" metric left at 0 would read as already achieved
+  const created = await call('POST', `/objectives/${ids.companyObjective}/key-results`, {
+    token: tokens.admin,
+    body: {
+      title: 'Bring the cost per acre down',
+      measurement_type: 'NUMBER',
+      direction: 'DECREASE',
+      baseline_value: 900,
+      target_value: 600,
+      unit: '₹',
+    },
+  });
+  const fresh = created.body.key_results.find((k) => k.title === 'Bring the cost per acre down');
+  assert.equal(Number(fresh.current_value), 900);
+  assert.equal(fresh.progress_percent, 0, 'a brand new key result has made no progress');
+
+  // an increasing one behaves the same way
+  const rising = await call('POST', `/objectives/${ids.companyObjective}/key-results`, {
+    token: tokens.admin,
+    body: { title: 'Grow dealer coverage', baseline_value: 25, target_value: 80, unit: 'districts' },
+  });
+  const risingKeyResult = rising.body.key_results.find((k) => k.title === 'Grow dealer coverage');
+  assert.equal(Number(risingKeyResult.current_value), 25);
+  assert.equal(risingKeyResult.progress_percent, 0);
+
+  // and an explicit starting point still wins
+  const explicit = await call('POST', `/objectives/${ids.companyObjective}/key-results`, {
+    token: tokens.admin,
+    body: { title: 'Already underway', baseline_value: 0, target_value: 50, current_value: 20 },
+  });
+  const underway = explicit.body.key_results.find((k) => k.title === 'Already underway');
+  assert.equal(underway.progress_percent, 40);
 });
 
 test('a key result that cannot be measured reports no progress rather than zero', async (t) => {

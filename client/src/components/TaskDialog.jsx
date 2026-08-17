@@ -22,6 +22,107 @@ import {
   relativeTime,
   toDateTimeLocal,
 } from '../lib/format.js';
+import { measurementSummary } from '../lib/okr.js';
+
+/**
+ * Optional strategic alignment.
+ *
+ * A card that supports no goal shows nothing but the offer to link one, so
+ * nothing about an ordinary task changes.
+ */
+function Alignment({ taskId, keyResults, canLink, onChanged }) {
+  const toast = useToast();
+  const [options, setOptions] = useState(null);
+  const [picking, setPicking] = useState(false);
+
+  useEffect(() => {
+    if (!picking || options) return;
+    api
+      .keyResults()
+      .then((data) => setOptions(data.key_results || []))
+      .catch((err) => toast.error(err));
+  }, [picking, options]);
+
+  const link = async (keyResultId) => {
+    try {
+      await api.linkTask(Number(keyResultId), { task_id: taskId });
+      setPicking(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  if (!keyResults.length && !canLink) return null;
+
+  const grouped = (options || []).reduce((acc, keyResult) => {
+    (acc[keyResult.objective_title] ||= []).push(keyResult);
+    return acc;
+  }, {});
+
+  return (
+    <div className="card card-pad stack-sm">
+      <div className="row-between">
+        <h3>Goal this supports</h3>
+        {canLink && !picking && (
+          <button type="button" className="btn btn-sm" onClick={() => setPicking(true)}>
+            <Icon name="target" size={13} /> Link a goal
+          </button>
+        )}
+      </div>
+
+      {keyResults.length === 0 && !picking && (
+        <div className="small muted">Not linked to a goal. That is fine — most cards are not.</div>
+      )}
+
+      {keyResults.map((keyResult) => (
+        <div key={keyResult.id} className="alignment">
+          <div className="small muted truncate">{keyResult.objective_title}</div>
+          <div className="row-between wrap" style={{ gap: 6 }}>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>{keyResult.title}</span>
+            <div className="row">
+              {keyResult.is_primary && <Badge tone="brand">primary</Badge>}
+              {canLink && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  aria-label="Unlink this goal"
+                  onClick={async () => {
+                    try {
+                      await api.unlinkTask(keyResult.id, taskId);
+                      onChanged();
+                    } catch (err) {
+                      toast.error(err);
+                    }
+                  }}
+                >
+                  <Icon name="close" size={13} />
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {picking && (
+        <Field label="Which key result does this move?">
+          <select className="select" defaultValue="" onChange={(e) => e.target.value && link(e.target.value)}>
+            <option value="">{options === null ? 'Loading…' : 'Choose…'}</option>
+            {Object.entries(grouped).map(([objective, items]) => (
+              <optgroup key={objective} label={objective}>
+                {items.map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.title} — {measurementSummary(item)}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </Field>
+      )}
+    </div>
+  );
+}
 
 const blankTask = (defaults = {}) => ({
   title: '',
@@ -543,6 +644,15 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                   subtasks={detail.subtasks}
                   canEdit={canEdit}
                   onOpen={(id) => onOpenTask?.(id)}
+                  onChanged={reload}
+                />
+              )}
+
+              {!isNew && settings?.okr?.enabled !== false && can('okr.view') && (
+                <Alignment
+                  taskId={activeId}
+                  keyResults={detail.key_results || []}
+                  canLink={can('okr.link.task')}
                   onChanged={reload}
                 />
               )}

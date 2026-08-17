@@ -42,7 +42,11 @@ const objectiveInput = z.object({
   status: z.enum(OBJECTIVE_STATUSES).optional(),
 });
 
-/** Key results may be supplied inline by the creation wizard. */
+/**
+ * Key results may be supplied inline by the creation wizard.
+ * current_value is optional and falls back to the baseline — starting a
+ * "should come down" metric at zero would report it as already achieved.
+ */
 const inlineKeyResult = z.object({
   title: z.string().min(2).max(200),
   description: z.string().max(5000).nullable().optional(),
@@ -213,7 +217,7 @@ router.post(
              (objective_id, title, description, owner_user_id, measurement_type, direction,
               baseline_value, target_value, current_value, unit, weight, start_date, end_date, created_by)
            VALUES ($1,$2,$3,$4,COALESCE($5,'NUMBER'),COALESCE($6,'INCREASE'),
-                   COALESCE($7,0),$8,COALESCE($9,0),$10,COALESCE($11,1),$12,$13,$14)
+                   COALESCE($7::numeric,0),$8,COALESCE($9::numeric,$7::numeric,0),$10,COALESCE($11::numeric,1),$12,$13,$14)
            RETURNING id, title`,
           [
             created.id,
@@ -408,7 +412,7 @@ router.post(
          (objective_id, title, description, owner_user_id, measurement_type, direction,
           baseline_value, target_value, current_value, unit, weight, start_date, end_date, created_by)
        VALUES ($1,$2,$3,$4,COALESCE($5,'NUMBER'),COALESCE($6,'INCREASE'),
-               COALESCE($7,0),$8,COALESCE($9,0),$10,COALESCE($11,1),$12,$13,$14)
+               COALESCE($7::numeric,0),$8,COALESCE($9::numeric,$7::numeric,0),$10,COALESCE($11::numeric,1),$12,$13,$14)
        RETURNING id`,
       [
         id,
