@@ -33,7 +33,17 @@ export const errorHandler = (err, req, res, next) => {
 
   // postgres unique violation
   if (err?.code === '23505') {
-    return res.status(409).json({ error: 'That record already exists' });
+    console.error('[taskflow] Unique constraint violation:', {
+      constraint: err.constraint,
+      detail: err.detail,
+      table: err.table,
+      schema: err.schema,
+      code: err.code,
+    });
+
+    return res.status(409).json({
+      error: 'That record already exists',
+    });
   }
   // postgres foreign key violation
   if (err?.code === '23503') {
