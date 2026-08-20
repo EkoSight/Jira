@@ -68,6 +68,13 @@ export default function ObjectiveWizard({ objective, parentOptions = [], onClose
     if (!editing && filled.length === 0) {
       return toast.error('Add at least one key result — that is how you will know it worked');
     }
+    // a scored key result with no target measures nothing and leaves the goal blank
+    const untargeted = filled.find(
+      (kr) => !['BINARY', 'TASK_ROLLUP'].includes(kr.measurement_type) && kr.target_value === '',
+    );
+    if (untargeted) {
+      return toast.error(`Set a target for "${untargeted.title.trim()}" — otherwise it measures nothing`);
+    }
 
     const payload = {
       title: form.title.trim(),

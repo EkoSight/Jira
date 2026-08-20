@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import KeyResultEditDialog from './KeyResultEditDialog.jsx';
+import TaskDialog from './TaskDialog.jsx';
 import { CONFIDENCE, formatValue, health, measurementSummary } from '../lib/okr.js';
 import { formatDate, relativeTime, STAGE_LABEL } from '../lib/format.js';
 
@@ -217,13 +219,19 @@ export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTa
   const [expanded, setExpanded] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [linking, setLinking] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [creatingTask, setCreatingTask] = useState(false);
   const [detail, setDetail] = useState(null);
   const [tasks, setTasks] = useState([]);
 
   const mine = keyResult.owner_user_id === user.id;
   const mayCheckIn = can('okr.checkin') && (canEdit || mine);
+  const mayEdit = canEdit || mine;
   const meta = health(keyResult.health);
   const progress = keyResult.progress_percent;
+  // the headline number is the work's, not the outcome's — say so rather than
+  // letting it pass as a measured result
+  const fromWork = keyResult.progress_source === 'execution' && keyResult.measurement_type !== 'TASK_ROLLUP';
 
   const loadDetail = () => {
     Promise.all([api.keyResult(keyResult.id), api.keyResultTasks(keyResult.id)])
@@ -255,6 +263,11 @@ export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTa
             <span style={{ fontWeight: 600, fontSize: 13.5 }}>{keyResult.title}</span>
             <Badge tone={meta.tone} dot={meta.color}>{meta.label}</Badge>
             {keyResult.is_overridden && <Badge title="Set by hand, not calculated">manual</Badge>}
+            {keyResult.needs_target && (
+              <Badge tone="warning" title="Without a target the outcome cannot be scored">
+                needs a target
+              </Badge>
+            )}
           </div>
           <div className="small muted">
             {measurementSummary(keyResult)}
@@ -273,6 +286,7 @@ export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTa
               style={{ width: `${progress ?? 0}%`, background: meta.color }}
             />
           </span>
+          {fromWork && <span className="small muted" style={{ fontSize: 10.5 }}>of the work</span>}
         </div>
 
         {mayCheckIn && (
@@ -286,23 +300,47 @@ export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTa
         <div className="kr-body">
           {keyResult.description && <p className="small">{keyResult.description}</p>}
 
-          {keyResult.measurement_type !== 'TASK_ROLLUP' && keyResult.execution_progress !== null && (
+          {keyResult.needs_target ? (
             <div className="small muted">
-              Linked work is {keyResult.execution_progress}% finished, and the result itself is{' '}
-              {keyResult.result_progress === null ? 'not measurable yet' : `${keyResult.result_progress}%`} —
-              finishing the work is not the same as hitting the number.
+              No target is set, so the outcome itself cannot be scored — the percentage above is how
+              much of the linked work is finished.{' '}
+              {mayEdit && (
+                <button type="button" className="btn-link" onClick={() => setEditing(true)}>
+                  Set a target
+                </button>
+              )}
             </div>
+          ) : (
+            keyResult.measurement_type !== 'TASK_ROLLUP' && keyResult.execution_progress !== null && (
+              <div className="small muted">
+                Linked work is {keyResult.execution_progress}% finished, and the result itself is{' '}
+                {keyResult.result_progress === null ? 'not measurable yet' : `${keyResult.result_progress}%`} —
+                finishing the work is not the same as hitting the number.
+              </div>
+            )
           )}
 
           <div className="row-between wrap">
             <span className="small" style={{ fontWeight: 650 }}>
               Linked tasks {tasks.length > 0 && <span className="muted">({tasks.length})</span>}
             </span>
-            {can('okr.link.task') && (
-              <button type="button" className="btn btn-sm" onClick={() => setLinking(true)}>
-                <Icon name="link" size={13} /> Link tasks
-              </button>
-            )}
+            <div className="row wrap">
+              {mayEdit && (
+                <button type="button" className="btn btn-sm" onClick={() => setEditing(true)}>
+                  <Icon name="edit" size={13} /> Edit
+                </button>
+              )}
+              {can('task.create') && can('okr.link.task') && (
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreatingTask(true)}>
+                  <Icon name="plus" size={13} /> New task
+                </button>
+              )}
+              {can('okr.link.task') && (
+                <button type="button" className="btn btn-sm" onClick={() => setLinking(true)}>
+                  <Icon name="link" size={13} /> Link existing
+                </button>
+              )}
+            </div>
           </div>
 
           {tasks.length === 0 ? (
@@ -411,6 +449,32 @@ export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTa
         <LinkTaskDialog
           keyResult={keyResult}
           onClose={() => setLinking(false)}
+          onSaved={() => {
+            onChanged?.();
+            if (expanded) loadDetail();
+          }}
+        />
+      )}
+      {editing && (
+        <KeyResultEditDialog
+          keyResult={keyResult}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            onChanged?.();
+            if (expanded) loadDetail();
+          }}
+        />
+      )}
+      {creatingTask && (
+        // an ordinary task, created through the normal task API and already
+        // pointed at this key result — so it lands on the board like any other
+        <TaskDialog
+          defaults={{
+            key_result: keyResult,
+            assignee_id: keyResult.owner_user_id || undefined,
+            department_id: keyResult.department_id || undefined,
+          }}
+          onClose={() => setCreatingTask(false)}
           onSaved={() => {
             onChanged?.();
             if (expanded) loadDetail();

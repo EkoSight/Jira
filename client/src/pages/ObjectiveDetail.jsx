@@ -28,6 +28,11 @@ function AddKeyResultDialog({ objective, onClose, onSaved }) {
 
   const save = async () => {
     if (form.title.trim().length < 2) return toast.error('Give the key result a title');
+    // without a target there is no number to measure against, and the goal ends up
+    // reporting nothing at all
+    if (!simple && form.target_value === '') {
+      return toast.error('Set a target — otherwise there is no number to measure against');
+    }
     setSaving(true);
     try {
       await api.addKeyResult(objective.id, {
@@ -338,7 +343,9 @@ export default function ObjectiveDetail() {
               <Avatar name={objective.owner_name || '?'} color={objective.owner_color} size={28} />
               <div>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{objective.owner_name}</div>
-                <div className="small muted">{objective.linked_task_count} linked tasks</div>
+                <div className="small muted">
+                  {objective.linked_task_count} linked task{objective.linked_task_count === 1 ? '' : 's'}
+                </div>
               </div>
             </div>
           </div>

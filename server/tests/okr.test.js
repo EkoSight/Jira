@@ -434,6 +434,64 @@ test('a new key result starts at its baseline, not at zero', async (t) => {
   assert.equal(underway.progress_percent, 40);
 });
 
+test('a key result with no target still reports the progress of its finished work', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // the trap that shipped: someone creates a key result without a target, links
+  // the work, finishes it — and the goal reads "not started" because the outcome
+  // itself was unmeasurable. Finished work must not be thrown away.
+  // On its own objective, so the roll-up assertions elsewhere stay independent.
+  const objectiveRes = await call('POST', '/objectives', {
+    token: tokens.manager,
+    body: {
+      title: 'Get validation from the institute',
+      scope_type: 'DEPARTMENT',
+      department_id: ids.growth,
+      owner_user_id: ids.manager,
+      start_date: dateOnly(-30),
+      end_date: dateOnly(30),
+      status: 'ACTIVE',
+    },
+  });
+  const objectiveId = objectiveRes.body.objective.id;
+
+  const created = await call('POST', `/objectives/${objectiveId}/key-results`, {
+    token: tokens.manager,
+    body: { title: 'Get the certification', measurement_type: 'NUMBER', baseline_value: 0, target_value: null },
+  });
+  const keyResult = created.body.key_results.find((k) => k.title === 'Get the certification');
+  assert.equal(keyResult.progress_percent, null, 'with nothing linked there is still nothing to report');
+  assert.equal(keyResult.needs_target, true, 'and it is flagged as needing a target');
+
+  const task = await call('POST', '/tasks', {
+    token: tokens.manager,
+    body: { title: 'Collect the samples', department_id: ids.growth, assignee_id: ids.member, status_id: ids.todo },
+  });
+  await call('POST', `/key-results/${keyResult.id}/tasks`, {
+    token: tokens.manager,
+    body: { task_id: task.body.task.id },
+  });
+
+  const linked = await call('GET', `/key-results/${keyResult.id}`, { token: tokens.manager });
+  assert.equal(linked.body.key_result.progress_percent, 0, 'linked but unfinished reads as zero, not unknown');
+
+  await call('POST', `/tasks/${task.body.task.id}/move`, {
+    token: tokens.manager,
+    body: { status_id: ids.done, completion_note: 'Samples collected and confirmed' },
+  });
+
+  const done = await call('GET', `/key-results/${keyResult.id}`, { token: tokens.manager });
+  assert.equal(done.body.key_result.progress_percent, 100, 'the finished work is reported');
+  assert.equal(done.body.key_result.progress_source, 'execution', 'and it is labelled as work, not outcome');
+  assert.equal(done.body.key_result.result_progress, null, 'the outcome itself is still honestly unmeasured');
+  assert.notEqual(done.body.key_result.health, 'NOT_STARTED', 'a key result whose work is done is not "not started"');
+
+  // and the objective it belongs to stops reading as dead
+  const objective = await call('GET', `/objectives/${objectiveId}`, { token: tokens.manager });
+  assert.equal(objective.body.objective.progress_percent, 100);
+  assert.notEqual(objective.body.objective.health, 'NOT_STARTED');
+});
+
 test('a key result that cannot be measured reports no progress rather than zero', async (t) => {
   if (skipIfUnavailable(t)) return;
 

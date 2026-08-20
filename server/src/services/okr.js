@@ -14,52 +14,67 @@ import { HEALTH, DEFAULT_HEALTH_THRESHOLDS } from '../lib/okrConstants.js';
 // ---------------------------------------------------------------- progress SQL
 
 /**
+ * The progress fragments are generated from one template rather than written
+ * twice, because the objective roll-up needs the identical maths under a
+ * different table alias — and two hand-kept copies drift.
+ */
+
+/**
  * Result progress: has the outcome actually been achieved?
  * Returns NULL rather than 0 when it cannot be measured, so "not measurable" is
  * never mistaken for "no progress".
  */
-export const RESULT_PROGRESS = `
+export const resultProgress = (kr = 'kr') => `
   CASE
-    WHEN kr.measurement_type = 'BINARY'
-      THEN CASE WHEN kr.current_value >= 1 THEN 100 ELSE 0 END
-    WHEN kr.target_value IS NULL THEN NULL
-    WHEN kr.direction = 'DECREASE' THEN
-      CASE WHEN (kr.baseline_value - kr.target_value) = 0 THEN NULL
-           ELSE ((kr.baseline_value - kr.current_value)
-                 / (kr.baseline_value - kr.target_value)) * 100 END
+    WHEN ${kr}.measurement_type = 'BINARY'
+      THEN CASE WHEN ${kr}.current_value >= 1 THEN 100 ELSE 0 END
+    WHEN ${kr}.target_value IS NULL THEN NULL
+    WHEN ${kr}.direction = 'DECREASE' THEN
+      CASE WHEN (${kr}.baseline_value - ${kr}.target_value) = 0 THEN NULL
+           ELSE ((${kr}.baseline_value - ${kr}.current_value)
+                 / (${kr}.baseline_value - ${kr}.target_value)) * 100 END
     ELSE
-      CASE WHEN (kr.target_value - kr.baseline_value) = 0 THEN NULL
-           ELSE ((kr.current_value - kr.baseline_value)
-                 / (kr.target_value - kr.baseline_value)) * 100 END
+      CASE WHEN (${kr}.target_value - ${kr}.baseline_value) = 0 THEN NULL
+           ELSE ((${kr}.current_value - ${kr}.baseline_value)
+                 / (${kr}.target_value - ${kr}.baseline_value)) * 100 END
   END
 `;
 
 /** Execution progress: how much of the linked work is finished? */
-export const EXECUTION_PROGRESS = `
+export const executionProgress = (kr = 'kr', suffix = '') => `
   (SELECT CASE WHEN COUNT(*) = 0 THEN NULL
-               ELSE (COUNT(*) FILTER (WHERE ws.stage = 'done')::numeric / COUNT(*)) * 100 END
-     FROM task_key_result_links l
-     JOIN tasks t ON t.id = l.task_id AND t.is_archived = FALSE
-     JOIN workflow_statuses ws ON ws.id = t.status_id
-    WHERE l.key_result_id = kr.id)
+               ELSE (COUNT(*) FILTER (WHERE ws${suffix}.stage = 'done')::numeric / COUNT(*)) * 100 END
+     FROM task_key_result_links l${suffix}
+     JOIN tasks t${suffix} ON t${suffix}.id = l${suffix}.task_id AND t${suffix}.is_archived = FALSE
+     JOIN workflow_statuses ws${suffix} ON ws${suffix}.id = t${suffix}.status_id
+    WHERE l${suffix}.key_result_id = ${kr}.id)
 `;
+
+/**
+ * The number that drives an objective's roll-up.
+ *
+ * TASK_ROLLUP key results are the type where finishing the work IS the outcome.
+ * Everything else is measured on its own terms — but when the outcome cannot be
+ * measured at all (no target set) and there is linked work, the work's progress
+ * is reported rather than nothing. Saying "not started" about a key result whose
+ * every task is done is worse than being approximate, and the UI labels which of
+ * the two numbers it is showing.
+ */
+export const effectiveProgress = (kr = 'kr', suffix = '') => `
+  CASE WHEN ${kr}.measurement_type = 'TASK_ROLLUP'
+       THEN ${executionProgress(kr, suffix)}
+       ELSE COALESCE(${resultProgress(kr)}, ${executionProgress(kr, suffix)})
+  END
+`;
+
+export const RESULT_PROGRESS = resultProgress('kr');
+export const EXECUTION_PROGRESS = executionProgress('kr');
+export const EFFECTIVE_PROGRESS = effectiveProgress('kr');
 
 export const LINKED_TASK_COUNT = `
   (SELECT COUNT(*)::int FROM task_key_result_links l
      JOIN tasks t ON t.id = l.task_id AND t.is_archived = FALSE
     WHERE l.key_result_id = kr.id)
-`;
-
-/**
- * The number that drives an objective's roll-up. TASK_ROLLUP key results are the
- * one type where finishing the work IS the outcome, so they fall back to
- * execution progress; everything else must be measured on its own terms.
- */
-export const EFFECTIVE_PROGRESS = `
-  CASE WHEN kr.measurement_type = 'TASK_ROLLUP'
-       THEN ${EXECUTION_PROGRESS}
-       ELSE ${RESULT_PROGRESS}
-  END
 `;
 
 export const KEY_RESULT_SELECT = `
@@ -86,27 +101,7 @@ const OBJECTIVE_PROGRESS = `
                ELSE SUM(p.value * k.weight) FILTER (WHERE p.value IS NOT NULL)
                     / SUM(k.weight) FILTER (WHERE p.value IS NOT NULL) END
      FROM key_results k
-     CROSS JOIN LATERAL (
-       SELECT CASE WHEN k.measurement_type = 'TASK_ROLLUP' THEN (
-                     SELECT CASE WHEN COUNT(*) = 0 THEN NULL
-                                 ELSE (COUNT(*) FILTER (WHERE ws2.stage = 'done')::numeric / COUNT(*)) * 100 END
-                       FROM task_key_result_links l2
-                       JOIN tasks t2 ON t2.id = l2.task_id AND t2.is_archived = FALSE
-                       JOIN workflow_statuses ws2 ON ws2.id = t2.status_id
-                      WHERE l2.key_result_id = k.id)
-                   WHEN k.measurement_type = 'BINARY'
-                     THEN CASE WHEN k.current_value >= 1 THEN 100 ELSE 0 END
-                   WHEN k.target_value IS NULL THEN NULL
-                   WHEN k.direction = 'DECREASE' THEN
-                     CASE WHEN (k.baseline_value - k.target_value) = 0 THEN NULL
-                          ELSE ((k.baseline_value - k.current_value)
-                                / (k.baseline_value - k.target_value)) * 100 END
-                   ELSE
-                     CASE WHEN (k.target_value - k.baseline_value) = 0 THEN NULL
-                          ELSE ((k.current_value - k.baseline_value)
-                                / (k.target_value - k.baseline_value)) * 100 END
-              END AS value
-     ) p
+     CROSS JOIN LATERAL (SELECT ${effectiveProgress('k', '2')} AS value) p
     WHERE k.objective_id = o.id AND k.is_archived = FALSE
       AND k.status NOT IN ('CANCELLED'))
 `;
@@ -217,6 +212,19 @@ export function decorateKeyResult(row, objective, thresholds, now = new Date()) 
   const execution = row.execution_progress === null ? null : Math.round(Number(row.execution_progress));
   const effective = row.effective_progress === null ? null : Math.round(Number(row.effective_progress));
 
+  // a measurable key result is one whose own outcome can be scored: a yes/no, a
+  // task roll-up, or anything with a target to move towards
+  const needsTarget =
+    row.target_value === null
+    && row.measurement_type !== 'BINARY'
+    && row.measurement_type !== 'TASK_ROLLUP';
+
+  // which of the two numbers the headline percentage actually is
+  const source = effective === null ? null
+    : row.measurement_type === 'TASK_ROLLUP' ? 'execution'
+    : result !== null ? 'result'
+    : 'execution';
+
   return {
     ...row,
     // both numbers are surfaced: finishing the work is not the same as achieving
@@ -224,6 +232,8 @@ export function decorateKeyResult(row, objective, thresholds, now = new Date()) 
     result_progress: clamp(result),
     execution_progress: clamp(execution),
     progress_percent: clamp(effective),
+    progress_source: source,
+    needs_target: needsTarget,
     ...calculateHealth(
       {
         progress: effective,

@@ -341,7 +341,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   // staged while the task does not exist yet
   const [pending, setPending] = useState([]);
   const [pendingTags, setPendingTags] = useState([]);
-  const [pendingGoals, setPendingGoals] = useState([]);
+  // a card started from a key result arrives already pointed at it
+  const [pendingGoals, setPendingGoals] = useState(() =>
+    defaults?.key_result ? [defaults.key_result] : []);
   // set when a done-transition needs the completion prompt
   const [completing, setCompleting] = useState(null);
 
