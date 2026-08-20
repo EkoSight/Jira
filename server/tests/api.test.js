@@ -769,6 +769,76 @@ test('the follower can see and move the task, but the owner keeps the black mark
   assert.equal(mark.user_id, ids.member, 'against the owner, not the follower');
 });
 
+test('a follower can close a task, and it leaves their list', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // reported as "I keep marking it done and it is still there" — for a task that
+  // does not repeat, completing it must remove it from the supporter's list
+  const task = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Leaf analysis',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      follower_id: ids.outsider,
+      due_date: daysFromNow(-13),
+    },
+  });
+  const taskId = task.body.task.id;
+
+  const before = await call('GET', '/tasks/mine', { token: tokens.outsider });
+  assert.ok(before.body.tasks.some((t2) => t2.id === taskId), 'the supporter sees it first');
+
+  const done = await call('POST', `/tasks/${taskId}/move`, {
+    token: tokens.outsider,
+    body: { status_id: ids.done, completion_note: 'Analysis finished and shared.' },
+  });
+  assert.equal(done.status, 200, 'a follower is allowed to close it');
+  assert.equal(done.body.next_occurrence, null, 'a one-off spawns nothing');
+
+  const after = await call('GET', '/tasks/mine', { token: tokens.outsider });
+  assert.equal(after.body.tasks.some((t2) => t2.id === taskId), false, 'and it is gone from their list');
+});
+
+test('completing a repeat closes it and starts a distinct next occurrence', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // the other half of the same report: a daily task DOES close, but its successor
+  // carries the same title, so it looks like nothing happened. The successor must
+  // be a different card, and must say which series it belongs to.
+  const task = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Go through the doc and discuss',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      follower_id: ids.outsider,
+      due_date: daysFromNow(1),
+      recurrence: 'daily',
+    },
+  });
+  const taskId = task.body.task.id;
+
+  const done = await call('POST', `/tasks/${taskId}/move`, {
+    token: tokens.outsider,
+    body: { status_id: ids.done, completion_note: 'Read it and discussed with the team.' },
+  });
+  assert.equal(done.status, 200);
+  assert.ok(done.body.next_occurrence, 'the caller is told a successor was created');
+  assert.notEqual(done.body.next_occurrence.id, taskId, 'it is a different card');
+
+  const after = await call('GET', '/tasks/mine', { token: tokens.outsider });
+  assert.equal(after.body.tasks.some((t2) => t2.id === taskId), false, 'the completed one is gone');
+
+  const successor = after.body.tasks.find((t2) => t2.id === done.body.next_occurrence.id);
+  assert.ok(successor, 'and the next one is on the supporter’s list');
+  assert.equal(successor.recurrence_parent_id, taskId, 'marked as following the one just closed');
+  assert.ok(
+    new Date(successor.due_date).getTime() > Date.now(),
+    'due ahead, so finishing today never creates an already-late card',
+  );
+});
+
 test('a follower sees the task on their own list, board and dashboard', async (t) => {
   if (skipIfUnavailable(t)) return;
 

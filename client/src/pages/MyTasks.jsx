@@ -95,6 +95,14 @@ export default function MyTasks() {
                       Supporting {task.assignee_name || 'someone'} — they own the deadline
                     </div>
                   )}
+                  {/* the successor of a completed repeat looks identical to the card
+                      that was just closed, so say plainly that this is the next one */}
+                  {task.recurrence_parent_id && (
+                    <div className="row small muted" style={{ gap: 5, marginBottom: 3 }}>
+                      <Icon name="clock" size={12} />
+                      Next in the {task.recurrence} series — the previous one is closed
+                    </div>
+                  )}
                   <TaskCard
                     task={task}
                     onOpen={() => setOpenTask(task.id)}

@@ -48,8 +48,15 @@ export default function TaskCard({ task, onOpen, onOpenParent, draggable, onDrag
           </Badge>
         )}
         {task.recurrence && task.recurrence !== 'none' && (
-          <Badge tone="brand" title={`Repeats ${task.recurrence}`}>
-            <Icon name="clock" size={10} /> {task.recurrence}
+          <Badge
+            tone="brand"
+            title={
+              task.recurrence_parent_id
+                ? `The previous occurrence is closed — this is the next one, repeating ${task.recurrence}`
+                : `Repeats ${task.recurrence}`
+            }
+          >
+            <Icon name="clock" size={10} /> {task.recurrence_parent_id ? 'next' : 'repeats'} {task.recurrence}
           </Badge>
         )}
       </div>

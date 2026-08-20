@@ -68,7 +68,7 @@ export default function CompleteTaskDialog({ task, targetStatusId, onClose, onCo
       <button type="button" className="btn" onClick={onClose}>
         Not yet
       </button>
-      <button type="button" className="btn btn-primary" onClick={complete} disabled={saving || note.trim().length < 3}>
+      <button type="button" className="btn btn-primary" onClick={complete} disabled={saving}>
         {saving ? 'Completing…' : 'Mark done'}
       </button>
     </>
@@ -90,7 +90,10 @@ export default function CompleteTaskDialog({ task, targetStatusId, onClose, onCo
           <p style={{ margin: 0 }}>{prompt.intro}</p>
         </div>
 
-        <Field label={prompt.ask}>
+        <Field
+          label={prompt.ask}
+          hint="Needed to close the task — this note becomes the record of what was done."
+        >
           <textarea
             className="textarea"
             rows={4}
