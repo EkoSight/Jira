@@ -164,6 +164,8 @@ export const describeOkrActivity = (item) => {
     case 'archived': return 'archived it';
     case 'task_linked': return 'linked a task';
     case 'task_unlinked': return 'unlinked a task';
+    case 'period_corrected':
+      return `corrected the period from ${item.from_value} to ${item.to_value} — the presets were a day early outside UTC`;
     default: return item.action.replace(/_/g, ' ');
   }
 };

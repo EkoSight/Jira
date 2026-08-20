@@ -426,7 +426,8 @@ export default function ObjectiveDetail() {
           <div className="stack-sm">
             {activity.map((item) => (
               <div key={item.id} className="activity-line">
-                <strong>{item.actor_name || 'Someone'}</strong> {describeOkrActivity(item)}
+                {/* no actor means TaskFlow itself did it, not an anonymous person */}
+                <strong>{item.actor_name || 'TaskFlow'}</strong> {describeOkrActivity(item)}
                 <span className="muted"> · {relativeTime(item.created_at)}</span>
               </div>
             ))}
