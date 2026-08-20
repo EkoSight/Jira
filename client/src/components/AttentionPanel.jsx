@@ -61,7 +61,7 @@ export default function AttentionPanel({ insights, onRunScan, canScan }) {
     );
   }
 
-  const shown = showAll ? attention : attention.slice(0, 6);
+  const shown = showAll ? attention : attention.slice(0, 3);
 
   const runScan = async () => {
     setScanning(true);
@@ -96,7 +96,7 @@ export default function AttentionPanel({ insights, onRunScan, canScan }) {
         ))}
       </div>
 
-      {attention.length > 6 && (
+      {attention.length > 3 && (
         <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowAll((v) => !v)}>
           {showAll ? 'Show less' : `Show all ${attention.length}`}
         </button>

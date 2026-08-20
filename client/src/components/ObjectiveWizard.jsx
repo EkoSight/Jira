@@ -191,7 +191,7 @@ export default function ObjectiveWizard({ objective, parentOptions = [], onClose
           ) : (
             <Field label="Priority">
               <select className="select" value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
-                <option value="critical">Critical</option>
+                <option value="critical">Critical{form.scope_type === 'COMPANY' ? ' — shown as North Star' : ''}</option>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>
@@ -218,7 +218,7 @@ export default function ObjectiveWizard({ objective, parentOptions = [], onClose
           {form.scope_type === 'DEPARTMENT' ? (
             <Field label="Priority">
               <select className="select" value={form.priority} onChange={(e) => set({ priority: e.target.value })}>
-                <option value="critical">Critical</option>
+                <option value="critical">Critical{form.scope_type === 'COMPANY' ? ' — shown as North Star' : ''}</option>
                 <option value="high">High</option>
                 <option value="medium">Medium</option>
                 <option value="low">Low</option>

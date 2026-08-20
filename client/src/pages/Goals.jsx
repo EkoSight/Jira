@@ -1,118 +1,183 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
+import { ProgressRing, Sparkline } from '../components/charts.jsx';
 import ObjectiveWizard from '../components/ObjectiveWizard.jsx';
 import AttentionPanel, { PeopleBehind } from '../components/AttentionPanel.jsx';
 import { HEALTH_META, daysLeftLabel, health, periodPresets, STATUS_LABEL } from '../lib/okr.js';
 import { formatDate } from '../lib/format.js';
 
-/** The four numbers a goals review actually opens with. */
-function HealthStrip({ summary, active, onPick }) {
-  const cells = [
-    { key: 'ON_TRACK', value: summary.on_track },
-    { key: 'AT_RISK', value: summary.at_risk },
-    { key: 'OFF_TRACK', value: summary.off_track },
-    { key: 'COMPLETED', value: summary.completed },
-    { key: 'NOT_STARTED', value: summary.not_started },
-  ];
+/** How many cards a team shows before "View all". */
+const PREVIEW = 4;
 
+/**
+ * The band across the top: where we are, whether we are moving, and what all of
+ * it is in aid of.
+ */
+function Destination({ summary, momentum, destination }) {
+  const pillars = destination?.pillars || [];
+  const checkIns = (momentum || []).reduce((sum, week) => sum + (Number(week.value) || 0), 0);
   return (
-    <div className="stat-grid">
-      <div className="stat">
-        <div className="stat-label">Overall progress</div>
-        <div className="stat-value tnum">
-          {summary.overall_progress === null ? '—' : `${summary.overall_progress}%`}
-        </div>
-        <div className="stat-note">
-          across {summary.total} goal{summary.total === 1 ? '' : 's'}
+    <section className="goal-hero-band">
+      <div className="ghb-cell">
+        <span className="ghb-icon" style={{ background: 'var(--brand-wash)', color: 'var(--brand-ink)' }}>
+          <Icon name="target" size={18} />
+        </span>
+        <div>
+          <div className="ghb-label">Overall progress</div>
+          <div className="row" style={{ gap: 10 }}>
+            <div className="ghb-value tnum">
+              {summary.overall_progress === null ? '—' : `${summary.overall_progress}%`}
+            </div>
+            <ProgressRing percent={summary.overall_progress} size={44} stroke={4.5} showValue={false} />
+          </div>
+          <div className="ghb-note">across all goals</div>
         </div>
       </div>
 
-      {cells.map((cell) => {
-        const meta = HEALTH_META[cell.key];
-        const selected = active === cell.key;
-        return (
-          <button
-            key={cell.key}
-            type="button"
-            className="stat"
-            style={{ textAlign: 'left', cursor: 'pointer', borderColor: selected ? meta.color : undefined }}
-            onClick={() => onPick(selected ? '' : cell.key)}
-          >
-            <div className="stat-label">
-              <span className="stat-accent" style={{ background: meta.color }} /> {meta.label}
+      <div className="ghb-cell">
+        <span className="ghb-icon" style={{ background: 'var(--good-wash)', color: 'var(--good-text)' }}>
+          <Icon name="check" size={18} />
+        </span>
+        <div>
+          <div className="ghb-label">Active goals</div>
+          <div className="row" style={{ gap: 10 }}>
+            <div className="ghb-value tnum">{summary.active ?? summary.total}</div>
+            <Sparkline data={momentum || []} />
+          </div>
+          {/* the sparkline is the shape of that number, so name the number */}
+          <div className="ghb-note">
+            {checkIns} check-in{checkIns === 1 ? '' : 's'} in the last 8 weeks
+          </div>
+        </div>
+      </div>
+
+      {destination?.line && (
+        <div className="ghb-cell ghb-destination">
+          <span className="ghb-icon ghb-icon-plain">
+            <Icon name="target" size={18} />
+          </span>
+          <div>
+            <div className="ghb-label">Our destination</div>
+            <div className="ghb-sentence">
+              {destination.line}
+              {pillars.length > 0 && ' '}
+              {pillars.map((word, index) => (
+                <span key={word}>
+                  <strong>{word}</strong>
+                  {index < pillars.length - 2 ? ', ' : index === pillars.length - 2 ? ' and ' : '.'}
+                </span>
+              ))}
             </div>
-            <div className="stat-value tnum">{cell.value}</div>
-            <div className="stat-note">{selected ? 'showing only these' : 'click to filter'}</div>
-          </button>
-        );
-      })}
-    </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 
-function ObjectiveRow({ objective }) {
+/** One goal, as a card. */
+function GoalCard({ objective }) {
   const meta = health(objective.health);
-  const progress = objective.progress_percent;
-  const elapsed = objective.time_elapsed_percent;
+  const keyResults = objective.key_results || [];
+  // the single most important company goal, called out
+  const isNorthStar = objective.scope_type === 'COMPANY' && objective.priority === 'critical';
 
   return (
-    <Link to={`/goals/${objective.id}`} className="goal-row">
-      <span className="goal-rail" style={{ background: meta.color }} />
-
-      <div className="grow" style={{ minWidth: 0 }}>
-        <div className="row wrap" style={{ gap: 6 }}>
-          <span className="goal-title">{objective.title}</span>
-          <Badge tone={meta.tone} dot={meta.color}>{meta.label}</Badge>
-          {objective.status !== 'ACTIVE' && <Badge>{STATUS_LABEL[objective.status]}</Badge>}
-          {objective.is_overridden && <Badge title="Set by hand, not calculated">manual</Badge>}
-        </div>
-
-        <div className="small muted row wrap" style={{ gap: 6, marginTop: 3 }}>
-          <span>
-            {objective.scope_type === 'COMPANY' ? 'Company-wide' : objective.department_name}
-          </span>
-          <span>·</span>
-          <span>{objective.key_result_count} key result{objective.key_result_count === 1 ? '' : 's'}</span>
-          {objective.linked_task_count > 0 && (
-            <>
-              <span>·</span>
-              <span>{objective.linked_task_count} linked task{objective.linked_task_count === 1 ? '' : 's'}</span>
-            </>
-          )}
-          {objective.parent_title && (
-            <>
-              <span>·</span>
-              <span>supports {objective.parent_title}</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      <div className="goal-owner">
-        <Avatar name={objective.owner_name || '?'} color={objective.owner_color} size={24} />
-        <span className="small muted truncate">{objective.owner_name}</span>
-      </div>
-
-      <div className="goal-progress">
-        <div className="row-between small">
-          <span className="tnum" style={{ fontWeight: 650 }}>
-            {progress === null ? '—' : `${progress}%`}
-          </span>
-          <span className="muted">{daysLeftLabel(objective.end_date)}</span>
-        </div>
-        {/* the pace marker is what turns a bar into a judgement */}
-        <span className="goal-track">
-          <span className="progress-fill" style={{ width: `${progress ?? 0}%`, background: meta.color }} />
-          {elapsed !== null && (
-            <span className="goal-pace" style={{ left: `${elapsed}%` }} title={`${elapsed}% of the time gone`} />
-          )}
+    <Link to={`/goals/${objective.id}`} className="goal-card">
+      {isNorthStar && (
+        <span className="goal-northstar">
+          <Icon name="trophy" size={11} /> North Star
         </span>
-        <div className="small muted">Ends {formatDate(objective.end_date)}</div>
+      )}
+
+      <div className="goal-card-top">
+        <div className="grow" style={{ minWidth: 0 }}>
+          <h3 className="goal-card-title">{objective.title}</h3>
+          {objective.description && (
+            <p className="goal-card-outcome">
+              <span className="muted">Outcome:</span> {objective.description}
+            </p>
+          )}
+        </div>
+        <div className="goal-card-ring">
+          <ProgressRing
+            percent={objective.progress_percent}
+            color={meta.color}
+            size={52}
+            muted={objective.progress_percent === null}
+          />
+          <span className="goal-card-krcount">
+            {objective.key_result_count} Key Result{objective.key_result_count === 1 ? '' : 's'}
+          </span>
+        </div>
+      </div>
+
+      <div className="goal-card-foot">
+        <span className="row" style={{ gap: 6, minWidth: 0 }}>
+          <Avatar name={objective.owner_name || '?'} color={objective.owner_color} size={20} />
+          <span className="small truncate">{objective.owner_name}</span>
+        </span>
+        <span className="row small muted" style={{ gap: 5 }}>
+          <Icon name="clock" size={12} />
+          {formatDate(objective.end_date)}
+        </span>
+      </div>
+
+      <div className="goal-card-pips" title={`${keyResults.length} key results`}>
+        {keyResults.map((kr) => (
+          <span
+            key={kr.id}
+            className="goal-pip"
+            style={{ background: health(kr.health).color }}
+            title={`${kr.title} — ${health(kr.health).label}`}
+          />
+        ))}
+        {objective.status !== 'ACTIVE' && (
+          <Badge tone="neutral" title="Status">{STATUS_LABEL[objective.status]}</Badge>
+        )}
+        <span className="grow" />
+        <span className="small muted">{daysLeftLabel(objective.end_date)}</span>
       </div>
     </Link>
+  );
+}
+
+/** A team's goals, behind its name and purpose. */
+function GoalGroup({ group }) {
+  const [expanded, setExpanded] = useState(false);
+  const shown = expanded ? group.objectives : group.objectives.slice(0, PREVIEW);
+  const more = group.objectives.length - PREVIEW;
+
+  return (
+    <section className="goal-group">
+      <header className="goal-group-head">
+        <span className="goal-group-tile" style={{ background: group.color || 'var(--brand)' }}>
+          {group.isCompany ? <Icon name="target" size={14} /> : group.key || group.name.slice(0, 2).toUpperCase()}
+        </span>
+        <h2 className="goal-group-name">{group.name}</h2>
+        {group.purpose && (
+          <span className="goal-group-purpose truncate">
+            <span className="muted">Purpose:</span> {group.purpose}
+          </span>
+        )}
+        <span className="grow" />
+        {more > 0 && (
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setExpanded((v) => !v)}>
+            {expanded ? 'Show less' : `View all (${group.objectives.length})`}
+            <Icon name="chevron" size={13} />
+          </button>
+        )}
+      </header>
+
+      <div className="goal-grid">
+        {shown.map((objective) => (
+          <GoalCard key={objective.id} objective={objective} />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -120,14 +185,13 @@ export default function Goals() {
   const { user, can } = useAuth();
   const { departments } = useRefData();
   const toast = useToast();
-  const navigate = useNavigate();
 
   const presets = useMemo(() => periodPresets(), []);
   const [period, setPeriod] = useState('this-quarter');
   const [departmentId, setDepartmentId] = useState('');
   const [ownerId, setOwnerId] = useState('');
   const [healthFilter, setHealthFilter] = useState('');
-  const [scope, setScope] = useState('');
+  const [status, setStatus] = useState('');
   const [data, setData] = useState(null);
   const [insights, setInsights] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -142,18 +206,17 @@ export default function Goals() {
       to: range?.end_date,
       department_id: departmentId || undefined,
       owner_id: ownerId || undefined,
-      scope_type: scope || undefined,
+      status: status || undefined,
     };
     api
       .goalsDashboard(filters)
       .then(setData)
       .catch((err) => toast.error(err))
       .finally(() => setLoading(false));
-    // the attention layer loads alongside, and never blocks the board
     api.goalInsights(filters).then(setInsights).catch(() => setInsights(null));
   };
 
-  useEffect(load, [period, departmentId, ownerId, scope]);
+  useEffect(load, [period, departmentId, ownerId, status]);
 
   const runScan = async () => {
     try {
@@ -175,23 +238,52 @@ export default function Goals() {
     ? data.objectives.filter((o) => o.health === healthFilter)
     : data.objectives;
 
-  // your own goals are lifted to the top and then left out of the lists below,
-  // so nothing is shown twice
-  const mine = objectives.filter((o) => o.owner_user_id === user.id);
-  const rest = objectives.filter((o) => o.owner_user_id !== user.id);
-  const company = rest.filter((o) => o.scope_type === 'COMPANY');
-  const byDepartment = rest.filter((o) => o.scope_type === 'DEPARTMENT');
+  // company first, then each department in the order the department list defines
+  const groups = [];
+  const company = objectives.filter((o) => o.scope_type === 'COMPANY');
+  if (company.length) {
+    groups.push({
+      id: 'company',
+      name: 'Company-wide',
+      purpose: 'The goals the whole business is judged on.',
+      color: 'var(--brand)',
+      isCompany: true,
+      objectives: company,
+    });
+  }
+  const seen = new Map();
+  for (const objective of objectives) {
+    if (objective.scope_type === 'COMPANY') continue;
+    const key = objective.department_id;
+    if (!seen.has(key)) {
+      seen.set(key, {
+        id: key,
+        name: objective.department_name || 'No department',
+        purpose: objective.department_purpose,
+        color: objective.department_color,
+        key: objective.department_key,
+        objectives: [],
+      });
+    }
+    seen.get(key).objectives.push(objective);
+  }
+  // teams appear in the order the department list defines, not the order their
+  // goals happened to load in
+  const order = new Map(departments.map((d, index) => [d.id, index]));
+  groups.push(
+    ...[...seen.values()].sort(
+      (a, b) => (order.get(a.id) ?? 999) - (order.get(b.id) ?? 999),
+    ),
+  );
+
   const mayCreate = can('okr.create.company') || can('okr.create.department');
-  const idleByDepartment = new Map((insights?.by_department || []).map((d) => [d.department_id, d]));
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
+    <div className="stack" style={{ gap: 18 }}>
       <div className="row-between wrap">
         <div>
           <h1>Goals</h1>
-          <div className="small muted">
-            What we are trying to achieve this period, and whether the work is getting us there.
-          </div>
+          <div className="small muted">The direction of the company, organized by team.</div>
         </div>
         {mayCreate && (
           <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>
@@ -206,19 +298,20 @@ export default function Goals() {
             <option key={preset.key} value={preset.key}>{preset.label}</option>
           ))}
         </select>
-        <select className="select" value={scope} onChange={(e) => setScope(e.target.value)}>
-          <option value="">Company and departments</option>
-          <option value="COMPANY">Company-wide only</option>
-          <option value="DEPARTMENT">Departments only</option>
-        </select>
         <select className="select" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
           <option value="">All departments</option>
           {departments.map((d) => (
             <option key={d.id} value={d.id}>{d.name}</option>
           ))}
         </select>
+        <select className="select" value={status} onChange={(e) => setStatus(e.target.value)}>
+          <option value="">Any status</option>
+          {['ACTIVE', 'DRAFT', 'ON_HOLD', 'COMPLETED', 'CANCELLED'].map((s) => (
+            <option key={s} value={s}>{STATUS_LABEL[s]}</option>
+          ))}
+        </select>
         <select className="select" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
-          <option value="">Anyone accountable</option>
+          <option value="">Any owner</option>
           <option value={user.id}>Mine</option>
           {data.by_owner
             .filter((o) => o.owner_user_id !== user.id)
@@ -226,154 +319,63 @@ export default function Goals() {
               <option key={o.owner_user_id} value={o.owner_user_id}>{o.name}</option>
             ))}
         </select>
+        {healthFilter && (
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setHealthFilter('')}>
+            Clear “{health(healthFilter).label}”
+          </button>
+        )}
       </div>
-
-      <HealthStrip summary={data.summary} active={healthFilter} onPick={setHealthFilter} />
-
-      {data.summary.total > 0 && (
-        <AttentionPanel insights={insights} onRunScan={runScan} canScan={can('settings.manage')} />
-      )}
 
       {data.summary.total === 0 ? (
         <EmptyState
           title="No goals for this period yet"
           action={
-            <div className="row wrap center">
-              {/* a goal planned for another period is the likeliest reason this
-                  is empty, so offer the way to it rather than only a create button */}
-              {period !== 'all' && (
-                <button type="button" className="btn" onClick={() => setPeriod('all')}>
-                  Show goals from every period
-                </button>
-              )}
-              {mayCreate && (
-                <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-                  Set the first one
-                </button>
-              )}
-            </div>
+            mayCreate && (
+              <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+                Set the first one
+              </button>
+            )
           }
         >
-          {period === 'all'
-            ? 'A goal is the outcome you want. The tasks stay exactly as they are — you just link the ones that move the number.'
-            : 'Nothing overlaps this period. A goal set for a later quarter will not show here until you widen the filter above.'}
+          A goal is the outcome you want. The tasks stay exactly as they are — you just link the ones
+          that move the number.
         </EmptyState>
       ) : (
         <>
-          {mine.length > 0 && (
-            <section className="card card-pad stack">
-              <div className="row-between">
-                <h2>Yours</h2>
-                <span className="small muted">
-                  {mine.filter((o) => o.health === 'AT_RISK' || o.health === 'OFF_TRACK').length} needing attention
-                </span>
-              </div>
-              <div className="stack-sm">
-                {mine.map((objective) => (
-                  <ObjectiveRow key={objective.id} objective={objective} />
-                ))}
-              </div>
-            </section>
-          )}
+          <Destination
+            summary={data.summary}
+            momentum={data.momentum}
+            destination={data.destination}
+          />
 
-          {company.length > 0 && (
-            <section className="card card-pad stack">
-              <h2>Company-wide</h2>
-              <div className="stack-sm">
-                {company.map((objective) => (
-                  <ObjectiveRow key={objective.id} objective={objective} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {byDepartment.length > 0 && (
-            <section className="card card-pad stack">
-              <h2>By department</h2>
-              <div className="stack-sm">
-                {byDepartment.map((objective) => (
-                  <ObjectiveRow key={objective.id} objective={objective} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {objectives.length === 0 && (
-            <EmptyState title={`Nothing is ${health(healthFilter).label.toLowerCase()} right now`} />
-          )}
-
-          <div className="grid-2" style={{ alignItems: 'start' }}>
-            <section className="card table-wrap">
-              <div className="card-head">
-                <h2>Where the goals sit</h2>
-              </div>
-              <table className="data">
-                <thead>
-                  <tr>
-                    <th>Department</th>
-                    <th className="num">Goals</th>
-                    <th className="num">Needing attention</th>
-                    <th className="num">Activity</th>
-                    <th className="num">Progress</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.by_department.map((row) => {
-                    const activity = idleByDepartment.get(row.department_id);
-                    return (
-                      <tr key={row.department_id ?? 'company'}>
-                        <td>
-                          <span className="row">
-                            {row.color && <span className="stat-accent" style={{ background: row.color }} />}
-                            {row.name}
-                          </span>
-                        </td>
-                        <td className="num tnum">{row.count}</td>
-                        <td className="num tnum" style={{ color: row.at_risk ? 'var(--critical-text)' : 'inherit' }}>
-                          {row.at_risk}
-                        </td>
-                        <td className="num">
-                          {activity?.is_idle ? (
-                            <Badge tone="warning">
-                              {activity.idle_days === null ? 'no check-ins' : `quiet ${activity.idle_days}d`}
-                            </Badge>
-                          ) : (
-                            <span className="small muted">active</span>
-                          )}
-                        </td>
-                        <td className="num tnum">
-                          {row.progress_percent === null ? '—' : `${row.progress_percent}%`}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </section>
-
-            <section className="card card-pad stack">
-              <h2>Finishing soon</h2>
-              {data.upcoming.length === 0 ? (
-                <div className="small muted">Nothing lands in the next month.</div>
-              ) : (
-                <div className="stack-sm">
-                  {data.upcoming.map((objective) => {
-                    const meta = health(objective.health);
-                    return (
-                      <Link key={objective.id} to={`/goals/${objective.id}`} className="link-row">
-                        <span className="stat-accent" style={{ background: meta.color }} />
-                        <span className="grow truncate">{objective.title}</span>
-                        <span className="small muted">{daysLeftLabel(objective.end_date)}</span>
-                        <span className="small tnum" style={{ fontWeight: 650 }}>
-                          {objective.progress_percent === null ? '—' : `${objective.progress_percent}%`}
-                        </span>
-                      </Link>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+          <div className="health-chips">
+            {['ON_TRACK', 'AT_RISK', 'OFF_TRACK', 'COMPLETED', 'NOT_STARTED'].map((key) => {
+              const meta = HEALTH_META[key];
+              const count = data.objectives.filter((o) => o.health === key).length;
+              if (!count) return null;
+              const active = healthFilter === key;
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={`health-chip${active ? ' is-active' : ''}`}
+                  onClick={() => setHealthFilter(active ? '' : key)}
+                >
+                  <span className="goal-pip" style={{ background: meta.color }} />
+                  {meta.label}
+                  <span className="tnum" style={{ fontWeight: 700 }}>{count}</span>
+                </button>
+              );
+            })}
           </div>
+
+          <AttentionPanel insights={insights} onRunScan={runScan} canScan={can('settings.manage')} />
+
+          {groups.length === 0 ? (
+            <EmptyState title={`Nothing is ${health(healthFilter).label.toLowerCase()} right now`} />
+          ) : (
+            groups.map((group) => <GoalGroup key={group.id} group={group} />)
+          )}
 
           {insights?.by_person?.length > 0 && <PeopleBehind people={insights.by_person} />}
         </>
@@ -383,10 +385,7 @@ export default function Goals() {
         <ObjectiveWizard
           parentOptions={data.objectives.filter((o) => o.scope_type === 'COMPANY')}
           onClose={() => setCreating(false)}
-          // open what was just created rather than returning to a filtered list
-          // it may not appear in — a goal planned for a later period would
-          // otherwise be saved and then vanish
-          onSaved={(objective) => (objective?.id ? navigate(`/goals/${objective.id}`) : load())}
+          onSaved={load}
         />
       )}
     </div>

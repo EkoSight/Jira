@@ -48,6 +48,11 @@ export const DEFAULT_SETTINGS = {
       atRiskBehindPoints: 10,
       offTrackBehindPoints: 25,
     },
+    // the line at the top of the Goals page — what all of this is in aid of
+    destination: {
+      line: 'Every goal moves the company toward',
+      pillars: ['validation', 'growth', 'adoption', 'scale'],
+    },
     // the intelligence layer: what "not moving" and "not active" mean, in days,
     // and how often the system is allowed to nudge the person accountable
     attention: {

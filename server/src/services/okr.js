@@ -110,6 +110,7 @@ export const OBJECTIVE_SELECT = `
   SELECT o.*,
          u.full_name AS owner_name, u.avatar_color AS owner_color,
          d.name AS department_name, d.color AS department_color,
+         d.key AS department_key, d.description AS department_purpose,
          p.title AS parent_title,
          ${OBJECTIVE_PROGRESS} AS raw_progress,
          (SELECT COUNT(*)::int FROM key_results k
@@ -306,7 +307,41 @@ export async function listObjectives(filters = {}) {
   );
 
   const decorated = rows.map((row) => decorateObjective(row, thresholds));
-  return filters.health ? decorated.filter((row) => row.health === filters.health) : decorated;
+  const filtered = filters.health ? decorated.filter((row) => row.health === filters.health) : decorated;
+
+  // one extra query for the whole page, so each card can show a pip per key
+  // result without the list making a request per objective
+  await attachKeyResultPips(filtered, thresholds);
+  return filtered;
+}
+
+/**
+ * Hangs a compact { id, health, progress_percent } list on each objective.
+ * The list view only needs enough to draw the status pips, not the full records.
+ */
+async function attachKeyResultPips(objectives, thresholds) {
+  if (!objectives.length) return;
+
+  const ids = objectives.map((o) => o.id);
+  const { rows } = await query(
+    `${KEY_RESULT_SELECT} WHERE kr.objective_id = ANY($1::int[]) AND kr.is_archived = FALSE
+      ORDER BY kr.objective_id, kr.id`,
+    [ids],
+  );
+
+  const byObjective = new Map(objectives.map((o) => [o.id, []]));
+  for (const row of rows) {
+    const decorated = decorateKeyResult(row, null, thresholds);
+    byObjective.get(decorated.objective_id)?.push({
+      id: decorated.id,
+      title: decorated.title,
+      health: decorated.health,
+      progress_percent: decorated.progress_percent,
+    });
+  }
+  for (const objective of objectives) {
+    objective.key_results = byObjective.get(objective.id) || [];
+  }
 }
 
 export async function getObjective(id) {
@@ -396,9 +431,30 @@ export async function dashboard(filters = {}) {
     .sort((a, b) => new Date(a.end_date) - new Date(b.end_date))
     .slice(0, 10);
 
+  // real movement, not decoration: how many check-ins landed each week
+  const { rows: momentumRows } = await query(
+    `SELECT to_char(week, 'YYYY-MM-DD') AS week,
+            COALESCE(c.n, 0)::int AS value
+       FROM generate_series(
+              date_trunc('week', now()) - interval '7 weeks',
+              date_trunc('week', now()),
+              interval '1 week'
+            ) AS week
+       LEFT JOIN (
+         SELECT date_trunc('week', created_at) AS w, COUNT(*) AS n
+           FROM key_result_check_ins
+          WHERE created_at > now() - interval '9 weeks'
+          GROUP BY 1
+       ) c ON c.w = week
+      ORDER BY week`,
+  );
+
+  const settings = await getSettings();
+
   return {
     summary: {
       total: objectives.length,
+      active: objectives.filter((o) => o.status === 'ACTIVE').length,
       on_track: counts.ON_TRACK,
       at_risk: counts.AT_RISK,
       off_track: counts.OFF_TRACK,
@@ -406,6 +462,8 @@ export async function dashboard(filters = {}) {
       not_started: counts.NOT_STARTED,
       overall_progress: progressCount ? Math.round(progressSum / progressCount) : null,
     },
+    momentum: momentumRows,
+    destination: settings.okr?.destination || null,
     by_department: [...byDepartment.values()].map(summarise).sort((a, b) => b.count - a.count),
     by_owner: [...byOwner.values()].sort((a, b) => b.count - a.count),
     upcoming,

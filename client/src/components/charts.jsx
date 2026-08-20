@@ -238,3 +238,85 @@ export function Ring({ value, total, label, color = SERIES_1, size = 92 }) {
     </div>
   );
 }
+
+/**
+ * A percentage as a ring, with the number inside it.
+ *
+ * Distinct from Ring above, which reads a value out of a total and labels
+ * itself alongside. This one is the whole indicator: it is the progress figure
+ * on a goal card, so the number lives in the middle and nothing sits beside it.
+ */
+export function ProgressRing({ percent, color = SERIES_1, size = 58, stroke = 5, muted = false, showValue = true }) {
+  const value = percent === null || percent === undefined ? null : Math.max(0, Math.min(100, percent));
+  const radius = size / 2 - stroke / 2 - 1;
+  const circumference = 2 * Math.PI * radius;
+  const filled = ((value ?? 0) / 100) * circumference;
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      role="img"
+      aria-label={value === null ? 'No progress recorded' : `${value}% complete`}
+      style={{ display: 'block', flex: 'none' }}
+    >
+      <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+        stroke="var(--surface-3)" strokeWidth={stroke} />
+      {value !== null && value > 0 && (
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={`${filled} ${circumference}`}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+        />
+      )}
+      {showValue && (
+        <text
+          x="50%"
+          y="50%"
+          textAnchor="middle"
+          dominantBaseline="central"
+          fontSize={size * 0.27}
+          fontWeight="680"
+          fill={muted ? 'var(--ink-muted)' : 'var(--ink)'}
+          style={{ fontVariantNumeric: 'tabular-nums' }}
+        >
+          {value === null ? '—' : `${value}%`}
+        </text>
+      )}
+    </svg>
+  );
+}
+
+/** A small line of movement over time — no axes, just the shape. */
+export function Sparkline({ data = [], width = 96, height = 30, color = STATUS_COLOR.good }) {
+  const gradientId = useId();
+  const values = data.map((d) => Number(d.value) || 0);
+  if (values.length < 2) return <span style={{ width, height, display: 'block' }} />;
+
+  const max = Math.max(...values, 1);
+  const step = width / (values.length - 1);
+  const y = (v) => height - 3 - (v / max) * (height - 6);
+  const points = values.map((v, i) => `${i * step},${y(v)}`);
+  const line = `M ${points.join(' L ')}`;
+  const area = `${line} L ${width},${height} L 0,${height} Z`;
+
+  return (
+    <svg width={width} height={height} role="img" aria-label="Recent movement" style={{ display: 'block' }}>
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gradientId})`} />
+      <path d={line} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={(values.length - 1) * step} cy={y(values[values.length - 1])} r="2.6" fill={color} />
+    </svg>
+  );
+}
