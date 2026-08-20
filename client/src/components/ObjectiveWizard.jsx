@@ -27,7 +27,8 @@ export default function ObjectiveWizard({ objective, parentOptions = [], onClose
   const toast = useToast();
 
   const editing = Boolean(objective);
-  const presets = useMemo(() => periodPresets(), []);
+  // "All periods" is a way of looking at goals, not a period a goal can have
+  const presets = useMemo(() => periodPresets().filter((p) => p.start_date), []);
   const defaultPeriod = presets[0];
 
   const [form, setForm] = useState(() => ({

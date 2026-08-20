@@ -77,7 +77,17 @@ export function measurementSummary(keyResult) {
   return keyResult.direction === 'DECREASE' ? `${now}, heading for ${target}` : `${now} of ${target}`;
 }
 
-const iso = (date) => date.toISOString().slice(0, 10);
+/**
+ * A calendar date, taken from the local parts.
+ *
+ * NOT toISOString().slice(0,10) — that converts to UTC first, so local midnight
+ * anywhere east of Greenwich lands on the previous day. In IST it turned
+ * "1 Jul – 30 Sep" into "30 Jun – 29 Sep" on every preset.
+ */
+const iso = (date) => {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
 
 /**
  * The periods people actually plan in. Offered as presets so a quarter never
@@ -104,6 +114,9 @@ export function periodPresets(now = new Date()) {
       label: quarter < 2 ? `First half of ${year}` : `Second half of ${year}`,
     },
     { key: 'this-year', start_date: iso(new Date(year, 0, 1)), end_date: iso(new Date(year, 12, 0)), label: `${year}` },
+    // the escape hatch: without it a goal planned outside every preset is
+    // invisible with no way to reach it from the page it should be on
+    { key: 'all', start_date: null, end_date: null, label: 'All periods' },
   ];
 }
 

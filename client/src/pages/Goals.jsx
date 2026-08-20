@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
@@ -120,6 +120,7 @@ export default function Goals() {
   const { user, can } = useAuth();
   const { departments } = useRefData();
   const toast = useToast();
+  const navigate = useNavigate();
 
   const presets = useMemo(() => periodPresets(), []);
   const [period, setPeriod] = useState('this-quarter');
@@ -237,15 +238,25 @@ export default function Goals() {
         <EmptyState
           title="No goals for this period yet"
           action={
-            mayCreate && (
-              <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
-                Set the first one
-              </button>
-            )
+            <div className="row wrap center">
+              {/* a goal planned for another period is the likeliest reason this
+                  is empty, so offer the way to it rather than only a create button */}
+              {period !== 'all' && (
+                <button type="button" className="btn" onClick={() => setPeriod('all')}>
+                  Show goals from every period
+                </button>
+              )}
+              {mayCreate && (
+                <button type="button" className="btn btn-primary" onClick={() => setCreating(true)}>
+                  Set the first one
+                </button>
+              )}
+            </div>
           }
         >
-          A goal is the outcome you want. The tasks stay exactly as they are — you just link the ones
-          that move the number.
+          {period === 'all'
+            ? 'A goal is the outcome you want. The tasks stay exactly as they are — you just link the ones that move the number.'
+            : 'Nothing overlaps this period. A goal set for a later quarter will not show here until you widen the filter above.'}
         </EmptyState>
       ) : (
         <>
@@ -372,7 +383,10 @@ export default function Goals() {
         <ObjectiveWizard
           parentOptions={data.objectives.filter((o) => o.scope_type === 'COMPANY')}
           onClose={() => setCreating(false)}
-          onSaved={load}
+          // open what was just created rather than returning to a filtered list
+          // it may not appear in — a goal planned for a later period would
+          // otherwise be saved and then vanish
+          onSaved={(objective) => (objective?.id ? navigate(`/goals/${objective.id}`) : load())}
         />
       )}
     </div>
