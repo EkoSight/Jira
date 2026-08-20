@@ -1,5 +1,20 @@
 import { badRequest } from './errors.js';
 
+/**
+ * Allocates the next task reference for a department (e.g. MKT-14).
+ *
+ * Two mechanisms, and both are needed:
+ *
+ * 1. The department row is locked FOR UPDATE first, so two transactions
+ *    allocating a reference for the same department serialise instead of both
+ *    reading the same MAX(...) and colliding on the unique tasks.ref index.
+ *    Without this lock the probe below is racy too — two callers can find the
+ *    same free candidate before either has inserted.
+ * 2. The probe skips over references that already exist, which MAX(...) alone
+ *    can land on when the numbering has gaps or a department key has changed.
+ *
+ * Every path that creates a task must go through here.
+ */
 export async function nextTaskRef(client, departmentId) {
   const { rows } = await client.query('SELECT key FROM departments WHERE id = $1 FOR UPDATE', [
     departmentId,
