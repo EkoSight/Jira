@@ -31,6 +31,8 @@ const call = async (method, path, { token, body } = {}) => {
   return { status: response.status, body: text ? JSON.parse(text) : {} };
 };
 
+const daysFromNow = (days) => new Date(Date.now() + days * 86400000).toISOString();
+
 const skipIfUnavailable = (t) => {
   if (!available) {
     t.skip('no database');
@@ -166,6 +168,7 @@ test('a meeting can spin off a follow-up task tied to the lead', async (t) => {
   const task = await call('POST', '/tasks', {
     token: tokens.rep,
     body: {
+      due_date: daysFromNow(5),
       title: 'Prepare the field demo for Acme', department_id: ids.sales,
       assignee_id: ids.rep, status_id: ids.todo, account_id: ids.acme,
     },
@@ -318,7 +321,8 @@ test('an ordinary task with no account behaves exactly as before', async (t) => 
 
   const created = await call('POST', '/tasks', {
     token: tokens.rep,
-    body: { title: 'Nothing to do with a deal', department_id: ids.sales, assignee_id: ids.rep, status_id: ids.todo },
+    body: {
+      due_date: daysFromNow(5), title: 'Nothing to do with a deal', department_id: ids.sales, assignee_id: ids.rep, status_id: ids.todo },
   });
   assert.equal(created.status, 201);
 

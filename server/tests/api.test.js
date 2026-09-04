@@ -34,6 +34,21 @@ const call = async (method, path, { token, body } = {}) => {
 
 const daysFromNow = (days) => new Date(Date.now() + days * 86400000).toISOString();
 
+/**
+ * Backdates a task's deadline so it is genuinely overdue.
+ *
+ * A deadline in the past cannot be set through the API by design, so a test that
+ * needs an overdue task ages a real one instead — which is how they arise anyway.
+ */
+const makeOverdue = async (taskId, days) => {
+  await query(
+    `UPDATE tasks SET due_date = now() - ($1::int || ' days')::interval,
+                      original_due_date = now() - ($1::int || ' days')::interval
+      WHERE id = $2`,
+    [days, taskId],
+  );
+};
+
 before(async () => {
   // guard against ever pointing the destructive setup at a working schema
   assert.match(
@@ -158,17 +173,123 @@ test('creates a task with a department-prefixed reference', async (t) => {
 
   const second = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'A second card', department_id: ids.department, assignee_id: ids.member },
+    body: {
+      due_date: daysFromNow(5), title: 'A second card', department_id: ids.department, assignee_id: ids.member },
   });
   assert.equal(second.body.task.ref, 'TST-2', 'references increment per department');
   ids.secondTask = second.body.task.id;
+});
+
+test('a task cannot be created without a deadline', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const base = {
+    title: 'Work with no date on it',
+    department_id: ids.department,
+    assignee_id: ids.member,
+  };
+
+  const missing = await call('POST', '/tasks', { token: tokens.admin, body: base });
+  assert.equal(missing.status, 400);
+  assert.match(missing.body.error, /deadline is required/i);
+
+  const cleared = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { ...base, due_date: null },
+  });
+  assert.equal(cleared.status, 400, 'an explicit null is still no deadline');
+});
+
+test('the deadline has to be one the work can actually be done by', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const base = {
+    title: 'Deadline sanity',
+    department_id: ids.department,
+    assignee_id: ids.member,
+  };
+
+  // already late the moment it is created — the pathology that earns a black
+  // mark for nothing
+  const past = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { ...base, due_date: daysFromNow(-1) },
+  });
+  assert.equal(past.status, 400);
+  assert.match(past.body.error, /already passed/i);
+
+  // a date far enough out that it is a way of avoiding a commitment
+  const distant = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { ...base, due_date: daysFromNow(900) },
+  });
+  assert.equal(distant.status, 400);
+  assert.match(distant.body.error, /days away/i);
+
+  // a daily task starting months from now is a mistake, not a plan
+  const badCadence = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { ...base, due_date: daysFromNow(120), recurrence: 'daily' },
+  });
+  assert.equal(badCadence.status, 400);
+  assert.match(badCadence.body.error, /repeats daily/i);
+
+  // and a sensible one goes straight through
+  const fine = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: { ...base, due_date: daysFromNow(5) },
+  });
+  assert.equal(fine.status, 201);
+});
+
+test('a deadline can be moved but never removed', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Deadline editing',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(4),
+    },
+  });
+  const taskId = created.body.task.id;
+
+  const moved = await call('PATCH', `/tasks/${taskId}`, {
+    token: tokens.admin,
+    body: { due_date: daysFromNow(9) },
+  });
+  assert.equal(moved.status, 200, 'moving it forward is normal');
+
+  const backwards = await call('PATCH', `/tasks/${taskId}`, {
+    token: tokens.admin,
+    body: { due_date: daysFromNow(-2) },
+  });
+  assert.equal(backwards.status, 400, 'but not into the past');
+
+  const removed = await call('PATCH', `/tasks/${taskId}`, {
+    token: tokens.admin,
+    body: { due_date: null },
+  });
+  assert.equal(removed.status, 400);
+  assert.match(removed.body.error, /required/i);
+
+  // editing anything else on a task never touches its deadline
+  const renamed = await call('PATCH', `/tasks/${taskId}`, {
+    token: tokens.admin,
+    body: { title: 'Deadline editing, renamed' },
+  });
+  assert.equal(renamed.status, 200);
+  assert.ok(renamed.body.task.due_date, 'the deadline survived an unrelated edit');
 });
 
 test('rejects a task with no title', async (t) => {
   if (skipIfUnavailable(t)) return;
   const result = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'x', department_id: ids.department },
+    body: {
+      due_date: daysFromNow(5), title: 'x', department_id: ids.department },
   });
   assert.equal(result.status, 400);
   assert.equal(result.body.error, 'Validation failed');
@@ -178,7 +299,8 @@ test('rejects a task with no owner', async (t) => {
   if (skipIfUnavailable(t)) return;
   const result = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Nobody owns this', department_id: ids.department },
+    body: {
+      due_date: daysFromNow(5), title: 'Nobody owns this', department_id: ids.department },
   });
   assert.equal(result.status, 400);
   assert.match(result.body.error, /task owner is required/i);
@@ -208,7 +330,8 @@ test('a member can create a task owned by someone else', async (t) => {
 
   const created = await call('POST', '/tasks', {
     token: tokens.member,
-    body: { title: 'Work for a colleague', department_id: ids.department, assignee_id: ids.admin },
+    body: {
+      due_date: daysFromNow(5), title: 'Work for a colleague', department_id: ids.department, assignee_id: ids.admin },
   });
   assert.equal(created.status, 201);
   assert.equal(created.body.task.assignee_id, ids.admin, 'assigned to another person on creation');
@@ -220,7 +343,8 @@ test('ownership can be changed on a task you are not part of, but nothing else',
   // a task the member neither owns, created, nor follows — but can see (same department)
   const foreign = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Unclaimed department work', department_id: ids.department, assignee_id: ids.admin },
+    body: {
+      due_date: daysFromNow(5), title: 'Unclaimed department work', department_id: ids.department, assignee_id: ids.admin },
   });
   const id = foreign.body.task.id;
 
@@ -304,9 +428,10 @@ test('black marks are recorded once per rule and task, however often the scan ru
       title: 'This one slipped',
       department_id: ids.department,
       assignee_id: ids.member,
-      due_date: daysFromNow(-5),
+      due_date: daysFromNow(2),
     },
   });
+  await makeOverdue(overdue.body.task.id, 5);
 
   const first = await runBlackMarkScan();
   const second = await runBlackMarkScan();
@@ -336,16 +461,17 @@ test('a rule scoped to critical work ignores lower priorities', async (t) => {
   const before = await runBlackMarkScan();
   assert.equal(before.created.length, 0, 'the medium priority overdue task does not match');
 
-  await call('POST', '/tasks', {
+  const criticalTask = await call('POST', '/tasks', {
     token: tokens.admin,
     body: {
       title: 'Critical slip',
       department_id: ids.department,
       assignee_id: ids.member,
       priority: 'critical',
-      due_date: daysFromNow(-2),
+      due_date: daysFromNow(2),
     },
   });
+  await makeOverdue(criticalTask.body.task.id, 2);
 
   const after = await runBlackMarkScan();
   assert.equal(after.created.length, 2, 'both the general and the critical rule fire');
@@ -367,9 +493,10 @@ test('a grace period holds the mark back until it expires', async (t) => {
       title: 'Only just late',
       department_id: ids.department,
       assignee_id: ids.member,
-      due_date: daysFromNow(-1),
+      due_date: daysFromNow(2),
     },
   });
+  await makeOverdue(fresh.body.task.id, 1);
 
   const within = await runBlackMarkScan();
   assert.equal(
@@ -679,7 +806,8 @@ test('a tagged person sees a task from another department', async (t) => {
 
   const secret = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Work in another department', department_id: ids.department, assignee_id: ids.admin },
+    body: {
+      due_date: daysFromNow(5), title: 'Work in another department', department_id: ids.department, assignee_id: ids.admin },
   });
   const secretId = secret.body.task.id;
 
@@ -713,6 +841,7 @@ test('a task can be created with people already tagged on it', async (t) => {
     token: tokens.admin,
     body: {
       title: 'Tagged from the start',
+      due_date: daysFromNow(5),
       department_id: ids.department,
       assignee_id: ids.admin,
       collaborator_ids: [ids.member, ids.outsider],
@@ -747,9 +876,10 @@ test('the follower can see and move the task, but the owner keeps the black mark
       department_id: ids.department,
       assignee_id: ids.member,
       follower_id: ids.outsider,
-      due_date: daysFromNow(-3),
+      due_date: daysFromNow(2),
     },
   });
+  await makeOverdue(task.body.task.id, 3);
   const taskId = task.body.task.id;
   assert.equal(task.body.task.follower_name, 'Outside Person');
 
@@ -781,9 +911,10 @@ test('a follower can close a task, and it leaves their list', async (t) => {
       department_id: ids.department,
       assignee_id: ids.member,
       follower_id: ids.outsider,
-      due_date: daysFromNow(-13),
+      due_date: daysFromNow(2),
     },
   });
+  await makeOverdue(task.body.task.id, 13);
   const taskId = task.body.task.id;
 
   const before = await call('GET', '/tasks/mine', { token: tokens.outsider });
@@ -885,7 +1016,8 @@ test('sub tasks drive the parent progress', async (t) => {
 
   const parent = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Parent with steps', department_id: ids.department, assignee_id: ids.admin },
+    body: {
+      due_date: daysFromNow(5), title: 'Parent with steps', department_id: ids.department, assignee_id: ids.admin },
   });
   const parentId = parent.body.task.id;
 
@@ -893,7 +1025,8 @@ test('sub tasks drive the parent progress', async (t) => {
   for (const title of ['Step one', 'Step two', 'Step three', 'Step four']) {
     const child = await call('POST', '/tasks', {
       token: tokens.admin,
-      body: { title, department_id: ids.department, parent_task_id: parentId, assignee_id: ids.admin },
+      body: {
+      due_date: daysFromNow(5), title, department_id: ids.department, parent_task_id: parentId, assignee_id: ids.admin },
     });
     children.push(child.body.task.id);
   }
@@ -1073,7 +1206,8 @@ test('completing a task stores the outcome note and logs it', async (t) => {
 
   const created = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Needs a sign-off note', department_id: ids.department, assignee_id: ids.member },
+    body: {
+      due_date: daysFromNow(5), title: 'Needs a sign-off note', department_id: ids.department, assignee_id: ids.member },
   });
   const id = created.body.task.id;
 
@@ -1202,7 +1336,8 @@ test('a failed successor is reported as null instead of throwing', async (t) => 
   // and a completion made right afterwards still works normally
   const created = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Still completable', department_id: ids.department, assignee_id: ids.member },
+    body: {
+      due_date: daysFromNow(5), title: 'Still completable', department_id: ids.department, assignee_id: ids.member },
   });
   const done = await call('POST', `/tasks/${created.body.task.id}/move`, {
     token: tokens.admin,
@@ -1228,9 +1363,10 @@ test('completing a task after its deadline records a black mark against the owne
       department_id: ids.department,
       assignee_id: ids.member,
       follower_id: ids.admin,
-      due_date: daysFromNow(-4),
+      due_date: daysFromNow(2),
     },
   });
+  await makeOverdue(created.body.task.id, 4);
   const id = created.body.task.id;
 
   await call('POST', `/tasks/${id}/move`, {
@@ -1271,9 +1407,10 @@ test('catching up on a late recurring task does not create an already-overdue su
       department_id: ids.department,
       assignee_id: ids.member,
       recurrence: 'daily',
-      due_date: daysFromNow(-3), // three days overdue
+      due_date: daysFromNow(2),
     },
   });
+  await makeOverdue(created.body.task.id, 3);
 
   const done = await call('POST', `/tasks/${created.body.task.id}/move`, {
     token: tokens.member,
@@ -1373,7 +1510,8 @@ test('a task created straight into a done status counts as completed this month'
 
   const created = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Already finished when logged', department_id: ids.department, status_id: ids.done, assignee_id: ids.admin },
+    body: {
+      due_date: daysFromNow(5), title: 'Already finished when logged', department_id: ids.department, status_id: ids.done, assignee_id: ids.admin },
   });
   assert.equal(created.status, 201);
   assert.ok(created.body.task.completed_at, 'completed_at is stamped at creation');
@@ -1400,7 +1538,8 @@ test('the creator can delete their own task, others cannot', async (t) => {
   // the member creates a task (a duplicate they want to remove)
   const created = await call('POST', '/tasks', {
     token: tokens.member,
-    body: { title: 'Accidental duplicate', department_id: ids.department, assignee_id: ids.member },
+    body: {
+      due_date: daysFromNow(5), title: 'Accidental duplicate', department_id: ids.department, assignee_id: ids.member },
   });
   const id = created.body.task.id;
 
@@ -1423,12 +1562,14 @@ test('deleting a parent removes its subtasks too', async (t) => {
 
   const parent = await call('POST', '/tasks', {
     token: tokens.member,
-    body: { title: 'Duplicated parent', department_id: ids.department, assignee_id: ids.member },
+    body: {
+      due_date: daysFromNow(5), title: 'Duplicated parent', department_id: ids.department, assignee_id: ids.member },
   });
   const child = await call('POST', '/tasks', {
     token: tokens.member,
     body: {
       title: 'Its child',
+      due_date: daysFromNow(5),
       department_id: ids.department,
       assignee_id: ids.member,
       parent_task_id: parent.body.task.id,
@@ -1446,7 +1587,8 @@ test('a manager archiving (not deleting) still just archives', async (t) => {
 
   const created = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Manager archives this', department_id: ids.department, assignee_id: ids.member },
+    body: {
+      due_date: daysFromNow(5), title: 'Manager archives this', department_id: ids.department, assignee_id: ids.member },
   });
   const id = created.body.task.id;
 
@@ -1463,12 +1605,14 @@ test('a subtask carries its parent reference for the board and list views', asyn
 
   const parent = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Parent for linking', department_id: ids.department, assignee_id: ids.admin },
+    body: {
+      due_date: daysFromNow(5), title: 'Parent for linking', department_id: ids.department, assignee_id: ids.admin },
   });
   const child = await call('POST', '/tasks', {
     token: tokens.admin,
     body: {
       title: 'Linked child',
+      due_date: daysFromNow(5),
       department_id: ids.department,
       assignee_id: ids.admin,
       parent_task_id: parent.body.task.id,

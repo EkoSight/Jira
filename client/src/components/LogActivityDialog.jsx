@@ -20,7 +20,9 @@ export default function LogActivityDialog({ account, type = 'NOTE', onClose, onS
   const [nextStep, setNextStep] = useState('');
   const [nextStepDue, setNextStepDue] = useState('');
   const [makeTask, setMakeTask] = useState(false);
-  const [taskDue, setTaskDue] = useState('');
+  // a follow-up needs a deadline; three days out is the usual answer, and editable
+  const [taskDue, setTaskDue] = useState(() =>
+    new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
 
   const meetingish = ['MEETING', 'CALL', 'DEMO', 'IN_PERSON', 'SUMMARY'].includes(type);
@@ -33,6 +35,11 @@ export default function LogActivityDialog({ account, type = 'NOTE', onClose, onS
       // the follow-up task is created first, then the activity records it —
       // matching how the offer reads: "log this, and here's the next task"
       if (makeTask && nextStep.trim()) {
+        if (!taskDue) {
+          toast.error('Give the follow-up task a deadline');
+          setSaving(false);
+          return;
+        }
         if (!account.department_id) {
           toast.error('Set a department on the lead before creating a task for it');
           setSaving(false);
@@ -43,7 +50,7 @@ export default function LogActivityDialog({ account, type = 'NOTE', onClose, onS
           department_id: account.department_id,
           assignee_id: account.owner_user_id || user.id,
           account_id: account.id,
-          due_date: taskDue ? fromDateTimeLocal(`${taskDue}T17:00`) : null,
+          due_date: fromDateTimeLocal(`${taskDue}T17:00`),
         });
         taskId = task.id;
       }

@@ -465,7 +465,8 @@ test('a key result with no target still reports the progress of its finished wor
 
   const task = await call('POST', '/tasks', {
     token: tokens.manager,
-    body: { title: 'Collect the samples', department_id: ids.growth, assignee_id: ids.member, status_id: ids.todo },
+    body: {
+      due_date: dateOnly(5), title: 'Collect the samples', department_id: ids.growth, assignee_id: ids.member, status_id: ids.todo },
   });
   await call('POST', `/key-results/${keyResult.id}/tasks`, {
     token: tokens.manager,
@@ -688,7 +689,8 @@ test('linking tasks to a key result drives its execution progress', async (t) =>
   for (const title of ['Write the brief', 'Book the media']) {
     const task = await call('POST', '/tasks', {
       token: tokens.manager,
-      body: { title, department_id: ids.growth, assignee_id: ids.member, status_id: ids.todo },
+      body: {
+      due_date: dateOnly(5), title, department_id: ids.growth, assignee_id: ids.member, status_id: ids.todo },
     });
     assert.equal(task.status, 201);
     taskIds.push(task.body.task.id);
@@ -725,6 +727,7 @@ test('a task can be aligned the moment it is created', async (t) => {
   const created = await call('POST', '/tasks', {
     token: tokens.member,
     body: {
+      due_date: dateOnly(5),
       title: 'Draft the dealer onboarding checklist',
       department_id: ids.growth,
       assignee_id: ids.member,
@@ -802,7 +805,8 @@ test('a task cannot be linked to a goal by someone who cannot see it', async (t)
 
   const hidden = await call('POST', '/tasks', {
     token: tokens.admin,
-    body: { title: 'Agronomy only work', department_id: ids.agronomy, assignee_id: ids.admin, status_id: ids.todo },
+    body: {
+      due_date: dateOnly(5), title: 'Agronomy only work', department_id: ids.agronomy, assignee_id: ids.admin, status_id: ids.todo },
   });
   assert.equal(hidden.status, 201);
 
@@ -821,6 +825,7 @@ test('a task with no goal behaves exactly as it did before the module existed', 
   const created = await call('POST', '/tasks', {
     token: tokens.member,
     body: {
+      due_date: dateOnly(5),
       title: 'Ordinary work with nothing strategic about it',
       department_id: ids.growth,
       assignee_id: ids.member,

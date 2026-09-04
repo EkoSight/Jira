@@ -39,6 +39,10 @@ export const DEFAULT_SETTINGS = {
     name: 'EkoSight',
     workingDays: [1, 2, 3, 4, 5, 6],
   },
+  deadlines: {
+    // every task needs a date it is expected by; how far out one may be set
+    maxHorizonDays: 730,
+  },
   okr: {
     // the module's on/off switch — no separate feature-flag framework needed,
     // since this settings store already exists and is editable without a deploy

@@ -512,12 +512,15 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
     if (!title.trim()) return;
     setBusy(true);
     try {
+      // a sub task is due when its parent is — keeps the one-line add while still
+      // giving every card a deadline. Open it to set a different one.
       await api.createTask({
         title: title.trim(),
         department_id: task.department_id,
         parent_task_id: task.id,
         assignee_id: task.assignee_id,
         priority: task.priority,
+        due_date: task.due_date,
       });
       setTitle('');
       onChanged();
@@ -591,7 +594,13 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
         </div>
       ))}
 
-      {canEdit && (
+      {canEdit && !task.due_date && (
+        <div className="small muted">
+          Set a deadline on this task first — a sub task inherits it.
+        </div>
+      )}
+
+      {canEdit && task.due_date && (
         <div className="row">
           <input
             className="input"

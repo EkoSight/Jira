@@ -16,6 +16,8 @@ import { logActivity, notify } from '../services/activity.js';
 import { handleTaskReopened, runBlackMarkScan } from '../services/blackmarks.js';
 import { spawnNextOccurrenceAfterCompletion } from '../services/recurrence.js';
 import { nextTaskRef } from '../lib/taskRef.js';
+import { assertUsableDeadline } from '../lib/deadline.js';
+import { getSettings } from '../services/settings.js';
 
 const router = Router();
 
@@ -304,6 +306,14 @@ router.post(
       throw badRequest('A task owner is required');
     }
 
+    // and a deadline it is expected by. Enforced on the API rather than the column
+    // so the tasks that predate this rule keep working.
+    const settings = await getSettings();
+    assertUsableDeadline(data.due_date, {
+      recurrence: data.recurrence,
+      maxHorizonDays: settings.deadlines?.maxHorizonDays,
+    });
+
     if (!hasPermission(req.currentUser, 'task.assign') && data.assignee_id !== req.currentUser.id) {
       throw forbidden('You can only assign tasks to yourself');
     }
@@ -451,6 +461,20 @@ router.patch(
       !hasPermission(req.currentUser, 'task.assign')
     ) {
       throw forbidden('You do not have permission to reassign tasks');
+    }
+
+    // a deadline can be changed or set, but never removed, and the replacement has
+    // to be as usable as one given at creation. Editing anything else on a task
+    // that predates the rule leaves its missing deadline alone.
+    if (data.due_date !== undefined) {
+      if (data.due_date === null || data.due_date === '') {
+        throw badRequest('A deadline is required — set a new date rather than clearing it');
+      }
+      const settings = await getSettings();
+      assertUsableDeadline(data.due_date, {
+        recurrence: data.recurrence ?? existing.recurrence,
+        maxHorizonDays: settings.deadlines?.maxHorizonDays,
+      });
     }
 
     const updated = await withTransaction(async (client) => {

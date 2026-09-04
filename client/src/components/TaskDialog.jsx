@@ -348,6 +348,8 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const [completing, setCompleting] = useState(null);
 
   const taskTypes = settings?.taskTypes || ['task'];
+  // the deadline picker starts from now, so an already-late date cannot be chosen
+  const minDeadline = toDateTimeLocal(new Date());
   // one condition for both the staged and the live alignment sections
   const goalsAvailable = settings?.okr?.enabled !== false && can('okr.view') && can('okr.link.task');
 
@@ -427,6 +429,10 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     if (!form.title.trim() || form.title.trim().length < 3) return toast.error('Give the task a title first');
     if (!form.department_id) return toast.error('Pick a department');
     if (isNew && !form.assignee_id) return toast.error('Select a task owner before creating the task');
+    if (isNew && !form.due_date) return toast.error('Set a deadline — every task needs a date it is expected by');
+    if (form.due_date && new Date(form.due_date).getTime() < Date.now() - 60_000) {
+      return toast.error('That deadline has already passed — pick a date and time in the future');
+    }
 
     setSaving(true);
     try {
@@ -737,11 +743,11 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 </Field>
 
                 <Field
-                  label="Deadline"
+                  label="Deadline *"
                   hint={
                     !isNew && task?.due_date_changes > 0
                       ? `Moved ${task.due_date_changes} time${task.due_date_changes === 1 ? '' : 's'}`
-                      : 'Missing this date is what triggers a black mark'
+                      : 'Required — missing this date is what triggers a black mark'
                   }
                 >
                   <input
@@ -750,6 +756,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                     value={form.due_date}
                     onChange={set('due_date')}
                     disabled={!canEdit}
+                    min={minDeadline}
                   />
                 </Field>
 
