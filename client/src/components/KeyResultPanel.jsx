@@ -4,13 +4,25 @@ import { useAuth, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import KeyResultEditDialog from './KeyResultEditDialog.jsx';
 import TaskDialog from './TaskDialog.jsx';
-import { CONFIDENCE, formatValue, health, measurementSummary } from '../lib/okr.js';
+import {
+  CONFIDENCE, formatValue, health, krAttention, measurementSummary, pace, worstSeverity,
+} from '../lib/okr.js';
 import { formatDate, relativeTime, STAGE_LABEL } from '../lib/format.js';
 
-/** Posting a check-in: the number, how it feels, and what happens next. */
-function CheckInDialog({ keyResult, onClose, onSaved }) {
+/**
+ * Recording where a key result stands.
+ *
+ * Called "Update progress" everywhere it is offered — "check in" is what the
+ * system stores, not what a person thinks they are doing. The API underneath is
+ * unchanged: this posts the same check-in it always did.
+ *
+ * On a narrow screen it comes up from the bottom as a sheet, because a centred
+ * dialog with a number pad over it leaves the field under the keyboard.
+ */
+export function UpdateProgressDialog({ keyResult, onClose, onSaved }) {
   const toast = useToast();
   const binary = keyResult.measurement_type === 'BINARY';
+  const rollup = keyResult.measurement_type === 'TASK_ROLLUP';
 
   const [value, setValue] = useState(binary ? Number(keyResult.current_value) >= 1 : keyResult.current_value ?? 0);
   const [confidence, setConfidence] = useState('MEDIUM');
@@ -27,7 +39,7 @@ function CheckInDialog({ keyResult, onClose, onSaved }) {
         note: note.trim() || undefined,
         next_action: nextAction.trim() || undefined,
       });
-      toast.success('Check-in recorded');
+      toast.success('Progress updated');
       onSaved(saved);
       onClose();
     } catch (err) {
@@ -39,13 +51,14 @@ function CheckInDialog({ keyResult, onClose, onSaved }) {
 
   return (
     <Modal
-      title="Check in"
+      title="Update progress"
+      size="sheet"
       onClose={onClose}
       footer={
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? 'Saving…' : 'Post check-in'}
+            {saving ? 'Saving…' : 'Save update'}
           </button>
         </>
       }
@@ -55,11 +68,13 @@ function CheckInDialog({ keyResult, onClose, onSaved }) {
           <strong>{keyResult.title}</strong>
           <div className="small" style={{ marginTop: 3 }}>
             {measurementSummary(keyResult)}
-            {keyResult.last_check_in_at && ` · last checked ${relativeTime(keyResult.last_check_in_at)}`}
+            {keyResult.last_check_in_at
+              ? ` · last updated ${relativeTime(keyResult.last_check_in_at)}`
+              : ' · never updated'}
           </div>
         </div>
 
-        {keyResult.measurement_type === 'TASK_ROLLUP' ? (
+        {rollup ? (
           <div className="small muted">
             This key result follows its linked tasks, so the number moves on its own as work is
             finished. Use the note below to say where it really stands.
@@ -114,7 +129,7 @@ function CheckInDialog({ keyResult, onClose, onSaved }) {
           />
         </Field>
 
-        <Field label="What happens before the next check-in?">
+        <Field label="What happens before the next update?">
           <input
             className="input"
             value={nextAction}
@@ -128,28 +143,25 @@ function CheckInDialog({ keyResult, onClose, onSaved }) {
 }
 
 /** Attaching existing task cards to a key result. */
-function LinkTaskDialog({ keyResult, onClose, onSaved }) {
+function LinkTaskDialog({ keyResult, linkedIds, onClose, onSaved }) {
   const toast = useToast();
   const [search, setSearch] = useState('');
   const [tasks, setTasks] = useState([]);
-  const [linked, setLinked] = useState(new Set());
+  const [linked, setLinked] = useState(() => new Set(linkedIds));
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let live = true;
     setLoading(true);
-    Promise.all([api.tasks({ search: search || undefined, limit: 40 }), api.keyResultTasks(keyResult.id)])
-      .then(([all, existing]) => {
-        if (!live) return;
-        setTasks(all.tasks || []);
-        setLinked(new Set((existing.tasks || []).map((t) => t.id)));
-      })
+    api
+      .tasks({ search: search || undefined, limit: 40 })
+      .then((all) => live && setTasks(all.tasks || []))
       .catch((err) => toast.error(err))
       .finally(() => live && setLoading(false));
     return () => {
       live = false;
     };
-  }, [search, keyResult.id]);
+  }, [search]);
 
   const toggle = async (task) => {
     try {
@@ -212,202 +224,271 @@ function LinkTaskDialog({ keyResult, onClose, onSaved }) {
   );
 }
 
-export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTask }) {
+/** One row in the linked-work list, on both the card and the drawer. */
+function TaskRow({ task, onOpenTask, onUnlink }) {
+  return (
+    <div className={`link-row${task.is_overdue ? ' is-late' : ''}`}>
+      <span className="task-ref">{task.ref}</span>
+      <button type="button" className="grow truncate btn-link" onClick={() => onOpenTask?.(task.id)}>
+        {task.title}
+      </button>
+      {task.is_overdue && <Badge tone="critical">late</Badge>}
+      {task.assignee_name && (
+        <Avatar name={task.assignee_name} color={task.assignee_color} size={20} title={task.assignee_name} />
+      )}
+      <Badge tone={task.stage === 'done' ? 'good' : 'neutral'}>
+        {STAGE_LABEL[task.stage] || task.status_name}
+      </Badge>
+      {onUnlink && (
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon btn-sm"
+          aria-label={`Unlink ${task.ref}`}
+          onClick={() => onUnlink(task)}
+        >
+          <Icon name="close" size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The INVESTIGATE level: everything about one key result, behind tabs so the
+ * page underneath never has to carry it.
+ */
+export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged, onOpenTask }) {
   const { user, can } = useAuth();
   const toast = useToast();
 
-  const [expanded, setExpanded] = useState(false);
-  const [checkingIn, setCheckingIn] = useState(false);
+  const [tab, setTab] = useState('progress');
+  const [checkIns, setCheckIns] = useState(null);
+  const [updating, setUpdating] = useState(false);
   const [linking, setLinking] = useState(false);
   const [editing, setEditing] = useState(false);
   const [creatingTask, setCreatingTask] = useState(false);
-  const [detail, setDetail] = useState(null);
-  const [tasks, setTasks] = useState([]);
 
   const mine = keyResult.owner_user_id === user.id;
-  const mayCheckIn = can('okr.checkin') && (canEdit || mine);
+  const mayUpdate = can('okr.checkin') && (canEdit || mine);
   const mayEdit = canEdit || mine;
   const meta = health(keyResult.health);
-  const progress = keyResult.progress_percent;
-  // the headline number is the work's, not the outcome's — say so rather than
-  // letting it pass as a measured result
-  const fromWork = keyResult.progress_source === 'execution' && keyResult.measurement_type !== 'TASK_ROLLUP';
+  const reading = pace(keyResult.progress_percent, keyResult.time_elapsed_percent);
+  const reasons = krAttention(keyResult);
 
-  const loadDetail = () => {
-    Promise.all([api.keyResult(keyResult.id), api.keyResultTasks(keyResult.id)])
-      .then(([data, taskData]) => {
-        setDetail(data);
-        setTasks(taskData.tasks || []);
-      })
+  const loadHistory = () => {
+    api
+      .checkInHistory(keyResult.id)
+      .then((data) => setCheckIns(data.check_ins || []))
       .catch((err) => toast.error(err));
   };
 
   useEffect(() => {
-    if (expanded) loadDetail();
-  }, [expanded, keyResult.id]);
+    if (tab === 'updates' && checkIns === null) loadHistory();
+  }, [tab, keyResult.id]);
+
+  const TABS = [
+    { key: 'progress', label: 'Progress' },
+    { key: 'work', label: `Work (${tasks.length})` },
+    { key: 'updates', label: 'Updates' },
+  ];
 
   return (
-    <div className="kr">
-      <div className="kr-head">
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon btn-sm"
-          onClick={() => setExpanded((v) => !v)}
-          aria-label={expanded ? 'Collapse' : 'Expand'}
-        >
-          <Icon name="chevron" size={14} style={{ transform: expanded ? 'rotate(90deg)' : 'none' }} />
-        </button>
-
-        <div className="grow" style={{ minWidth: 0 }}>
+    <Modal
+      title={
+        <div className="stack-sm" style={{ gap: 3 }}>
           <div className="row wrap" style={{ gap: 6 }}>
-            <span style={{ fontWeight: 600, fontSize: 13.5 }}>{keyResult.title}</span>
             <Badge tone={meta.tone} dot={meta.color}>{meta.label}</Badge>
             {keyResult.is_overridden && <Badge title="Set by hand, not calculated">manual</Badge>}
-            {keyResult.needs_target && (
-              <Badge tone="warning" title="Without a target the outcome cannot be scored">
-                needs a target
-              </Badge>
+          </div>
+          <h2 style={{ fontSize: 15.5, lineHeight: 1.35 }}>{keyResult.title}</h2>
+        </div>
+      }
+      size="lg"
+      onClose={onClose}
+      footer={
+        <>
+          {mayEdit && (
+            <button type="button" className="btn" onClick={() => setEditing(true)}>
+              <Icon name="edit" size={13} /> Edit
+            </button>
+          )}
+          <span className="grow" />
+          <button type="button" className="btn" onClick={onClose}>Close</button>
+          {mayUpdate && (
+            <button type="button" className="btn btn-primary" onClick={() => setUpdating(true)}>
+              Update progress
+            </button>
+          )}
+        </>
+      }
+    >
+      <div className="stack">
+        <div className="tabs" role="tablist">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === t.key}
+              className={`tab${tab === t.key ? ' active' : ''}`}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'progress' && (
+          <div className="stack">
+            <div className="kr-figures">
+              <div className="kr-figure-cell">
+                <div className="stat-label">Where it stands</div>
+                <div className="stat-value tnum" style={{ color: meta.color, fontSize: 22 }}>
+                  {keyResult.progress_percent === null ? '—' : `${keyResult.progress_percent}%`}
+                </div>
+                <div className="stat-note">{measurementSummary(keyResult)}</div>
+              </div>
+              <div className="kr-figure-cell">
+                <div className="stat-label">Time gone</div>
+                <div className="stat-value tnum" style={{ fontSize: 22 }}>
+                  {keyResult.time_elapsed_percent === null ? '—' : `${keyResult.time_elapsed_percent}%`}
+                </div>
+                <div className="stat-note">{reading.label}</div>
+              </div>
+              <div className="kr-figure-cell">
+                <div className="stat-label">Owner</div>
+                <div className="row" style={{ marginTop: 6 }}>
+                  <Avatar name={keyResult.owner_name || '?'} color={keyResult.owner_color} size={26} />
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>
+                    {keyResult.owner_name || 'Nobody yet'}
+                  </span>
+                </div>
+                <div className="stat-note" style={{ marginTop: 4 }}>
+                  {keyResult.last_check_in_at
+                    ? `Updated ${relativeTime(keyResult.last_check_in_at)}`
+                    : 'Never updated'}
+                </div>
+              </div>
+            </div>
+
+            {keyResult.description && <p className="small">{keyResult.description}</p>}
+
+            {reasons.length > 0 && (
+              <div className="stack-sm">
+                {reasons.map((reason) => (
+                  <div key={reason.kind} className="sig-row">
+                    <span className={`sig-dot sig-${reason.severity}`} />
+                    <span className="grow">
+                      <strong className="small">{reason.label}</strong>{' '}
+                      <span className="small muted">{reason.detail}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {keyResult.needs_target ? (
+              <div className="small muted">
+                No target is set, so the outcome itself cannot be scored — the percentage above is how
+                much of the linked work is finished.{' '}
+                {mayEdit && (
+                  <button type="button" className="btn-link" onClick={() => setEditing(true)}>
+                    Set a target
+                  </button>
+                )}
+              </div>
+            ) : (
+              keyResult.measurement_type !== 'TASK_ROLLUP' && keyResult.execution_progress !== null && (
+                <div className="small muted">
+                  Linked work is {keyResult.execution_progress}% finished, and the result itself is{' '}
+                  {keyResult.result_progress === null ? 'not measurable yet' : `${keyResult.result_progress}%`} —
+                  finishing the work is not the same as hitting the number.
+                </div>
+              )
+            )}
+
+            {keyResult.is_overridden && (
+              <div className="small">
+                Shown as <strong>{meta.label}</strong> by hand — the numbers say{' '}
+                {health(keyResult.auto_health).label}.
+                {keyResult.health_override_reason && ` “${keyResult.health_override_reason}”`}
+              </div>
             )}
           </div>
-          <div className="small muted">
-            {measurementSummary(keyResult)}
-            {keyResult.owner_name && ` · ${keyResult.owner_name}`}
-            {keyResult.last_check_in_at
-              ? ` · checked ${relativeTime(keyResult.last_check_in_at)}`
-              : ' · never checked in'}
-          </div>
-        </div>
-
-        <div className="kr-figure">
-          <div className="kr-percent tnum">{progress === null ? '—' : `${progress}%`}</div>
-          <span className="progress-track" style={{ width: 92 }}>
-            <span
-              className="progress-fill"
-              style={{ width: `${progress ?? 0}%`, background: meta.color }}
-            />
-          </span>
-          {fromWork && <span className="small muted" style={{ fontSize: 10.5 }}>of the work</span>}
-        </div>
-
-        {mayCheckIn && (
-          <button type="button" className="btn btn-sm" onClick={() => setCheckingIn(true)}>
-            Check in
-          </button>
         )}
-      </div>
 
-      {expanded && (
-        <div className="kr-body">
-          {keyResult.description && <p className="small">{keyResult.description}</p>}
-
-          {keyResult.needs_target ? (
-            <div className="small muted">
-              No target is set, so the outcome itself cannot be scored — the percentage above is how
-              much of the linked work is finished.{' '}
-              {mayEdit && (
-                <button type="button" className="btn-link" onClick={() => setEditing(true)}>
-                  Set a target
-                </button>
-              )}
-            </div>
-          ) : (
-            keyResult.measurement_type !== 'TASK_ROLLUP' && keyResult.execution_progress !== null && (
-              <div className="small muted">
-                Linked work is {keyResult.execution_progress}% finished, and the result itself is{' '}
-                {keyResult.result_progress === null ? 'not measurable yet' : `${keyResult.result_progress}%`} —
-                finishing the work is not the same as hitting the number.
-              </div>
-            )
-          )}
-
-          <div className="row-between wrap">
-            <span className="small" style={{ fontWeight: 650 }}>
-              Linked tasks {tasks.length > 0 && <span className="muted">({tasks.length})</span>}
-            </span>
-            <div className="row wrap">
-              {mayEdit && (
-                <button type="button" className="btn btn-sm" onClick={() => setEditing(true)}>
-                  <Icon name="edit" size={13} /> Edit
-                </button>
-              )}
-              {can('task.create') && can('okr.link.task') && (
-                <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreatingTask(true)}>
-                  <Icon name="plus" size={13} /> New task
-                </button>
-              )}
-              {can('okr.link.task') && (
-                <button type="button" className="btn btn-sm" onClick={() => setLinking(true)}>
-                  <Icon name="link" size={13} /> Link existing
-                </button>
-              )}
-            </div>
-          </div>
-
-          {tasks.length === 0 ? (
-            <div className="small muted">
-              No tasks linked yet. Linking the work makes it obvious which cards are moving this number.
-            </div>
-          ) : (
-            <div className="stack-sm">
-              {tasks.map((task) => (
-                <div key={task.id} className="link-row">
-                  <span className="task-ref">{task.ref}</span>
-                  <button
-                    type="button"
-                    className="grow truncate btn-link"
-                    onClick={() => onOpenTask?.(task.id)}
-                  >
-                    {task.title}
+        {tab === 'work' && (
+          <div className="stack">
+            <div className="row-between wrap">
+              <span className="small muted">
+                The tasks that move this number. Linking does not change the task itself.
+              </span>
+              <div className="row wrap">
+                {can('task.create') && can('okr.link.task') && (
+                  <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreatingTask(true)}>
+                    <Icon name="plus" size={13} /> New task
                   </button>
-                  {task.assignee_name && (
-                    <Avatar name={task.assignee_name} color={task.assignee_color} size={20} />
-                  )}
-                  <Badge tone={task.stage === 'done' ? 'good' : 'neutral'}>
-                    {STAGE_LABEL[task.stage] || task.status_name}
-                  </Badge>
-                  {can('okr.link.task') && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-icon btn-sm"
-                      aria-label={`Unlink ${task.ref}`}
-                      onClick={async () => {
-                        try {
-                          await api.unlinkTask(keyResult.id, task.id);
-                          loadDetail();
-                          onChanged?.();
-                        } catch (err) {
-                          toast.error(err);
-                        }
-                      }}
-                    >
-                      <Icon name="close" size={13} />
-                    </button>
-                  )}
-                </div>
-              ))}
+                )}
+                {can('okr.link.task') && (
+                  <button type="button" className="btn btn-sm" onClick={() => setLinking(true)}>
+                    <Icon name="link" size={13} /> Link existing
+                  </button>
+                )}
+              </div>
             </div>
-          )}
 
-          <hr className="divider" />
+            {tasks.length === 0 ? (
+              <EmptyState title="No tasks linked yet">
+                Linking the work makes it obvious which cards are moving this number.
+              </EmptyState>
+            ) : (
+              <div className="stack-sm">
+                {tasks.map((task) => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    onOpenTask={onOpenTask}
+                    onUnlink={
+                      can('okr.link.task')
+                        ? async (t) => {
+                          try {
+                            await api.unlinkTask(keyResult.id, t.id);
+                            onChanged?.();
+                          } catch (err) {
+                            toast.error(err);
+                          }
+                        }
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
-          <span className="small" style={{ fontWeight: 650 }}>Check-in history</span>
-          {!detail ? (
-            <Spinner label="Loading" />
-          ) : detail.check_ins.length === 0 ? (
-            <div className="small muted">Nothing recorded yet.</div>
+        {tab === 'updates' && (
+          checkIns === null ? (
+            <Spinner label="Loading updates" />
+          ) : checkIns.length === 0 ? (
+            <EmptyState title="Nothing recorded yet">
+              Every update leaves a line here, so the shape of the progress survives.
+            </EmptyState>
           ) : (
             <div className="stack-sm">
-              {detail.check_ins.map((entry) => (
+              {checkIns.map((entry) => (
                 <div key={entry.id} className="check-in">
                   <div className="row-between wrap">
                     <div className="row">
                       <Avatar name={entry.user_name || 'Someone'} color={entry.avatar_color} size={20} />
                       <span className="small" style={{ fontWeight: 600 }}>{entry.user_name || 'Someone'}</span>
                       {/* a task roll-up has no value of its own to move, so the
-                          note is the whole check-in */}
+                          note is the whole update */}
                       {keyResult.measurement_type === 'TASK_ROLLUP' ? (
                         <span className="small muted">
-                          {entry.resulting_progress === null ? '' : `${Math.round(entry.resulting_progress)}% of the work done`}
+                          {entry.resulting_progress === null
+                            ? ''
+                            : `${Math.round(entry.resulting_progress)}% of the work done`}
                         </span>
                       ) : (
                         <span className="small muted tnum">
@@ -425,44 +506,38 @@ export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTa
                     </div>
                   </div>
                   {entry.note && <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{entry.note}</div>}
-                  {entry.next_action && (
-                    <div className="small muted">Next: {entry.next_action}</div>
-                  )}
+                  {entry.next_action && <div className="small muted">Next: {entry.next_action}</div>}
                 </div>
               ))}
             </div>
-          )}
-        </div>
-      )}
+          )
+        )}
+      </div>
 
-      {checkingIn && (
-        <CheckInDialog
+      {updating && (
+        <UpdateProgressDialog
           keyResult={keyResult}
-          onClose={() => setCheckingIn(false)}
+          onClose={() => setUpdating(false)}
           onSaved={() => {
             onChanged?.();
-            if (expanded) loadDetail();
+            setCheckIns(null);
+            if (tab === 'updates') loadHistory();
           }}
         />
       )}
       {linking && (
         <LinkTaskDialog
           keyResult={keyResult}
+          linkedIds={tasks.map((t) => t.id)}
           onClose={() => setLinking(false)}
-          onSaved={() => {
-            onChanged?.();
-            if (expanded) loadDetail();
-          }}
+          onSaved={() => onChanged?.()}
         />
       )}
       {editing && (
         <KeyResultEditDialog
           keyResult={keyResult}
           onClose={() => setEditing(false)}
-          onSaved={() => {
-            onChanged?.();
-            if (expanded) loadDetail();
-          }}
+          onSaved={() => onChanged?.()}
         />
       )}
       {creatingTask && (
@@ -475,12 +550,125 @@ export default function KeyResultPanel({ keyResult, canEdit, onChanged, onOpenTa
             department_id: keyResult.department_id || undefined,
           }}
           onClose={() => setCreatingTask(false)}
-          onSaved={() => {
-            onChanged?.();
-            if (expanded) loadDetail();
-          }}
+          onSaved={() => onChanged?.()}
         />
       )}
-    </div>
+    </Modal>
+  );
+}
+
+/**
+ * The SCAN level: one key result, readable without opening anything.
+ *
+ * Everything here comes from data the goal page already loaded, so a page of
+ * ten key results makes no extra requests — the old accordion fetched twice per
+ * key result the moment it was expanded.
+ */
+export default function KeyResultPanel({ keyResult, tasks = [], canEdit, onChanged, onOpenTask }) {
+  const { user, can } = useAuth();
+
+  const [updating, setUpdating] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const mine = keyResult.owner_user_id === user.id;
+  const mayUpdate = can('okr.checkin') && (canEdit || mine);
+  const meta = health(keyResult.health);
+  const progress = keyResult.progress_percent;
+  const reading = pace(progress, keyResult.time_elapsed_percent);
+  const reasons = krAttention(keyResult);
+  const severity = reasons.length ? worstSeverity(reasons) : null;
+  // the headline number is the work's, not the outcome's — say so rather than
+  // letting it pass as a measured result
+  const fromWork = keyResult.progress_source === 'execution' && keyResult.measurement_type !== 'TASK_ROLLUP';
+  const openTasks = tasks.filter((t) => t.stage !== 'done' && t.stage !== 'cancelled').length;
+
+  return (
+    <>
+      <div className={`kr${severity ? ` kr-${severity}` : ''}`}>
+        <span className="kr-rail" style={{ background: meta.color }} aria-hidden="true" />
+
+        <div className="kr-main">
+          <button type="button" className="kr-title" onClick={() => setOpen(true)}>
+            {keyResult.title}
+          </button>
+
+          <div className="kr-meta">
+            <span className="kr-measure tnum">{measurementSummary(keyResult)}</span>
+            {keyResult.owner_name && (
+              <span className="row" style={{ gap: 5 }}>
+                <Avatar name={keyResult.owner_name} color={keyResult.owner_color} size={18} />
+                <span>{mine ? 'You' : keyResult.owner_name}</span>
+              </span>
+            )}
+            {tasks.length > 0 && (
+              <span>{tasks.length} task{tasks.length === 1 ? '' : 's'}{openTasks > 0 && `, ${openTasks} open`}</span>
+            )}
+            <span>
+              {keyResult.last_check_in_at
+                ? `updated ${relativeTime(keyResult.last_check_in_at)}`
+                : 'never updated'}
+            </span>
+          </div>
+
+          {reasons.length > 0 && (
+            <div className="kr-flags">
+              {reasons.map((reason) => (
+                <span key={reason.kind} className={`kr-flag kr-flag-${reason.severity}`} title={reason.detail}>
+                  {reason.label}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="kr-score">
+          <div className="kr-percent tnum" style={{ color: meta.color }}>
+            {progress === null ? '—' : `${progress}%`}
+          </div>
+          <span className="progress-track">
+            <span className="progress-fill" style={{ width: `${progress ?? 0}%`, background: meta.color }} />
+            {keyResult.time_elapsed_percent !== null && (
+              <span
+                className="progress-pace"
+                style={{ left: `${keyResult.time_elapsed_percent}%` }}
+                title="Where the calendar says it should be"
+              />
+            )}
+          </span>
+          <div className="kr-score-note">
+            {fromWork ? 'of the work' : reading.verdict === 'unknown' ? meta.label : reading.label}
+          </div>
+        </div>
+
+        <div className="kr-actions">
+          {mayUpdate && (
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => setUpdating(true)}>
+              Update progress
+            </button>
+          )}
+          <button type="button" className="btn btn-sm" onClick={() => setOpen(true)}>
+            Details
+          </button>
+        </div>
+      </div>
+
+      {updating && (
+        <UpdateProgressDialog
+          keyResult={keyResult}
+          onClose={() => setUpdating(false)}
+          onSaved={() => onChanged?.()}
+        />
+      )}
+      {open && (
+        <KeyResultDrawer
+          keyResult={keyResult}
+          tasks={tasks}
+          canEdit={canEdit}
+          onClose={() => setOpen(false)}
+          onChanged={onChanged}
+          onOpenTask={onOpenTask}
+        />
+      )}
+    </>
   );
 }

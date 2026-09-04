@@ -867,6 +867,108 @@ test('the tasks table itself is untouched by the module', async (t) => {
   assert.deepEqual(rows, [], 'tasks gained no OKR columns');
 });
 
+// ------------------------------------------------------- the detail payload
+
+test('the goal detail carries all of its linked work in one payload', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const detail = await call('GET', `/objectives/${ids.departmentObjective}`, { token: tokens.manager });
+  assert.equal(detail.status, 200);
+  assert.ok(Array.isArray(detail.body.tasks), 'the goal ships its linked tasks');
+  assert.ok(detail.body.tasks.length > 0);
+
+  // every task says which key result it belongs to, so the page can group them
+  // without asking the server once per key result
+  const keyResultIds = new Set(detail.body.key_results.map((k) => k.id));
+  assert.ok(detail.body.tasks.every((task) => keyResultIds.has(task.key_result_id)));
+
+  // and it carries what a row needs to be read: the reference, who holds it,
+  // where it is, and whether it is late
+  for (const task of detail.body.tasks) {
+    assert.ok(task.ref && task.title && task.stage);
+    assert.equal(typeof task.is_overdue, 'boolean');
+  }
+
+  // a task appears once even when it is linked to two key results of the same
+  // goal, which is what DISTINCT ON is there for
+  assert.equal(new Set(detail.body.tasks.map((task) => task.id)).size, detail.body.tasks.length);
+
+  // the counts the key results report and the tasks actually shipped agree
+  const perKeyResult = new Map();
+  for (const task of detail.body.tasks) {
+    perKeyResult.set(task.key_result_id, (perKeyResult.get(task.key_result_id) || 0) + 1);
+  }
+  const rollup = detail.body.key_results.find((k) => k.id === ids.rollupKeyResult);
+  assert.equal(perKeyResult.get(rollup.id) ?? 0, rollup.linked_task_count);
+});
+
+test('the goal detail never widens what someone is allowed to see', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // a task in a department the member is not in, and which they hold no part of
+  const hidden = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      due_date: dateOnly(6),
+      title: 'Agronomy trial the growth team cannot see',
+      department_id: ids.agronomy,
+      assignee_id: ids.admin,
+      status_id: ids.todo,
+    },
+  });
+  assert.equal(hidden.status, 201);
+
+  const linked = await call('POST', `/key-results/${ids.rollupKeyResult}/tasks`, {
+    token: tokens.admin,
+    body: { task_id: hidden.body.task.id },
+  });
+  assert.equal(linked.status, 201);
+
+  const asAdmin = await call('GET', `/objectives/${ids.departmentObjective}`, { token: tokens.admin });
+  assert.ok(
+    asAdmin.body.tasks.some((task) => task.id === hidden.body.task.id),
+    'an admin sees every task on the goal',
+  );
+
+  // the member can still read the goal, and the key result still counts the work
+  const asMember = await call('GET', `/objectives/${ids.departmentObjective}`, { token: tokens.member });
+  assert.equal(asMember.status, 200);
+  assert.ok(
+    !asMember.body.tasks.some((task) => task.id === hidden.body.task.id),
+    'linking a task to a goal does not make it readable to people who could not see it',
+  );
+
+  // the task list itself agrees, so the goal page is not a second, looser door
+  const list = await call('GET', '/tasks', { token: tokens.member });
+  assert.ok(!list.body.tasks.some((task) => task.id === hidden.body.task.id));
+});
+
+test('the goal history includes what happened to its key results', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const before = await call('GET', `/objectives/${ids.departmentObjective}`, { token: tokens.manager });
+  const countBefore = before.body.activity.length;
+
+  await call('POST', `/key-results/${ids.rollupKeyResult}/check-ins`, {
+    token: tokens.manager,
+    body: { current_value: 0, confidence: 'MEDIUM', note: 'Media booking is the hold-up' },
+  });
+
+  const after = await call('GET', `/objectives/${ids.departmentObjective}`, { token: tokens.manager });
+  assert.ok(after.body.activity.length > countBefore, 'the update shows on the goal, not only on the key result');
+
+  const entry = after.body.activity.find(
+    (row) => row.entity_type === 'KEY_RESULT' && row.entity_id === ids.rollupKeyResult && row.action === 'checked_in',
+  );
+  assert.ok(entry, 'a key result check-in reaches the goal history');
+  // named, so the feed can say what the update was about
+  assert.equal(entry.key_result_title, 'Ship the campaign');
+  assert.ok(entry.actor_name);
+
+  // the goal's own events are still there — this widened the feed, it did not replace it
+  assert.ok(after.body.activity.some((row) => row.entity_type === 'OBJECTIVE'));
+});
+
 // ---------------------------------------------------------------- lifecycle
 
 test('the goals dashboard summarises health, departments and owners', async (t) => {

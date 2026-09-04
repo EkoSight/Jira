@@ -43,22 +43,41 @@ export function EmptyState({ title, children, action }) {
   );
 }
 
+/**
+ * How many modals are currently holding the page still.
+ *
+ * Counted rather than set and cleared, because a dialog opened from inside
+ * another one (updating a key result from its detail drawer) would otherwise
+ * release the lock on the way out and leave the page scrolling behind the
+ * dialog still on screen.
+ */
+let openModals = 0;
+
 export function Modal({ title, onClose, children, footer, size }) {
   useEffect(() => {
+    openModals += 1;
+    // where this one sits in the stack, so Escape closes the dialog on top
+    // rather than every dialog at once
+    const depth = openModals;
+
     const onKey = (event) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape' && depth === openModals) onClose();
     };
     document.addEventListener('keydown', onKey);
     document.body.style.overflow = 'hidden';
+
     return () => {
       document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = '';
+      openModals -= 1;
+      if (openModals === 0) document.body.style.overflow = '';
     };
   }, [onClose]);
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${size === 'lg' ? 'modal-lg' : ''}`} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined}>
+      {/* "sheet" only differs on a narrow screen, where it rises from the bottom
+          and sizes to its content instead of taking the whole display */}
+      <div className={`modal ${size ? `modal-${size}` : ''}`} role="dialog" aria-modal="true" aria-label={typeof title === 'string' ? title : undefined}>
         <div className="modal-head">
           <div className="grow truncate">{typeof title === 'string' ? <h2>{title}</h2> : title}</div>
           <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close">

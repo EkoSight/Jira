@@ -20,6 +20,7 @@ import {
 } from '../services/okr.js';
 import { analyse } from '../services/okrInsights.js';
 import { runOkrScan } from '../jobs/okrScanner.js';
+import { visibilityClause } from './tasks.js';
 
 const router = Router();
 
@@ -165,19 +166,56 @@ router.get(
     const objective = await getObjective(Number(req.params.id));
     if (!objective) throw notFound('Objective not found');
 
-    const [keyResults, children, activity] = await Promise.all([
+    // the goal's work, in one query rather than one per key result. Same
+    // visibility rule as the task list, so this can never widen what someone sees.
+    const taskParams = [objective.id];
+    const taskVisibility = visibilityClause(req.currentUser, taskParams);
+
+    const [keyResults, children, activity, tasks] = await Promise.all([
       listKeyResults(objective.id, objective),
       query(
         `SELECT id, title, status, scope_type, department_id FROM objectives
           WHERE parent_objective_id = $1 AND is_archived = FALSE ORDER BY id`,
         [objective.id],
       ),
+      // the whole goal's story: its own events and those of its key results,
+      // which is where check-ins are recorded
       query(
-        `SELECT a.*, u.full_name AS actor_name
-           FROM okr_activity a LEFT JOIN users u ON u.id = a.actor_id
-          WHERE a.entity_type = 'OBJECTIVE' AND a.entity_id = $1
-          ORDER BY a.created_at DESC LIMIT 50`,
+        `SELECT a.*, u.full_name AS actor_name, u.avatar_color AS actor_color,
+                kr.title AS key_result_title,
+                -- so the feed can render "4,400 of 6,000 farmers" rather than
+                -- the bare numbers the activity row stores
+                kr.measurement_type AS key_result_measurement_type,
+                kr.unit AS key_result_unit
+           FROM okr_activity a
+           LEFT JOIN users u ON u.id = a.actor_id
+           LEFT JOIN key_results kr
+                  ON kr.id = a.entity_id AND a.entity_type = 'KEY_RESULT'
+          WHERE (a.entity_type = 'OBJECTIVE' AND a.entity_id = $1)
+             OR (a.entity_type = 'KEY_RESULT'
+                 AND a.entity_id IN (SELECT id FROM key_results WHERE objective_id = $1))
+          ORDER BY a.created_at DESC LIMIT 60`,
         [objective.id],
+      ),
+      query(
+        `SELECT DISTINCT ON (t.id)
+                t.id, t.ref, t.title, t.progress, t.due_date, t.priority,
+                t.assignee_id, t.account_id,
+                l.key_result_id,
+                s.name AS status_name, s.stage, s.color AS status_color,
+                d.name AS department_name, d.color AS department_color,
+                u.full_name AS assignee_name, u.avatar_color AS assignee_color,
+                (t.due_date IS NOT NULL AND t.due_date < now()
+                 AND s.stage NOT IN ('done','cancelled')) AS is_overdue
+           FROM key_results k
+           JOIN task_key_result_links l ON l.key_result_id = k.id
+           JOIN tasks t ON t.id = l.task_id AND t.is_archived = FALSE
+           JOIN workflow_statuses s ON s.id = t.status_id
+           JOIN departments d ON d.id = t.department_id
+           LEFT JOIN users u ON u.id = t.assignee_id
+          WHERE k.objective_id = $1 AND k.is_archived = FALSE AND ${taskVisibility}
+          ORDER BY t.id, l.is_primary DESC`,
+        taskParams,
       ),
     ]);
 
@@ -186,6 +224,7 @@ router.get(
       key_results: keyResults,
       children: children.rows,
       activity: activity.rows,
+      tasks: tasks.rows,
       can_edit: canManageObjective(req.currentUser, objective),
     });
   }),

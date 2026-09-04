@@ -17,7 +17,9 @@
     "migrate": "npm --workspace server run migrate",
     "seed": "npm --workspace server run seed",
     "doctor": "npm --workspace server run doctor",
-    "test": "npm --workspace server run test"
+    "test": "npm --workspace server run test && npm --workspace client run test",
+    "test:server": "npm --workspace server run test",
+    "test:client": "npm --workspace client run test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
