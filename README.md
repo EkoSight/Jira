@@ -261,10 +261,24 @@ npm run seed
 npm test
 ```
 
-The suite covers permissions, password hashing, the task lifecycle, WIP limits,
-black mark rules (idempotency, grace periods, priority scoping), waiving, the
-monthly review, and the dashboard. It runs in its own `taskflow_test` schema and
-skips cleanly if no database is reachable.
+That runs both suites. To run one on its own:
+
+```bash
+npm run test:server
+npm run test:client
+```
+
+The **server** suite covers permissions, password hashing, the task lifecycle,
+WIP limits, deadline rules, black mark rules (idempotency, grace periods,
+priority scoping), waiving, the monthly review, the dashboard, goals and key
+results, and the CRM. It also checks that every migration is additive and that
+running them all on a populated database leaves every row intact. It runs in its
+own `taskflow_test` schema and **skips cleanly if no database is reachable** — so
+if you see a pile of skipped tests, Postgres is not running.
+
+The **client** suite covers the pure derivation helpers behind the Goal screens:
+pace, the plain-language verdict, the attention heuristics, filter counts, and
+measurement formatting. It needs no database and no browser.
 
 ---
 
