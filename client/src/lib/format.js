@@ -128,6 +128,16 @@ export const monthLabel = (key) => {
   });
 };
 
+const THREAD_KIND_PHRASE = {
+  review: 'asked for changes',
+  question: 'asked a question',
+  help_needed: 'said they need help',
+  feedback: 'asked for feedback',
+  progress: 'posted an update',
+  challenge: 'flagged a challenge',
+  discussion: 'started a discussion',
+};
+
 export const describeActivity = (item) => {
   const field = item.field ? item.field.replace(/_/g, ' ').replace(' id', '') : '';
   switch (item.action) {
@@ -135,6 +145,9 @@ export const describeActivity = (item) => {
     case 'completed': return 'marked it done';
     case 'reopened': return 'reopened it';
     case 'commented': return 'left a comment';
+    // the field carries which kind of thread it was
+    case 'thread_opened': return THREAD_KIND_PHRASE[item.field] || 'started a discussion';
+    case 'thread_resolved': return 'closed a thread with a conclusion';
     case 'archived': return 'archived it';
     case 'moved': return `moved it to ${item.meta?.to_status || 'another column'}`;
     case 'updated': return `changed ${field}`;

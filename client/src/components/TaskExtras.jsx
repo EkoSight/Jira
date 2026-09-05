@@ -507,6 +507,18 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
   const toast = useToast();
   const [title, setTitle] = useState('');
   const [busy, setBusy] = useState(false);
+  const repeating = task.recurrence && task.recurrence !== 'none';
+  // on a repeating task, a new step is assumed to be part of the routine
+  const [repeats, setRepeats] = useState(Boolean(repeating));
+
+  const setRoutine = async (subtask, value) => {
+    try {
+      await api.updateTask(subtask.id, { repeats_with_parent: value });
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
 
   const add = async () => {
     if (!title.trim()) return;
@@ -521,6 +533,9 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
         assignee_id: task.assignee_id,
         priority: task.priority,
         due_date: task.due_date,
+        // a step added to a routine is part of that routine by default; a
+        // one-off can be unticked below, and then it will not come back
+        repeats_with_parent: repeats,
       });
       setTitle('');
       onChanged();
@@ -590,6 +605,21 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
           {subtask.due_date && <Badge tone={dueLabel(subtask.due_date, { done: subtask.stage === 'done' }).tone}>
             {dueLabel(subtask.due_date, { done: subtask.stage === 'done' }).text}
           </Badge>}
+          {repeating && (
+            <button
+              type="button"
+              className={`routine-flag${subtask.repeats_with_parent ? ' is-on' : ''}`}
+              disabled={!canEdit}
+              title={
+                subtask.repeats_with_parent
+                  ? 'Part of the routine — comes back with each occurrence'
+                  : 'One-off — will not come back next cycle'
+              }
+              onClick={() => setRoutine(subtask, !subtask.repeats_with_parent)}
+            >
+              {subtask.repeats_with_parent ? 'repeats' : 'one-off'}
+            </button>
+          )}
           {subtask.assignee_name && <Avatar name={subtask.assignee_name} color={subtask.assignee_color} size={20} />}
         </div>
       ))}
@@ -613,6 +643,16 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
             Add
           </button>
         </div>
+      )}
+
+      {canEdit && task.due_date && repeating && (
+        <label className="checklist-item small" style={{ padding: 0 }}>
+          <input type="checkbox" checked={repeats} onChange={(e) => setRepeats(e.target.checked)} />
+          <span>
+            Part of the routine — recreate it each time this task repeats.
+            Untick for something that only needs doing once.
+          </span>
+        </label>
       )}
     </div>
   );

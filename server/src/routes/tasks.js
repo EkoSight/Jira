@@ -18,6 +18,9 @@ import { spawnNextOccurrenceAfterCompletion } from '../services/recurrence.js';
 import { nextTaskRef } from '../lib/taskRef.js';
 import { assertUsableDeadline } from '../lib/deadline.js';
 import { getSettings } from '../services/settings.js';
+import {
+  addMessage, canRaiseReview, createThread, listMessages, listThreads,
+} from '../services/threads.js';
 
 const router = Router();
 
@@ -32,7 +35,18 @@ const TASK_SELECT = `
          p.ref AS parent_ref, p.title AS parent_title,
          acc.name AS account_name, acc.type AS account_type,
          (t.due_date IS NOT NULL AND t.due_date < now() AND s.stage NOT IN ('done','cancelled')) AS is_overdue,
-         (SELECT COUNT(*)::int FROM task_comments tc WHERE tc.task_id = t.id) AS comment_count,
+         -- comments live in discussion threads now; counting the old table here
+         -- would freeze every card's badge at its pre-upgrade number
+         (SELECT COUNT(*)::int
+            FROM discussion_messages dm
+            JOIN discussion_threads dt ON dt.id = dm.thread_id
+           WHERE dt.entity_type = 'TASK' AND dt.entity_id = t.id) AS comment_count,
+         (SELECT COUNT(*)::int FROM discussion_threads dt
+           WHERE dt.entity_type = 'TASK' AND dt.entity_id = t.id
+             AND dt.status = 'open' AND dt.kind = 'review') AS open_reviews,
+         (SELECT COUNT(*)::int FROM discussion_threads dt
+           WHERE dt.entity_type = 'TASK' AND dt.entity_id = t.id
+             AND dt.status = 'open' AND dt.kind = 'help_needed') AS open_help,
          (SELECT COUNT(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id) AS checklist_total,
          (SELECT COUNT(*)::int FROM task_checklist_items ci WHERE ci.task_id = t.id AND ci.is_done) AS checklist_done,
          (SELECT COUNT(*)::int FROM task_attachments ta WHERE ta.task_id = t.id) AS attachment_count,
@@ -124,6 +138,8 @@ const taskInput = z.object({
   tags: z.array(z.string().max(40)).optional(),
   blocked_reason: z.string().max(500).nullable().optional(),
   recurrence: z.enum(['none', 'daily', 'weekdays', 'weekly', 'monthly']).optional(),
+  // for a subtask: whether it comes back with each occurrence of its parent
+  repeats_with_parent: z.boolean().optional(),
   completion_note: z.string().max(5000).nullable().optional(),
   // the lead or partner this task is helping — NULL for an ordinary task
   account_id: z.number().int().positive().nullable().optional(),
@@ -221,10 +237,19 @@ router.get(
     if (!task) throw notFound('Task not found');
 
     const [comments, activity, checklist, attachments, collaborators, subtasks, keyResults] = await Promise.all([
+      // comments come from the thread store now. The old flat rows were copied
+      // there by migration 010 and are still in task_comments untouched, so this
+      // returns the same history it always did — in the same shape, so nothing
+      // reading `comments` had to change.
       query(
-        `SELECT c.*, u.full_name AS author_name, u.avatar_color
-           FROM task_comments c LEFT JOIN users u ON u.id = c.author_id
-          WHERE c.task_id = $1 ORDER BY c.created_at ASC`,
+        `SELECT m.id, m.author_id, m.body, m.created_at, m.updated_at,
+                t.entity_id AS task_id, t.id AS thread_id, t.kind AS thread_kind,
+                u.full_name AS author_name, u.avatar_color
+           FROM discussion_messages m
+           JOIN discussion_threads t ON t.id = m.thread_id
+           LEFT JOIN users u ON u.id = m.author_id
+          WHERE t.entity_type = 'TASK' AND t.entity_id = $1
+          ORDER BY m.created_at ASC`,
         [task.id],
       ),
       query(
@@ -251,6 +276,9 @@ router.get(
       ),
       query(
         `SELECT t.id, t.ref, t.title, t.progress, t.due_date, t.priority, t.assignee_id,
+                -- without this the list cannot tell a step of the routine from
+                -- something that only needed doing once
+                t.repeats_with_parent,
                 s.name AS status_name, s.stage, s.color AS status_color,
                 u.full_name AS assignee_name, u.avatar_color AS assignee_color
            FROM tasks t
@@ -276,9 +304,16 @@ router.get(
       ),
     ]);
 
+    const threads = await listThreads('TASK', task.id);
+    const withMessages = await Promise.all(
+      threads.map(async (thread) => ({ ...thread, messages: await listMessages(thread.id) })),
+    );
+
     res.json({
       task,
       comments: comments.rows,
+      threads: withMessages,
+      can_raise_review: canRaiseReview(req.currentUser),
       activity: activity.rows,
       checklist: checklist.rows,
       attachments: attachments.rows,
@@ -309,9 +344,12 @@ router.post(
     // and a deadline it is expected by. Enforced on the API rather than the column
     // so the tasks that predate this rule keep working.
     const settings = await getSettings();
-    assertUsableDeadline(data.due_date, {
+    // a daily or working-day task has one obvious deadline, so a missing one is
+    // filled in rather than refused; every other cadence still has to be stated
+    const dueDate = assertUsableDeadline(data.due_date, {
       recurrence: data.recurrence,
       maxHorizonDays: settings.deadlines?.maxHorizonDays,
+      defaultHour: settings.deadlines?.recurringDueHour,
     });
 
     if (!hasPermission(req.currentUser, 'task.assign') && data.assignee_id !== req.currentUser.id) {
@@ -346,11 +384,12 @@ router.post(
         `INSERT INTO tasks
            (ref, title, description, department_id, status_id, priority, task_type, assignee_id,
             follower_id, parent_task_id, reporter_id, created_by, start_date, due_date,
-            original_due_date, estimate_hours, progress, tags, position, completed_at, recurrence)
+            original_due_date, estimate_hours, progress, tags, position, completed_at, recurrence,
+            repeats_with_parent)
          VALUES ($1,$2,$3,$4,$5,COALESCE($6,'medium'),COALESCE($7,'task'),$8,$9,$10,$11,$12,$13,$14,$14,$15,
                  COALESCE($16::int,$18::int),COALESCE($17::text[],'{}'::text[]),
                  (SELECT COALESCE(MAX(position), 0) + 100 FROM tasks WHERE status_id = $5),
-                 $19, COALESCE($20,'none'))
+                 $19, COALESCE($20,'none'), COALESCE($21, FALSE))
          RETURNING *`,
         [
           ref,
@@ -366,13 +405,15 @@ router.post(
           data.reporter_id ?? req.currentUser.id,
           req.currentUser.id,
           data.start_date || null,
-          data.due_date || null,
+          // the resolved deadline, which for a daily task may have been filled in
+          dueDate,
           data.estimate_hours ?? null,
           data.progress ?? null,
           data.tags ?? null,
           bornDone ? 100 : 0,
           bornDone ? new Date() : null,
           data.recurrence ?? null,
+          data.repeats_with_parent ?? null,
         ],
       );
 
@@ -424,6 +465,10 @@ const TRACKED_FIELDS = [
   'title', 'description', 'department_id', 'status_id', 'priority', 'task_type',
   'assignee_id', 'follower_id', 'parent_task_id', 'reporter_id', 'start_date', 'due_date',
   'estimate_hours', 'spent_hours', 'progress', 'tags', 'blocked_reason', 'account_id',
+  // recurrence was validated on update but never written, so the "Repeats"
+  // dropdown did nothing on a card that already existed — you could only set a
+  // cadence at creation, and only by starting the task again
+  'recurrence', 'repeats_with_parent',
 ];
 
 router.patch(
@@ -779,10 +824,38 @@ router.post(
     const { rows: taskRows } = await query('SELECT id, ref, title, assignee_id FROM tasks WHERE id = $1', [taskId]);
     if (!taskRows[0]) throw notFound('Task not found');
 
-    const { rows } = await query(
-      `INSERT INTO task_comments (task_id, author_id, body) VALUES ($1, $2, $3) RETURNING *`,
-      [taskId, req.currentUser.id, body],
-    );
+    // one comment store, not two: this writes into the task's general discussion
+    // thread, creating it the first time. The endpoint and its response are
+    // unchanged, so anything already calling it keeps working.
+    const rows = await withTransaction(async (client) => {
+      const { rows: existing } = await client.query(
+        `SELECT id FROM discussion_threads
+          WHERE entity_type = 'TASK' AND entity_id = $1 AND kind = 'discussion'
+          ORDER BY id LIMIT 1`,
+        [taskId],
+      );
+
+      let threadId = existing[0]?.id;
+      if (!threadId) {
+        const created = await createThread(client, {
+          entityType: 'TASK',
+          entityId: taskId,
+          kind: 'discussion',
+          title: 'Discussion',
+          body,
+          actor: req.currentUser,
+        });
+        const { rows: first } = await client.query(
+          'SELECT * FROM discussion_messages WHERE thread_id = $1 ORDER BY id LIMIT 1',
+          [created.id],
+        );
+        return first;
+      }
+
+      const message = await addMessage(client, { threadId, actor: req.currentUser, body });
+      return [message];
+    });
+
     await logActivity(null, { taskId, actorId: req.currentUser.id, action: 'commented' });
 
     if (taskRows[0].assignee_id && taskRows[0].assignee_id !== req.currentUser.id) {
@@ -804,12 +877,12 @@ router.post(
 router.delete(
   '/:taskId/comments/:commentId',
   asyncHandler(async (req, res) => {
-    const { rows } = await query('SELECT * FROM task_comments WHERE id = $1', [req.params.commentId]);
+    const { rows } = await query('SELECT * FROM discussion_messages WHERE id = $1', [req.params.commentId]);
     if (!rows[0]) throw notFound('Comment not found');
     if (rows[0].author_id !== req.currentUser.id && !hasPermission(req.currentUser, 'task.edit.any')) {
       throw forbidden('You can only delete your own comments');
     }
-    await query('DELETE FROM task_comments WHERE id = $1', [req.params.commentId]);
+    await query('DELETE FROM discussion_messages WHERE id = $1', [req.params.commentId]);
     res.json({ ok: true });
   }),
 );

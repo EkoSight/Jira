@@ -1269,6 +1269,168 @@ test('a recurring task spawns its next occurrence when completed', async (t) => 
   assert.ok(done2.body.next_occurrence, 'the series keeps going');
 });
 
+test('only the subtasks that are part of the routine come back next cycle', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const parent = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Open the depot',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      recurrence: 'daily',
+      due_date: daysFromNow(0),
+    },
+  });
+  const parentId = parent.body.task.id;
+
+  // two steps of the routine, and one thing that came up once
+  const routine = [];
+  for (const title of ['Check the cold store', 'Log the stock count']) {
+    const step = await call('POST', '/tasks', {
+      token: tokens.admin,
+      body: {
+        title,
+        department_id: ids.department,
+        assignee_id: ids.member,
+        parent_task_id: parentId,
+        repeats_with_parent: true,
+        due_date: daysFromNow(0),
+      },
+    });
+    assert.equal(step.status, 201);
+    assert.equal(step.body.task.repeats_with_parent, true);
+    routine.push(step.body.task.id);
+  }
+
+  const oneOff = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Chase the broken freezer, once',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      parent_task_id: parentId,
+      due_date: daysFromNow(0),
+    },
+  });
+  assert.equal(oneOff.body.task.repeats_with_parent, false, 'a subtask does not repeat unless asked');
+
+  const done = await call('POST', `/tasks/${parentId}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Depot opened and checked.' },
+  });
+  const nextId = done.body.next_occurrence.id;
+
+  // the flag has to reach the client, or the list cannot tell a routine step
+  // from a one-off and shows every subtask as one-off
+  const parentDetail = await call('GET', `/tasks/${parentId}`, { token: tokens.admin });
+  const flags = Object.fromEntries(
+    parentDetail.body.subtasks.map((s) => [s.title, s.repeats_with_parent]),
+  );
+  assert.equal(flags['Check the cold store'], true);
+  assert.equal(flags['Chase the broken freezer, once'], false);
+
+  const next = await call('GET', `/tasks/${nextId}`, { token: tokens.admin });
+  const titles = next.body.subtasks.map((s) => s.title).sort();
+  assert.deepEqual(titles, ['Check the cold store', 'Log the stock count']);
+  assert.ok(
+    !titles.includes('Chase the broken freezer, once'),
+    'something handled once does not come back every day for ever',
+  );
+
+  // the copies are fresh cards of their own, not the originals moved across
+  for (const subtask of next.body.subtasks) {
+    assert.ok(!routine.includes(subtask.id), 'a new card, so yesterday keeps its own record');
+    assert.equal(subtask.progress, 0);
+    assert.notEqual(subtask.stage, 'done');
+    assert.ok(subtask.ref.startsWith('TST-'));
+  }
+
+  // and yesterday's occurrence still owns the subtasks it finished with
+  const previous = await call('GET', `/tasks/${parentId}`, { token: tokens.admin });
+  assert.equal(previous.body.subtasks.length, 3, 'the completed cycle keeps its own history');
+});
+
+test('a task that repeats every day gets its deadline filled in', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const daily = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Send the morning advisory',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      recurrence: 'daily',
+      // no due_date at all
+    },
+  });
+  assert.equal(daily.status, 201, 'a daily task does not need a deadline typed out');
+  assert.ok(daily.body.task.due_date, 'one was filled in');
+  assert.ok(
+    new Date(daily.body.task.due_date).getTime() > Date.now(),
+    'and it is in the future, so the card is not born late',
+  );
+
+  // "every working day" too, and never on a Sunday
+  const weekdays = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Open the shop',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      recurrence: 'weekdays',
+    },
+  });
+  assert.equal(weekdays.status, 201);
+  assert.notEqual(new Date(weekdays.body.task.due_date).getDay(), 0, 'Sunday is not a working day here');
+
+  // every other cadence still has to say when: "monthly" has no obvious date
+  for (const recurrence of ['none', 'weekly', 'monthly']) {
+    const refused = await call('POST', '/tasks', {
+      token: tokens.admin,
+      body: {
+        title: `Needs a date (${recurrence})`,
+        department_id: ids.department,
+        assignee_id: ids.member,
+        recurrence,
+      },
+    });
+    assert.equal(refused.status, 400, `${recurrence} still needs a deadline`);
+    assert.match(refused.body.error, /deadline is required/);
+  }
+});
+
+test('a task can be turned into a repeating one after it was created', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // this used to be validated and then silently dropped: recurrence was missing
+  // from the updatable fields, so the "Repeats" dropdown did nothing
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'A routine we only spotted later',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(2),
+    },
+  });
+  assert.equal(created.body.task.recurrence, 'none');
+
+  const patched = await call('PATCH', `/tasks/${created.body.task.id}`, {
+    token: tokens.admin,
+    body: { recurrence: 'weekly' },
+  });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.body.task.recurrence, 'weekly', 'the change is actually saved');
+
+  // and it now behaves like one
+  const done = await call('POST', `/tasks/${created.body.task.id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'First one done.' },
+  });
+  assert.ok(done.body.next_occurrence, 'completing it starts the series');
+});
+
 test('simultaneous completions in one department do not collide on the task reference', async (t) => {
   if (skipIfUnavailable(t)) return;
 

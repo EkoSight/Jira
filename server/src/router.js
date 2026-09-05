@@ -15,6 +15,7 @@ import recognitionRoutes from './routes/recognition.js';
 import objectiveRoutes from './routes/objectives.js';
 import keyResultRoutes from './routes/keyResults.js';
 import accountRoutes from './routes/accounts.js';
+import threadRoutes from './routes/threads.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
 import { requirePermission } from './middleware/auth.js';
@@ -46,6 +47,11 @@ export function createTaskFlowRouter() {
   router.use('/notes', noteRoutes);
   router.use('/feature-requests', featureRequestRoutes);
   router.use('/recognition', recognitionRoutes);
+
+  // Discussion and review threads. One mount for tasks, key results and goals,
+  // because the conversation is the same shape wherever the work sits — and each
+  // request asks that entity's own access rule before it answers.
+  router.use('/threads', threadRoutes);
 
   // Goals / OKR. Mounted alongside the rest rather than woven through it, so the
   // routes above are byte-for-byte the ones that shipped before this module.

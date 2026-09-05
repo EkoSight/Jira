@@ -11,6 +11,8 @@ import {
   flushPendingAttachments,
 } from './TaskExtras.jsx';
 import CompleteTaskDialog from './CompleteTaskDialog.jsx';
+import DiscussionPanel from './DiscussionPanel.jsx';
+import { threadHeadline } from '../lib/threads.js';
 import {
   PRIORITIES,
   PRIORITY_LABEL,
@@ -335,9 +337,15 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(() => blankTask(defaults));
-  const [comment, setComment] = useState('');
   const [checklistDraft, setChecklistDraft] = useState('');
   const [tab, setTab] = useState('details');
+  // how many threads are still waiting on somebody, which is what the tab counts
+  const openThreads = (detail?.threads || []).filter((t) => t.status === 'open').length;
+  // the one thing worth saying at the top of the card: somebody is waiting
+  const headline = threadHeadline(detail?.threads || []);
+  // a routine that runs every day has one obvious deadline, so the server fills
+  // it in rather than making somebody type tomorrow's date every day
+  const autoDeadline = form.recurrence === 'daily' || form.recurrence === 'weekdays';
   // staged while the task does not exist yet
   const [pending, setPending] = useState([]);
   const [pendingTags, setPendingTags] = useState([]);
@@ -429,7 +437,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     if (!form.title.trim() || form.title.trim().length < 3) return toast.error('Give the task a title first');
     if (!form.department_id) return toast.error('Pick a department');
     if (isNew && !form.assignee_id) return toast.error('Select a task owner before creating the task');
-    if (isNew && !form.due_date) return toast.error('Set a deadline — every task needs a date it is expected by');
+    if (isNew && !form.due_date && !autoDeadline) {
+      return toast.error('Set a deadline — every task needs a date it is expected by');
+    }
     if (form.due_date && new Date(form.due_date).getTime() < Date.now() - 60_000) {
       return toast.error('That deadline has already passed — pick a date and time in the future');
     }
@@ -500,17 +510,6 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       toast.error(err);
     } finally {
       setSaving(false);
-    }
-  };
-
-  const postComment = async () => {
-    if (!comment.trim()) return;
-    try {
-      const { comment: created } = await api.addComment(activeId, comment.trim());
-      setDetail((current) => ({ ...current, comments: [...current.comments, created] }));
-      setComment('');
-    } catch (err) {
-      toast.error(err);
     }
   };
 
@@ -611,7 +610,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
         <div className="stack">
           {!isNew && (
             <div className="tabs">
-              {['details', `comments${detail?.comments?.length ? ` (${detail.comments.length})` : ''}`, 'history'].map(
+              {['details', `discussion${openThreads ? ` (${openThreads})` : ''}`, 'history'].map(
                 (label) => {
                   const key = label.split(' ')[0];
                   return (
@@ -631,6 +630,21 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
           {tab === 'details' && (
             <div className="stack">
+              {headline && (
+                <div className={`ask-banner ask-${headline.severity}`}>
+                  <Icon name="alert" size={15} />
+                  <div className="grow">
+                    <strong>{headline.label}</strong>
+                    <div className="small">
+                      Someone is waiting on this card.{' '}
+                      <button type="button" className="btn-link" onClick={() => setTab('discussion')}>
+                        Open the discussion
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {detail?.task?.account_name && (
                 <div className="alignment">
                   <div className="small muted">Part of the work on</div>
@@ -743,11 +757,13 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 </Field>
 
                 <Field
-                  label="Deadline *"
+                  label={autoDeadline ? 'Deadline' : 'Deadline *'}
                   hint={
-                    !isNew && task?.due_date_changes > 0
-                      ? `Moved ${task.due_date_changes} time${task.due_date_changes === 1 ? '' : 's'}`
-                      : 'Required — missing this date is what triggers a black mark'
+                    autoDeadline
+                      ? 'Set for you each cycle — fill it in only to use a different time'
+                      : !isNew && task?.due_date_changes > 0
+                        ? `Moved ${task.due_date_changes} time${task.due_date_changes === 1 ? '' : 's'}`
+                        : 'Required — missing this date is what triggers a black mark'
                   }
                 >
                   <input
@@ -935,37 +951,14 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
             </div>
           )}
 
-          {tab === 'comments' && (
-            <div className="stack">
-              <div>
-                {detail.comments.length === 0 && <div className="empty small">No comments yet</div>}
-                {detail.comments.map((c) => (
-                  <div key={c.id} className="comment">
-                    <Avatar name={c.author_name} color={c.avatar_color} size={28} />
-                    <div className="grow">
-                      <div className="row" style={{ gap: 8 }}>
-                        <strong className="small">{c.author_name || 'Removed user'}</strong>
-                        <span className="small muted">{relativeTime(c.created_at)}</span>
-                      </div>
-                      <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="row" style={{ alignItems: 'flex-start' }}>
-                <textarea
-                  className="textarea"
-                  rows={2}
-                  placeholder="Add a comment…"
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  style={{ minHeight: 44 }}
-                />
-                <button type="button" className="btn btn-primary" onClick={postComment} disabled={!comment.trim()}>
-                  Post
-                </button>
-              </div>
-            </div>
+          {tab === 'discussion' && (
+            <DiscussionPanel
+              entityType="TASK"
+              entityId={activeId}
+              threads={detail.threads || []}
+              canRaiseReview={detail.can_raise_review}
+              onChanged={reload}
+            />
           )}
 
           {tab === 'history' && (

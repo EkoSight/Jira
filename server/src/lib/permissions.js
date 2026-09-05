@@ -45,6 +45,10 @@ export const PERMISSIONS = {
   'okr.checkin': 'Update key result values and post check-ins',
   'okr.link.task': 'Link tasks to key results',
 
+  // asking someone to improve their own goal or task is a management act;
+  // joining a discussion, or saying you are blocked, is not
+  'review.raise': 'Ask for a goal, key result or task to be improved',
+
   'crm.view': 'See leads, customers and partners',
   'crm.create': 'Add leads and accounts',
   'crm.manage.any': 'Edit any account, not only their own',
@@ -82,6 +86,7 @@ export const ROLE_PERMISSIONS = {
     'okr.create.department',
     'okr.checkin',
     'okr.link.task',
+    'review.raise',
     'crm.view',
     'crm.create',
     'crm.manage.any',

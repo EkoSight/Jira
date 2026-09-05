@@ -34,11 +34,47 @@ const SKEW_MS = 5 * 60 * 1000;
  * Validates a deadline and returns it as a Date.
  * Throws a 400 with a plain-language reason if it cannot be used.
  */
+/**
+ * The obvious deadline for a task that repeats every day, or every working day.
+ *
+ * There is only one sensible answer — the end of today, or of the next working
+ * day if today is already spent — so making somebody type it every time is a
+ * toll rather than a decision. Sunday is skipped for `weekdays`, matching the
+ * six-day week the recurrence rules already assume.
+ *
+ * Returns null for every other cadence: "every month" has no obvious date, and
+ * guessing one would be inventing a commitment on the person's behalf.
+ */
+export function defaultDueDate(recurrence, { hour = 18, now = new Date() } = {}) {
+  if (recurrence !== 'daily' && recurrence !== 'weekdays') return null;
+
+  const due = new Date(now);
+  due.setHours(hour, 0, 0, 0);
+
+  // past the hour already: this is tomorrow's job
+  if (due.getTime() <= now.getTime()) due.setDate(due.getDate() + 1);
+  if (recurrence === 'weekdays') {
+    while (due.getDay() === 0) due.setDate(due.getDate() + 1);
+  }
+
+  return due;
+}
+
 export function assertUsableDeadline(
   value,
-  { recurrence = 'none', maxHorizonDays = DEFAULT_MAX_HORIZON_DAYS, now = new Date() } = {},
+  {
+    recurrence = 'none',
+    maxHorizonDays = DEFAULT_MAX_HORIZON_DAYS,
+    now = new Date(),
+    defaultHour = 18,
+  } = {},
 ) {
   if (value === undefined || value === null || value === '') {
+    // a task that repeats daily has one obvious deadline, so it is filled in
+    // rather than refused. Every other cadence still has to be stated.
+    const automatic = defaultDueDate(recurrence, { hour: defaultHour, now });
+    if (automatic) return automatic;
+
     throw badRequest('A deadline is required — every task needs a date it is expected by');
   }
 

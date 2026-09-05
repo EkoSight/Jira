@@ -151,7 +151,85 @@ export async function spawnNextOccurrence(client, task) {
     [next.id, task.id],
   );
 
+  await copyRoutineSubtasks(client, task, next, due);
+
   return next;
+}
+
+/**
+ * Recreates the subtasks that are part of the routine.
+ *
+ * Only the ones marked `repeats_with_parent`. A subtask added mid-cycle to deal
+ * with something that came up once should not come back every day forever — so
+ * carrying everything forward, the way the checklist does, would be wrong here:
+ * a subtask is a real card with its own reference, deadline and black mark
+ * exposure, not a tick box.
+ *
+ * Each copy is fresh: no progress, back in the starting column, due with its
+ * parent. The finished ones stay attached to the occurrence that finished them.
+ */
+export async function copyRoutineSubtasks(client, task, next, due) {
+  const { rows: subtasks } = await client.query(
+    `SELECT * FROM tasks
+      WHERE parent_task_id = $1 AND repeats_with_parent = TRUE AND is_archived = FALSE
+      ORDER BY position, id`,
+    [task.id],
+  );
+  if (!subtasks.length) return [];
+
+  const { rows: statusRows } = await client.query(
+    `SELECT id FROM workflow_statuses WHERE is_active = TRUE
+      ORDER BY is_default DESC, position ASC LIMIT 1`,
+  );
+  if (!statusRows[0]) return [];
+  const statusId = statusRows[0].id;
+
+  const created = [];
+  for (const subtask of subtasks) {
+    // its own reference in its own department series, under the same lock the
+    // normal create path uses
+    const ref = await nextTaskRef(client, subtask.department_id);
+
+    const { rows } = await client.query(
+      `INSERT INTO tasks
+         (ref, title, description, department_id, status_id, priority, task_type, assignee_id,
+          follower_id, reporter_id, created_by, parent_task_id, start_date, due_date,
+          original_due_date, estimate_hours, progress, tags, recurrence, repeats_with_parent,
+          position)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14,$15,0,$16::text[],'none',TRUE,$17)
+       RETURNING *`,
+      [
+        ref,
+        subtask.title,
+        subtask.description,
+        subtask.department_id,
+        statusId,
+        subtask.priority,
+        subtask.task_type,
+        subtask.assignee_id,
+        subtask.follower_id,
+        subtask.reporter_id,
+        subtask.created_by,
+        next.id,
+        subtask.start_date,
+        // a step of the routine is due when the routine is
+        due,
+        subtask.estimate_hours,
+        subtask.tags || [],
+        subtask.position,
+      ],
+    );
+    created.push(rows[0]);
+
+    // a subtask's own checklist is part of the step, so it comes too
+    await client.query(
+      `INSERT INTO task_checklist_items (task_id, title, position, is_done)
+       SELECT $1, title, position, FALSE FROM task_checklist_items WHERE task_id = $2`,
+      [rows[0].id, subtask.id],
+    );
+  }
+
+  return created;
 }
 
 /**

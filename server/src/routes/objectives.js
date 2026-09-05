@@ -21,6 +21,7 @@ import {
 import { analyse } from '../services/okrInsights.js';
 import { runOkrScan } from '../jobs/okrScanner.js';
 import { visibilityClause } from './tasks.js';
+import { canRaiseReview, listMessages, listThreads, threadSummary } from '../services/threads.js';
 
 const router = Router();
 
@@ -219,12 +220,28 @@ router.get(
       ),
     ]);
 
+    // the conversation about the goal itself, and a badge count per key result so
+    // the cards can show "needs improvement" without a request each
+    const goalThreads = await listThreads('OBJECTIVE', objective.id);
+    const withMessages = await Promise.all(
+      goalThreads.map(async (t) => ({ ...t, messages: await listMessages(t.id) })),
+    );
+    const krThreads = await threadSummary('KEY_RESULT', keyResults.map((k) => k.id));
+    for (const keyResult of keyResults) {
+      const counts = krThreads.get(keyResult.id);
+      keyResult.open_reviews = counts?.open_reviews || 0;
+      keyResult.open_threads = counts?.open_threads || 0;
+      keyResult.open_help = counts?.open_help || 0;
+    }
+
     res.json({
       objective,
       key_results: keyResults,
       children: children.rows,
       activity: activity.rows,
       tasks: tasks.rows,
+      threads: withMessages,
+      can_raise_review: canRaiseReview(req.currentUser),
       can_edit: canManageObjective(req.currentUser, objective),
     });
   }),

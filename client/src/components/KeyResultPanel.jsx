@@ -3,10 +3,12 @@ import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import KeyResultEditDialog from './KeyResultEditDialog.jsx';
+import DiscussionPanel from './DiscussionPanel.jsx';
 import TaskDialog from './TaskDialog.jsx';
 import {
   CONFIDENCE, formatValue, health, krAttention, measurementSummary, pace, worstSeverity,
 } from '../lib/okr.js';
+import { threadHeadline } from '../lib/threads.js';
 import { formatDate, relativeTime, STAGE_LABEL } from '../lib/format.js';
 
 /**
@@ -263,6 +265,8 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
 
   const [tab, setTab] = useState('progress');
   const [checkIns, setCheckIns] = useState(null);
+  const [threads, setThreads] = useState(null);
+  const [canRaiseReview, setCanRaiseReview] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [linking, setLinking] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -282,14 +286,27 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
       .catch((err) => toast.error(err));
   };
 
+  const loadThreads = () => {
+    api
+      .threads('KEY_RESULT', keyResult.id)
+      .then((data) => {
+        setThreads(data.threads || []);
+        setCanRaiseReview(Boolean(data.can_raise_review));
+      })
+      .catch((err) => toast.error(err));
+  };
+
   useEffect(() => {
     if (tab === 'updates' && checkIns === null) loadHistory();
+    if (tab === 'discussion' && threads === null) loadThreads();
   }, [tab, keyResult.id]);
 
+  const openThreads = keyResult.open_threads || 0;
   const TABS = [
     { key: 'progress', label: 'Progress' },
     { key: 'work', label: `Work (${tasks.length})` },
     { key: 'updates', label: 'Updates' },
+    { key: 'discussion', label: `Discussion${openThreads ? ` (${openThreads})` : ''}` },
   ];
 
   return (
@@ -512,6 +529,23 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
             </div>
           )
         )}
+
+        {tab === 'discussion' && (
+          threads === null ? (
+            <Spinner label="Loading the discussion" />
+          ) : (
+            <DiscussionPanel
+              entityType="KEY_RESULT"
+              entityId={keyResult.id}
+              threads={threads}
+              canRaiseReview={canRaiseReview}
+              onChanged={() => {
+                loadThreads();
+                onChanged?.();
+              }}
+            />
+          )
+        )}
       </div>
 
       {updating && (
@@ -576,7 +610,13 @@ export default function KeyResultPanel({ keyResult, tasks = [], canEdit, onChang
   const progress = keyResult.progress_percent;
   const reading = pace(progress, keyResult.time_elapsed_percent);
   const reasons = krAttention(keyResult);
-  const severity = reasons.length ? worstSeverity(reasons) : null;
+  // a change asked for by a person outranks anything the system worked out
+  const asked = keyResult.open_reviews
+    ? { label: 'Needs improvement', severity: 'warning' }
+    : keyResult.open_help
+      ? { label: 'Help needed', severity: 'warning' }
+      : null;
+  const severity = asked?.severity || (reasons.length ? worstSeverity(reasons) : null);
   // the headline number is the work's, not the outcome's — say so rather than
   // letting it pass as a measured result
   const fromWork = keyResult.progress_source === 'execution' && keyResult.measurement_type !== 'TASK_ROLLUP';
@@ -610,8 +650,16 @@ export default function KeyResultPanel({ keyResult, tasks = [], canEdit, onChang
             </span>
           </div>
 
-          {reasons.length > 0 && (
+          {(asked || reasons.length > 0) && (
             <div className="kr-flags">
+              {asked && (
+                <span
+                  className={`kr-flag kr-flag-${asked.severity} kr-flag-asked`}
+                  title="Someone has asked for a change here — open Details to see the thread"
+                >
+                  {asked.label}
+                </span>
+              )}
               {reasons.map((reason) => (
                 <span key={reason.kind} className={`kr-flag kr-flag-${reason.severity}`} title={reason.detail}>
                   {reason.label}

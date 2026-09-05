@@ -42,6 +42,15 @@ export const DEFAULT_SETTINGS = {
   deadlines: {
     // every task needs a date it is expected by; how far out one may be set
     maxHorizonDays: 730,
+    // a task that repeats every day or every working day gets its deadline
+    // filled in at this hour, so nobody types tomorrow's date every day
+    recurringDueHour: 18,
+  },
+  reviews: {
+    // an open review always flags the item and tells its owner. Turn this on to
+    // also hold the item back until the review is resolved — off by default,
+    // because a reviewer on leave should not be able to stall a quarter.
+    blockOnOpenReview: false,
   },
   okr: {
     // the module's on/off switch — no separate feature-flag framework needed,

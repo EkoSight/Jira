@@ -23,6 +23,8 @@ import {
 } from '../services/okr.js';
 import { visibilityClause, canAccess } from './tasks.js';
 
+import { canRaiseReview, listMessages, listThreads } from '../services/threads.js';
+
 const router = Router();
 
 /**
@@ -123,10 +125,17 @@ router.get(
       loadKeyResult(Number(req.params.id)),
     ]);
 
+    const threads = await listThreads('KEY_RESULT', keyResult.id);
+    const withMessages = await Promise.all(
+      threads.map(async (t) => ({ ...t, messages: await listMessages(t.id) })),
+    );
+
     res.json({
       key_result: keyResult,
       check_ins: checkIns.rows,
       activity: activity.rows,
+      threads: withMessages,
+      can_raise_review: canRaiseReview(req.currentUser),
       can_edit: canManageKeyResult(req.currentUser, raw),
       can_check_in:
         hasPermission(req.currentUser, 'okr.checkin') && canManageKeyResult(req.currentUser, raw),

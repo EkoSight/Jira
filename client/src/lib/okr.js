@@ -414,6 +414,16 @@ export const signalMeta = (kind) => SIGNAL_META[kind] || { label: 'Attention', s
 
 export const SEVERITY_TONE = { critical: 'critical', warning: 'warning', info: 'neutral' };
 
+const THREAD_KIND_PHRASE = {
+  review: 'asked for changes',
+  question: 'asked a question',
+  help_needed: 'said they need help',
+  feedback: 'asked for feedback',
+  progress: 'posted an update',
+  challenge: 'flagged a challenge',
+  discussion: 'started a discussion',
+};
+
 export const describeOkrActivity = (item) => {
   const field = item.field ? item.field.replace(/_/g, ' ').replace(' id', '') : '';
   // a check-in stores the raw numbers; the feed reads them back in the key
@@ -434,6 +444,8 @@ export const describeOkrActivity = (item) => {
     case 'health_overridden': return `set the status to ${health(item.to_value).label} by hand`;
     case 'health_override_cleared': return 'went back to the calculated status';
     case 'archived': return 'archived it';
+    case 'thread_opened': return THREAD_KIND_PHRASE[item.field] || 'started a discussion';
+    case 'thread_resolved': return 'closed a thread with a conclusion';
     case 'task_linked': return 'linked a task';
     case 'task_unlinked': return 'unlinked a task';
     case 'period_corrected':

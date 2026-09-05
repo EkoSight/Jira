@@ -117,6 +117,15 @@ export const api = {
   addCollaborator: (id, userId) => request('POST', `/tasks/${id}/collaborators`, { user_id: userId }),
   removeCollaborator: (taskId, userId) => request('DELETE', `/tasks/${taskId}/collaborators/${userId}`),
 
+  // discussion and review threads — the same four calls whatever is being
+  // discussed, because the conversation is the same shape everywhere
+  threads: (entityType, entityId) =>
+    request('GET', `/threads${qs({ entity_type: entityType, entity_id: entityId })}`),
+  openThread: (data) => request('POST', '/threads', data),
+  replyToThread: (id, body) => request('POST', `/threads/${id}/messages`, { body }),
+  resolveThread: (id, conclusion) => request('POST', `/threads/${id}/resolve`, { conclusion }),
+  reopenThread: (id) => request('POST', `/threads/${id}/reopen`),
+
   goalsDashboard: (params) => request('GET', `/objectives/dashboard${qs(params)}`),
   goalInsights: (params) => request('GET', `/objectives/insights${qs(params)}`),
   runGoalScan: (force) => request('POST', '/objectives/scan', { force: force === true }),

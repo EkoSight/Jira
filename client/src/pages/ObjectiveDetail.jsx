@@ -7,11 +7,13 @@ import { ProgressRing } from '../components/charts.jsx';
 import KeyResultPanel from '../components/KeyResultPanel.jsx';
 import ObjectiveWizard from '../components/ObjectiveWizard.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
+import DiscussionPanel from '../components/DiscussionPanel.jsx';
 import {
   HEALTH_META, KR_FILTERS, MEASUREMENT_TYPES, STATUS_LABEL,
   byUrgency, contributors, daysLeftLabel, describeOkrActivity, filterCounts,
   health, krAttention, myContribution, pace, paceSentence,
 } from '../lib/okr.js';
+import { threadHeadline } from '../lib/threads.js';
 import { useIsNarrow } from '../lib/useMedia.js';
 import { formatDate, relativeTime } from '../lib/format.js';
 
@@ -656,6 +658,27 @@ function GoalRail({ objective, keyResults, tasks, childGoals, canEdit, onOverrid
   );
 }
 
+/** The conversation about the goal itself. */
+function GoalDiscussion({ objective, threads, canRaiseReview, onChanged }) {
+  return (
+    <section className="card card-pad stack" id="discussion">
+      <div>
+        <h2>Discussion</h2>
+        <div className="small muted">
+          Ask for this goal to be sharpened, say where it stands, or flag what is in the way.
+        </div>
+      </div>
+      <DiscussionPanel
+        entityType="OBJECTIVE"
+        entityId={objective.id}
+        threads={threads}
+        canRaiseReview={canRaiseReview}
+        onChanged={onChanged}
+      />
+    </section>
+  );
+}
+
 /** Everything that has happened, goal and key results together. */
 function ActivityFeed({ activity }) {
   return (
@@ -741,6 +764,10 @@ export default function ObjectiveDetail() {
   if (!data) return <EmptyState title="Goal not found" />;
 
   const { objective, children, activity, can_edit: canEdit } = data;
+  const threads = data.threads || [];
+  // someone is waiting on this goal, which outranks anything derived
+  const goalAsk = threadHeadline(threads);
+  const openAskCount = threads.filter((t) => t.status === 'open').length;
   const meta = health(objective.health);
   const attentionCount = keyResults.filter((kr) => krAttention(kr).length > 0).length;
 
@@ -820,6 +847,30 @@ export default function ObjectiveDetail() {
           )}
         </div>
 
+        {goalAsk && (
+          <div className={`ask-banner ask-${goalAsk.severity}`}>
+            <Icon name="alert" size={15} />
+            <div className="grow">
+              <strong>{goalAsk.label}</strong>
+              <div className="small">
+                Someone has asked for a change to this goal.{' '}
+                <button
+                  type="button"
+                  className="btn-link"
+                  onClick={() => {
+                    if (narrow) setTab('discussion');
+                    requestAnimationFrame(() => {
+                      document.getElementById('discussion')?.scrollIntoView({ behavior: 'smooth' });
+                    });
+                  }}
+                >
+                  Open the discussion
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {objective.description && (
           narrow ? (
             // on a phone a paragraph this long pushes the tabs off the first
@@ -849,6 +900,7 @@ export default function ObjectiveDetail() {
     const TABS = [
       { key: 'overview', label: 'Overview' },
       { key: 'results', label: `Key results${keyResults.length ? ` (${keyResults.length})` : ''}` },
+      { key: 'discussion', label: `Discussion${openAskCount ? ` (${openAskCount})` : ''}` },
       { key: 'activity', label: 'Activity' },
     ];
 
@@ -907,6 +959,15 @@ export default function ObjectiveDetail() {
           />
         )}
 
+        {tab === 'discussion' && (
+          <GoalDiscussion
+            objective={objective}
+            threads={threads}
+            canRaiseReview={data.can_raise_review}
+            onChanged={load}
+          />
+        )}
+
         {tab === 'activity' && <ActivityFeed activity={activity} />}
 
         {canEdit && (
@@ -957,6 +1018,12 @@ export default function ObjectiveDetail() {
             onChanged={load}
             onOpenTask={setOpenTask}
             onAdd={() => setAddingKeyResult(true)}
+          />
+          <GoalDiscussion
+            objective={objective}
+            threads={threads}
+            canRaiseReview={data.can_raise_review}
+            onChanged={load}
           />
           <ActivityFeed activity={activity} />
         </div>
