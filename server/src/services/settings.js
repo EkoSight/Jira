@@ -96,6 +96,26 @@ export const DEFAULT_SETTINGS = {
       engagementDays: 7,
       // at most one reminder to the same person inside this many hours
       reminderHours: 24,
+      // cadence varies by how far along a deal is: a brand new lead does not
+      // need chasing as hard as one sitting in negotiation
+      byStage: {
+        new: 14,
+        contacted: 10,
+        qualified: 7,
+        discovery: 7,
+        'meeting-demo': 5,
+        'scope-alignment': 5,
+        proposal: 4,
+        negotiation: 3,
+      },
+      // a paused or nurtured deal is checked on far less often
+      nurtureDays: 45,
+      // a meeting that has been and gone with nothing recorded
+      meetingOutcomeHours: 24,
+      // a delivery milestone past its date
+      milestoneGraceDays: 2,
+      // a close date approaching with must-haves still open
+      closingSoonDays: 21,
     },
   },
 };

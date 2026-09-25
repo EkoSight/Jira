@@ -1060,3 +1060,214 @@ test('only a manager may change the shared library', async (t) => {
   });
   assert.equal(allowed.status, 201);
 });
+
+// ------------------------------------------------------------ the dashboards
+
+test('the dashboard keeps the current book apart from what happened in a month', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const dash = await call('GET', '/accounts/dashboard/b2b', { token: tokens.admin });
+  assert.equal(dash.status, 200);
+
+  // two separate objects, not one blended figure
+  assert.ok(dash.body.portfolio, 'how things stand');
+  assert.ok(dash.body.activity, 'what happened in the month');
+  assert.ok(dash.body.period.start && dash.body.period.end);
+
+  // every figure ships its own definition and date basis
+  assert.ok(dash.body.definitions.won_this_month);
+  assert.equal(dash.body.definitions.won_this_month.basis, 'month');
+  assert.equal(dash.body.definitions.eligible_pipeline.basis, 'now');
+  assert.match(dash.body.definitions.value_won.detail, /Not revenue collected/);
+});
+
+test('the pipeline total never counts money it is not entitled to', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const dash = await call('GET', '/accounts/dashboard/b2b', { token: tokens.admin });
+  const { portfolio } = dash.body;
+
+  // the MoU is open but non-commercial, so it adds nothing
+  const opportunities = await call('GET', '/opportunities?open=true', { token: tokens.admin });
+  const eligible = opportunities.body.opportunities
+    .filter((o) => o.is_open)
+    .reduce((sum, o) => sum + (o.eligible_value ?? 0), 0);
+  assert.equal(portfolio.eligible_pipeline, eligible);
+
+  // and deals with no value are counted separately rather than treated as zero
+  assert.equal(
+    portfolio.without_value,
+    opportunities.body.opportunities.filter((o) => o.is_open && o.eligible_value === null).length,
+    'a deal with no value recorded is reported as such, not folded in as nothing',
+  );
+});
+
+test('a person with nothing on file is described that way, not as having done nothing', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const people = await call('GET', '/accounts/dashboard/people', { token: tokens.admin });
+  assert.equal(people.status, 200);
+
+  const manager = people.body.summaries.find((s) => s.user.id === ids.manager);
+  assert.ok(manager, 'the person working deals appears');
+  assert.equal(typeof manager.nothing_recorded, 'boolean');
+  assert.ok(manager.metrics.open_deals >= 1);
+
+  // attempts and conversations are different columns, never summed into "activity"
+  assert.ok('conversations' in manager.metrics);
+  assert.ok('attempts' in manager.metrics);
+  assert.ok('demos_completed' in manager.metrics);
+});
+
+test('a member cannot read everyone’s numbers', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const denied = await call('GET', '/accounts/dashboard/people', { token: tokens.member });
+  assert.equal(denied.status, 403);
+  const tree = await call('GET', '/accounts/views/tree', { token: tokens.member });
+  assert.equal(tree.status, 403);
+});
+
+// ------------------------------------------------------------ the views
+
+test('the tree groups an organization under exactly one person', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const tree = await call('GET', '/accounts/views/tree', { token: tokens.admin });
+  assert.equal(tree.status, 200);
+  assert.equal(tree.body.grouping, 'relationship_owner');
+
+  // no organization appears under two managers, so portfolio totals cannot
+  // double-count
+  const seen = new Map();
+  for (const manager of tree.body.managers) {
+    for (const org of manager.organizations) {
+      assert.ok(!seen.has(org.id), `${org.name} is under one manager only`);
+      seen.set(org.id, manager.user.id);
+    }
+  }
+
+  const manager = tree.body.managers.find((m) => m.user.id === ids.manager);
+  assert.ok(manager);
+  assert.equal(manager.totals.organizations, manager.organizations.length);
+});
+
+test('the map shows only pins somebody entered, and keeps the rest findable', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  await call('POST', `/accounts/${ids.account}/locations`, {
+    token: tokens.manager,
+    body: { label: 'Head office', kind: 'HQ', city: 'Pune', latitude: 18.5204, longitude: 73.8567, precision: 'EXACT' },
+  });
+  await call('POST', `/accounts/${ids.account}/locations`, {
+    token: tokens.manager,
+    body: { label: 'Field ops', kind: 'OPERATING', city: 'Nashik', latitude: 19.9975, longitude: 73.7898 },
+  });
+  // a location with no coordinates: known city, unknown pin
+  await call('POST', `/accounts/${ids.account}/locations`, {
+    token: tokens.manager, body: { label: 'Warehouse', city: 'Dhule' },
+  });
+
+  const map = await call('GET', '/accounts/views/map', { token: tokens.manager });
+  assert.equal(map.status, 200);
+
+  const org = map.body.mapped.find((o) => o.id === ids.account);
+  assert.ok(org, 'it has pins, so it is on the map');
+  assert.equal(org.pins.length, 2, 'only the two with coordinates — nothing was geocoded');
+  assert.ok(org.pins.some((p) => p.kind === 'HQ'), 'headquarters is distinguishable from operating areas');
+  assert.ok(org.pins.some((p) => p.precision === 'APPROXIMATE'), 'an approximate pin says so');
+
+  // two sites, one organization — counted once
+  assert.equal(
+    map.body.mapped.filter((o) => o.id === ids.account).length, 1,
+    'an organization with two locations is still one organization',
+  );
+
+  // and organizations with no pin are listed rather than dropped
+  assert.ok(map.body.organizations_unmapped >= 1);
+  assert.ok(map.body.unmapped.length === map.body.organizations_unmapped);
+});
+
+// ------------------------------------------------------------ nudges
+
+test('a deal that has gone quiet is chased according to how far along it is', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const nudges = await call('GET', '/accounts/nudges', { token: tokens.manager });
+  assert.equal(nudges.status, 200);
+  assert.ok(nudges.body.attention.length > 0, 'something in this pipeline needs attention');
+
+  // signals are per deal, not per organization — one healthy deal must not hide
+  // a drifting one at the same partner
+  assert.ok(nudges.body.attention.every((s) => s.entity_type && s.entity_id));
+  assert.ok(nudges.body.attention.some((s) => s.entity_type === 'OPPORTUNITY'));
+});
+
+test('a meeting that happened with nothing recorded is chased', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const booked = await call('POST', '/meetings', {
+    token: tokens.manager,
+    body: {
+      account_id: ids.account,
+      title: 'Review that nobody wrote up',
+      scheduled_at: new Date(Date.now() + 86400000).toISOString(),
+      create_prep_tasks: false,
+    },
+  });
+  // age it past the grace window
+  await query(
+    `UPDATE crm_meetings SET scheduled_at = now() - interval '3 days' WHERE id = $1`,
+    [booked.body.meeting.id],
+  );
+
+  const nudges = await call('GET', '/accounts/nudges', { token: tokens.manager });
+  const signal = nudges.body.attention.find(
+    (s) => s.entity_type === 'MEETING' && s.entity_id === booked.body.meeting.id,
+  );
+  assert.ok(signal, 'a meeting with no outcome is not silently forgotten');
+  assert.equal(signal.kind, 'meeting_outcome_missing');
+
+  // and it shows as awaiting an outcome in its own list
+  const awaiting = await call('GET', '/meetings?awaiting_outcome=true', { token: tokens.manager });
+  assert.ok(awaiting.body.meetings.some((m) => m.id === booked.body.meeting.id));
+  assert.ok(awaiting.body.meetings.every((m) => m.awaiting_outcome));
+  ids.unrecordedMeeting = booked.body.meeting.id;
+});
+
+test('a nudge can be put down, but only with a reason and a date', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const noReason = await call('POST', '/accounts/nudges/snooze', {
+    token: tokens.manager,
+    body: { entity_type: 'MEETING', entity_id: ids.unrecordedMeeting, kind: 'meeting_outcome_missing' },
+  });
+  assert.equal(noReason.status, 400, 'a nudge dismissed without a reason is a nudge nobody learns from');
+
+  const snoozed = await call('POST', '/accounts/nudges/snooze', {
+    token: tokens.manager,
+    body: {
+      entity_type: 'MEETING',
+      entity_id: ids.unrecordedMeeting,
+      kind: 'meeting_outcome_missing',
+      reason: 'Waiting on their notes before I write it up',
+      days: 5,
+    },
+  });
+  assert.equal(snoozed.status, 201);
+
+  const after = await call('GET', '/accounts/nudges', { token: tokens.manager });
+  assert.ok(
+    !after.body.attention.some(
+      (s) => s.entity_type === 'MEETING' && s.entity_id === ids.unrecordedMeeting,
+    ),
+    'it is quiet for now',
+  );
+
+  // and it is quiet for a stated reason, visible to anyone who looks
+  const snoozes = await call('GET', '/accounts/nudges/snoozes', { token: tokens.manager });
+  const record = snoozes.body.snoozes.find((s) => s.entity_id === ids.unrecordedMeeting);
+  assert.ok(record);
+  assert.equal(record.reason, 'Waiting on their notes before I write it up');
+  assert.ok(new Date(record.until).getTime() > Date.now());
+});

@@ -22,6 +22,8 @@ import {
   listContacts, opportunitiesFor, possibleDuplicateContacts, recordOwnershipChange,
 } from '../services/opportunities.js';
 import { ensureFolders } from '../services/resources.js';
+import { crmDashboard, managerSummaries, mapView, ownershipTree } from '../services/crmDashboard.js';
+import { analysePipeline } from '../services/accountInsights.js';
 
 const router = Router();
 
@@ -186,6 +188,71 @@ router.patch(
     );
     if (!rows[0]) throw notFound('Stage not found');
     res.json({ stage: rows[0] });
+  }),
+);
+
+// ---------------------------------------------------------------- nudges
+
+router.get(
+  '/nudges',
+  asyncHandler(async (req, res) => {
+    res.json(await analysePipeline({
+      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
+    }));
+  }),
+);
+
+/**
+ * Putting a nudge down.
+ *
+ * With a reason and a date, because a nudge that can be dismissed without either
+ * is a nudge that gets dismissed every time, and then the ones that matter are
+ * dismissed too.
+ */
+router.post(
+  '/nudges/snooze',
+  requirePermission('crm.activity.log'),
+  asyncHandler(async (req, res) => {
+    const data = z
+      .object({
+        entity_type: z.enum(['ACCOUNT', 'OPPORTUNITY', 'ENGAGEMENT', 'MEETING']),
+        entity_id: z.number().int().positive(),
+        kind: z.string().max(60).nullable().optional(),
+        reason: z.string().min(3).max(1000),
+        days: z.number().int().min(1).max(180).optional(),
+      })
+      .parse(req.body);
+
+    const { rows } = await query(
+      `INSERT INTO crm_nudge_snoozes (entity_type, entity_id, kind, reason, until, created_by)
+       VALUES ($1,$2,$3,$4, now() + ($5 || ' days')::interval, $6)
+       RETURNING *`,
+      [
+        data.entity_type, data.entity_id, data.kind ?? null, data.reason.trim(),
+        data.days ?? 7, req.currentUser.id,
+      ],
+    );
+    res.status(201).json({ snooze: rows[0] });
+  }),
+);
+
+router.get(
+  '/nudges/snoozes',
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      `SELECT s.*, u.full_name AS created_by_name
+         FROM crm_nudge_snoozes s LEFT JOIN users u ON u.id = s.created_by
+        WHERE s.until > now() ORDER BY s.until`,
+    );
+    res.json({ snoozes: rows });
+  }),
+);
+
+router.delete(
+  '/nudges/snoozes/:id',
+  asyncHandler(async (req, res) => {
+    await query('DELETE FROM crm_nudge_snoozes WHERE id = $1', [Number(req.params.id)]);
+    res.json({ ok: true });
   }),
 );
 
@@ -788,6 +855,59 @@ router.get(
          FROM crm_segments s WHERE s.is_active = TRUE ORDER BY s.position, s.id`,
     );
     res.json({ segments: rows });
+  }),
+);
+
+// ---------------------------------------------------------------- the views
+//
+// Board, list, map and tree all read the same authorized records with the same
+// filters — they are four ways of looking at one set, not four datasets.
+
+/** Where the organizations are. Nothing is geocoded; nothing is invented. */
+router.get(
+  '/views/map',
+  asyncHandler(async (req, res) => {
+    res.json(await mapView({
+      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
+      segmentId: req.query.segment_id ? Number(req.query.segment_id) : null,
+    }));
+  }),
+);
+
+/** Managers, and the organizations each of them leads. */
+router.get(
+  '/views/tree',
+  requirePermission('report.view'),
+  asyncHandler(async (req, res) => {
+    res.json(await ownershipTree({
+      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
+    }));
+  }),
+);
+
+// ---------------------------------------------------------------- dashboards
+
+router.get(
+  '/dashboard/b2b',
+  asyncHandler(async (req, res) => {
+    res.json(await crmDashboard({
+      month: req.query.month,
+      ownerId: req.query.owner_id,
+      departmentId: req.query.department_id,
+      segmentId: req.query.segment_id,
+    }));
+  }),
+);
+
+/** One row per person, for the month. Needs the reporting permission. */
+router.get(
+  '/dashboard/people',
+  requirePermission('report.view'),
+  asyncHandler(async (req, res) => {
+    res.json(await managerSummaries({
+      month: req.query.month,
+      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
+    }));
   }),
 );
 
