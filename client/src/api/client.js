@@ -246,6 +246,11 @@ export const api = {
   performance: (userId, params) => request('GET', `/reports/performance/${userId}${qs(params)}`),
   teamPerformance: (params) => request('GET', `/reports/performance${qs(params)}`),
   sharePerformance: (userId, data) => request('POST', `/reports/performance/${userId}/share`, data),
+  // the records behind a figure on a review
+  performanceEvidence: (userId, params) =>
+    request('GET', `/reports/performance/${userId}/evidence${qs(params)}`),
+  // what happened on a task, rather than what its fields are
+  taskSummary: (id) => request('GET', `/tasks/${id}/summary`),
   workloadReport: (params) => request('GET', `/reports/workload${qs(params)}`),
 
   settings: () => request('GET', '/settings'),

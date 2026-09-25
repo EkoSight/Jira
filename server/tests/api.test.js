@@ -1801,3 +1801,196 @@ test('archiving hides a card from the default list', async (t) => {
   const archived = await call('GET', '/tasks?archived=true', { token: tokens.admin });
   assert.ok(archived.body.tasks.some((task) => task.id === ids.secondTask));
 });
+
+// ------------------------------------------------- opening up a review
+
+test('every figure on a review opens into the records behind it', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // one task finished late, one still overdue, so both kinds of figure have
+  // something real behind them
+  const late = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Finished after the date',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(1),
+      priority: 'critical',
+    },
+  });
+  await makeOverdue(late.body.task.id, 3);
+  await call('POST', `/tasks/${late.body.task.id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Got there in the end.' },
+  });
+
+  const stillOpen = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Still sitting overdue',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(1),
+    },
+  });
+  await makeOverdue(stillOpen.body.task.id, 6);
+
+  const review = await call('GET', `/reports/performance/${ids.member}`, { token: tokens.admin });
+  assert.equal(review.status, 200);
+
+  // the number and the list behind it have to agree
+  const overdueCount = review.body.review.metrics.overdueNow;
+  const evidence = await call(
+    `GET`, `/reports/performance/${ids.member}/evidence?metric=overdueNow`, { token: tokens.admin },
+  );
+  assert.equal(evidence.status, 200);
+  assert.equal(evidence.body.evidence.tasks.length, overdueCount,
+    'the list is exactly the tasks the figure counted');
+  assert.equal(evidence.body.evidence.basis, 'now',
+    'what is overdue means today, not during the selected month');
+  assert.ok(evidence.body.evidence.tasks.some((task) => task.id === stillOpen.body.task.id));
+
+  // and each row carries enough to be read without opening it
+  const row = evidence.body.evidence.tasks.find((task) => task.id === stillOpen.body.task.id);
+  assert.ok(row.ref && row.title && row.status_name);
+  assert.ok(Number(row.days_overdue) >= 5, 'it says how far past the date it is');
+
+  // a period figure is scoped to the period, and says so
+  const lateEvidence = await call(
+    'GET', `/reports/performance/${ids.member}/evidence?metric=late`, { token: tokens.admin },
+  );
+  assert.equal(lateEvidence.body.evidence.basis, 'period');
+  const lateRow = lateEvidence.body.evidence.tasks.find((task) => task.id === late.body.task.id);
+  assert.ok(lateRow, 'the task that finished late is in the late list');
+  assert.ok(Number(lateRow.days_late) > 0);
+
+  // the completion note travels with it, so the list already half-answers "why"
+  assert.equal(lateRow.completion_note, 'Got there in the end.');
+});
+
+test('a figure with nothing behind it is not silently an empty list', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const nonsense = await call(
+    'GET', `/reports/performance/${ids.member}/evidence?metric=notAThing`, { token: tokens.admin },
+  );
+  assert.equal(nonsense.status, 404, 'an unknown figure is an error, not an empty answer');
+});
+
+test('you cannot read the records behind someone else’s review without the permission', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // the member may open their own
+  const own = await call(
+    'GET', `/reports/performance/${ids.member}/evidence?metric=overdueNow`, { token: tokens.member },
+  );
+  assert.equal(own.status, 200);
+
+  // but not the admin's
+  const other = await call(
+    'GET', `/reports/performance/${ids.admin}/evidence?metric=overdueNow`, { token: tokens.member },
+  );
+  assert.equal(other.status, 403, 'reading a number and reading its rows are the same permission');
+});
+
+// ------------------------------------------------- the record of a finished task
+
+test('a finished task has a record of what happened, not just its fields', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Write the dealer onboarding pack',
+      description: 'Everything a new dealer needs on day one.',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(2),
+      priority: 'high',
+    },
+  });
+  const id = created.body.task.id;
+
+  await call('POST', `/tasks/${id}/comments`, {
+    token: tokens.member, body: { body: 'Draft is with procurement for a check.' },
+  });
+  await call('POST', `/tasks/${id}/move`, {
+    token: tokens.member,
+    body: {
+      status_id: ids.done,
+      completion_note: 'Pack written, reviewed by procurement, published to Drive.',
+    },
+  });
+
+  const summary = await call('GET', `/tasks/${id}/summary`, { token: tokens.admin });
+  assert.equal(summary.status, 200);
+
+  // what it was, and what was said about finishing it
+  assert.equal(summary.body.task.title, 'Write the dealer onboarding pack');
+  assert.equal(summary.body.outcome_note, 'Pack written, reviewed by procurement, published to Drive.');
+
+  // how it went, from stored timestamps only
+  assert.ok(summary.body.timeline.created_at);
+  assert.ok(summary.body.timeline.completed_at);
+  assert.equal(summary.body.timeline.due_date_changes, 0);
+
+  // who closed it
+  assert.ok(summary.body.closed_by, 'the record says who finished it');
+  assert.equal(summary.body.closed_by.name, 'Member User');
+
+  // and the conversation that happened along the way
+  assert.ok(summary.body.threads.some((th) =>
+    th.messages.some((m) => m.body.includes('procurement'))));
+
+  // the milestones, not every field edit
+  assert.ok(summary.body.milestones.length > 0);
+  assert.ok(
+    !summary.body.milestones.some((m) => m.action === 'updated' && m.field === 'progress'),
+    'a progress tweak is not a milestone',
+  );
+});
+
+test('a task closed with nothing recorded says so rather than inventing an outcome', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Closed without a word',
+      department_id: ids.department,
+      assignee_id: ids.member,
+      due_date: daysFromNow(2),
+    },
+  });
+  await call('POST', `/tasks/${created.body.task.id}/move`, {
+    token: tokens.member,
+    body: { status_id: ids.done, completion_note: 'Done' },
+  });
+  // clear it the way a task closed before the note was required would look
+  await query('UPDATE tasks SET completion_note = NULL WHERE id = $1', [created.body.task.id]);
+
+  const summary = await call('GET', `/tasks/${created.body.task.id}/summary`, { token: tokens.admin });
+  assert.equal(summary.body.outcome_note, null, 'no note is null, not an empty string or a guess');
+});
+
+test('the record of a task respects who is allowed to see the task', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const { rows: other } = await query(
+    `INSERT INTO departments (key, name, position) VALUES ('HID', 'Hidden', 9)
+     ON CONFLICT (key) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+  );
+  const hidden = await call('POST', '/tasks', {
+    token: tokens.admin,
+    body: {
+      title: 'Not for the member',
+      department_id: other[0].id,
+      assignee_id: ids.admin,
+      due_date: daysFromNow(3),
+    },
+  });
+
+  const denied = await call('GET', `/tasks/${hidden.body.task.id}/summary`, { token: tokens.member });
+  assert.equal(denied.status, 404, 'the record is no easier to reach than the task');
+});

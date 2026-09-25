@@ -12,6 +12,7 @@ import {
 } from './TaskExtras.jsx';
 import CompleteTaskDialog from './CompleteTaskDialog.jsx';
 import DiscussionPanel from './DiscussionPanel.jsx';
+import CompletionRecord from './CompletionRecord.jsx';
 import { threadHeadline } from '../lib/threads.js';
 import {
   PRIORITIES,
@@ -339,6 +340,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const [form, setForm] = useState(() => blankTask(defaults));
   const [checklistDraft, setChecklistDraft] = useState('');
   const [tab, setTab] = useState('details');
+  // a finished task is read, not edited: its record is what opens first
+  const isDone = detail?.task?.stage === 'done';
+  const [summary, setSummary] = useState(null);
   // how many threads are still waiting on somebody, which is what the tab counts
   const openThreads = (detail?.threads || []).filter((t) => t.status === 'open').length;
   // the one thing worth saying at the top of the card: somebody is waiting
@@ -401,6 +405,29 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
+
+  /**
+   * A finished task opens on its record rather than on the form.
+   *
+   * Once the work is done the useful question is what happened, not which boxes
+   * could still be changed — so the record is fetched as soon as we know the
+   * task is closed, and becomes the tab you land on.
+   */
+  useEffect(() => {
+    if (!activeId || !isDone) {
+      setSummary(null);
+      return undefined;
+    }
+    let cancelled = false;
+    api
+      .taskSummary(activeId)
+      .then((data) => !cancelled && setSummary(data))
+      .catch((err) => !cancelled && toast.error(err));
+    // only move them onto the record when they have not already chosen a tab
+    setTab((current) => (current === 'details' ? 'record' : current));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, isDone]);
 
   const set = (key) => (event) => {
     const value = event?.target ? event.target.value : event;
@@ -575,7 +602,20 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     'Task'
   );
 
-  const footer = (
+  // The record is a read, so it does not carry the controls for changing a task.
+  // Offering Delete and Save beside an account of what already happened invites
+  // an edit nobody came here to make.
+  const footer = tab === 'record' ? (
+    <>
+      <span className="grow" />
+      {canEdit && (
+        <button type="button" className="btn" onClick={() => setTab('details')}>
+          <Icon name="edit" size={13} /> Edit the task
+        </button>
+      )}
+      <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
+    </>
+  ) : (
     <>
       {!isNew && isCreator && (
         <ConfirmButton
@@ -609,8 +649,13 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       ) : (
         <div className="stack">
           {!isNew && (
-            <div className="tabs">
-              {['details', `discussion${openThreads ? ` (${openThreads})` : ''}`, 'history'].map(
+            <div className="tabs tabs-scroll">
+              {[
+                ...(isDone ? ['record'] : []),
+                'details',
+                `discussion${openThreads ? ` (${openThreads})` : ''}`,
+                'history',
+              ].map(
                 (label) => {
                   const key = label.split(' ')[0];
                   return (
@@ -626,6 +671,10 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 },
               )}
             </div>
+          )}
+
+          {tab === 'record' && (
+            <CompletionRecord data={summary} onOpenTask={(id) => setActiveId(id)} />
           )}
 
           {tab === 'details' && (

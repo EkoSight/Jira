@@ -233,7 +233,7 @@ function analyse(raw, user, settings) {
       concerns,
       `${String(worstType.task_type).replace(/-/g, ' ')} work is where you slip`,
       `${worstType.late} of ${worstType.done} ${String(worstType.task_type).replace(/-/g, ' ')} tasks finished late — more than any other type.`,
-      { severity: 'medium', metric: 'byType' },
+      { severity: 'medium', metric: 'byType', task_type: worstType.task_type },
     );
     add(
       suggestions,
@@ -405,3 +405,205 @@ export async function teamReview({ month, departmentId = null }) {
   reviews.sort((a, b) => rank[a.standing] - rank[b.standing] || b.concerns.length - a.concerns.length);
   return reviews;
 }
+
+// ------------------------------------------------------- the evidence itself
+
+/**
+ * The records behind a number.
+ *
+ * Every figure on a review is a count of real rows, and a person told "8 tasks
+ * are overdue" needs to see which eight before they can do anything about it.
+ * Each entry here is the SAME predicate the metric was counted with, so the list
+ * can never disagree with the number above it — if they ever diverge, it is
+ * because one of them was edited and the other was not, which is why they are
+ * written next to each other.
+ */
+const TASK_METRIC_CLAUSES = {
+  completed: {
+    label: 'Completed in this period',
+    where: `s.stage = 'done' AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `t.completed_at DESC`,
+  },
+  onTime: {
+    label: 'Finished on or before the deadline',
+    where: `s.stage = 'done' AND t.due_date IS NOT NULL AND t.completed_at <= t.due_date
+            AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `t.completed_at DESC`,
+  },
+  // the on-time rate is about the ones that missed, so that is what it opens
+  onTimeRate: {
+    label: 'Finished after the deadline',
+    where: `s.stage = 'done' AND t.due_date IS NOT NULL AND t.completed_at > t.due_date
+            AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `(t.completed_at - t.due_date) DESC`,
+  },
+  late: {
+    label: 'Finished after the deadline',
+    where: `s.stage = 'done' AND t.due_date IS NOT NULL AND t.completed_at > t.due_date
+            AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `(t.completed_at - t.due_date) DESC`,
+  },
+  avgDaysLate: {
+    label: 'Finished after the deadline',
+    where: `s.stage = 'done' AND t.due_date IS NOT NULL AND t.completed_at > t.due_date
+            AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `(t.completed_at - t.due_date) DESC`,
+  },
+  overdueNow: {
+    label: 'Open and already past the deadline',
+    where: `s.stage NOT IN ('done','cancelled') AND t.is_archived = FALSE AND t.due_date < now()`,
+    order: `t.due_date ASC`,
+    currentState: true,
+  },
+  openNow: {
+    label: 'Open right now',
+    where: `s.stage NOT IN ('done','cancelled') AND t.is_archived = FALSE`,
+    order: `t.due_date NULLS LAST`,
+    currentState: true,
+  },
+  blockedNow: {
+    label: 'Sitting blocked',
+    where: `s.stage = 'blocked' AND t.is_archived = FALSE`,
+    order: `t.due_date NULLS LAST`,
+    currentState: true,
+  },
+  staleNow: {
+    label: 'Open and not touched in over four days',
+    where: `s.stage NOT IN ('done','cancelled') AND t.is_archived = FALSE
+            AND t.updated_at < now() - interval '4 days'`,
+    order: `t.updated_at ASC`,
+    currentState: true,
+  },
+  deadlineChanges: {
+    label: 'Deadlines that were moved',
+    where: `t.due_date_changes > 0 AND t.updated_at >= $2 AND t.updated_at < $3`,
+    order: `t.due_date_changes DESC`,
+  },
+  critical: {
+    label: 'Critical work finished late',
+    where: `s.stage = 'done' AND t.priority = 'critical' AND t.due_date IS NOT NULL
+            AND t.completed_at > t.due_date
+            AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `(t.completed_at - t.due_date) DESC`,
+  },
+  withNotes: {
+    label: 'Finished with nothing recorded about what was done',
+    where: `s.stage = 'done' AND (t.completion_note IS NULL OR TRIM(t.completion_note) = '')
+            AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `t.completed_at DESC`,
+  },
+  reopened: {
+    label: 'Marked done and then reopened',
+    where: `EXISTS (SELECT 1 FROM task_activity a
+                     WHERE a.task_id = t.id AND a.action = 'reopened'
+                       AND a.created_at >= $2 AND a.created_at < $3)`,
+    order: `t.updated_at DESC`,
+  },
+  trend: {
+    label: 'Completed in this period',
+    where: `s.stage = 'done' AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `t.completed_at DESC`,
+  },
+  // the finding names the type it fired on, and passes it through as $4
+  byType: {
+    label: 'Finished late, of the type that slips most',
+    where: `s.stage = 'done' AND t.due_date IS NOT NULL AND t.completed_at > t.due_date
+            AND t.task_type = $4
+            AND t.completed_at >= $2 AND t.completed_at < $3`,
+    order: `(t.completed_at - t.due_date) DESC`,
+    needsType: true,
+  },
+};
+
+const EVIDENCE_SELECT = `
+  SELECT t.id, t.ref, t.title, t.priority, t.task_type, t.due_date, t.original_due_date,
+         t.due_date_changes, t.completed_at, t.created_at, t.updated_at, t.progress,
+         t.completion_note, t.account_id,
+         s.name AS status_name, s.stage, s.color AS status_color,
+         d.name AS department_name, d.color AS department_color,
+         u.full_name AS assignee_name, u.avatar_color AS assignee_color,
+         -- how late it actually finished, in days, so the list can be read at a glance
+         CASE WHEN t.completed_at IS NOT NULL AND t.due_date IS NOT NULL
+              THEN ROUND(EXTRACT(EPOCH FROM (t.completed_at - t.due_date)) / 86400.0, 1)
+         END AS days_late,
+         CASE WHEN t.completed_at IS NULL AND t.due_date IS NOT NULL
+              THEN ROUND(EXTRACT(EPOCH FROM (now() - t.due_date)) / 86400.0, 1)
+         END AS days_overdue,
+         (SELECT COUNT(*)::int FROM black_marks bm WHERE bm.task_id = t.id AND bm.status = 'active') AS marks
+    FROM tasks t
+    JOIN workflow_statuses s ON s.id = t.status_id
+    JOIN departments d ON d.id = t.department_id
+    LEFT JOIN users u ON u.id = t.assignee_id
+`;
+
+/**
+ * The tasks behind one figure on someone's review.
+ *
+ * `currentState` metrics — what is overdue, open or stale right now — deliberately
+ * ignore the period: "8 overdue" means today, not during March, and a list scoped
+ * to the month would quietly show a different eight.
+ */
+export async function evidenceFor(userId, metric, { month, taskType } = {}) {
+  const clause = TASK_METRIC_CLAUSES[metric];
+  if (!clause) return null;
+  if (clause.needsType && !taskType) return null;
+
+  const bounds = monthBounds(month);
+  // a "right now" clause does not mention the period at all, and Postgres rejects
+  // parameters a statement never uses — so only the ones referenced are sent
+  const params = clause.currentState ? [userId] : [userId, bounds.start, bounds.end];
+  if (clause.needsType) params.push(taskType);
+
+  const { rows } = await query(
+    `${EVIDENCE_SELECT}
+      WHERE t.assignee_id = $1 AND ${clause.where}
+      ORDER BY ${clause.order}
+      LIMIT 200`,
+    params,
+  );
+
+  return {
+    metric,
+    label: clause.label,
+    // says which window the list is for, so a count and a list can be compared
+    basis: clause.currentState ? 'now' : 'period',
+    period: { start: bounds.start.toISOString(), end: bounds.end.toISOString() },
+    tasks: rows,
+  };
+}
+
+/** The black marks behind the marks figure, with the task each came from. */
+export async function markEvidence(userId, { month } = {}) {
+  const bounds = monthBounds(month);
+  const { rows } = await query(
+    `SELECT bm.*, t.ref AS task_ref, t.title AS task_title,
+            r.name AS rule_name, u.full_name AS raised_by_name
+       FROM black_marks bm
+       LEFT JOIN tasks t ON t.id = bm.task_id
+       LEFT JOIN blackmark_rules r ON r.id = bm.rule_id
+       LEFT JOIN users u ON u.id = bm.created_by
+      WHERE bm.user_id = $1 AND bm.status = 'active'
+        AND bm.occurred_at >= $2 AND bm.occurred_at < $3
+      ORDER BY bm.occurred_at DESC`,
+    [userId, bounds.start, bounds.end],
+  );
+  return { metric: 'markCount', label: 'Black marks in this period', basis: 'period', marks: rows };
+}
+
+/** The kudos behind the kudos figure. */
+export async function kudosEvidence(userId, { month } = {}) {
+  const bounds = monthBounds(month);
+  const { rows } = await query(
+    `SELECT k.*, u.full_name AS from_name, u.avatar_color AS from_color,
+            t.ref AS task_ref, t.title AS task_title
+       FROM kudos k
+       LEFT JOIN users u ON u.id = k.from_user
+       LEFT JOIN tasks t ON t.id = k.task_id
+      WHERE k.to_user = $1 AND k.created_at >= $2 AND k.created_at < $3
+      ORDER BY k.created_at DESC`,
+    [userId, bounds.start, bounds.end],
+  );
+  return { metric: 'kudos', label: 'Kudos in this period', basis: 'period', kudos: rows };
+}
+
+export const EVIDENCE_METRICS = Object.keys(TASK_METRIC_CLAUSES);

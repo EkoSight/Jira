@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import EvidenceDrawer from '../components/EvidenceDrawer.jsx';
+import TaskDialog from '../components/TaskDialog.jsx';
 import { monthKey, monthLabel } from '../lib/format.js';
 
 const STANDING = {
@@ -67,6 +69,9 @@ function ShareDialog({ review, month, onClose }) {
 
 function ReviewBody({ review, month, canShare }) {
   const [sharing, setSharing] = useState(false);
+  // which figure is being opened up, and the task being read inside it
+  const [evidence, setEvidence] = useState(null);
+  const [openTask, setOpenTask] = useState(null);
   const standing = STANDING[review.standing] || STANDING.good;
   const m = review.metrics;
 
@@ -95,39 +100,44 @@ function ReviewBody({ review, month, canShare }) {
         <p style={{ marginBottom: 0, marginTop: 12 }}>{review.summary}</p>
       </section>
 
+      {/* Every figure opens the records behind it. A number nobody can check is
+          an accusation rather than a measurement. */}
       <div className="stat-grid">
-        <div className="stat" style={{ cursor: 'default' }}>
-          <span className="stat-label">Completed</span>
-          <span className="stat-value tnum">{m.completed}</span>
-          <span className="stat-note">{m.previous.completed} last month</span>
-        </div>
-        <div className="stat" style={{ cursor: 'default' }}>
-          <span className="stat-label">On time</span>
-          <span className="stat-value tnum">{m.onTimeRate == null ? '—' : `${m.onTimeRate}%`}</span>
-          <span className="stat-note">
-            {m.previous.onTimeRate == null ? 'no history' : `${m.previous.onTimeRate}% last month`}
-          </span>
-        </div>
-        <div className="stat" style={{ cursor: 'default' }}>
-          <span className="stat-label">Overdue now</span>
-          <span className="stat-value tnum">{m.overdueNow}</span>
-          <span className="stat-note">of {m.openNow} open</span>
-        </div>
-        <div className="stat" style={{ cursor: 'default' }}>
-          <span className="stat-label">Black marks</span>
-          <span className="stat-value tnum">{m.markCount}</span>
-          <span className="stat-note">{m.markPoints} points</span>
-        </div>
-        <div className="stat" style={{ cursor: 'default' }}>
-          <span className="stat-label">Avg days late</span>
-          <span className="stat-value tnum">{m.late ? m.avgDaysLate.toFixed(1) : '—'}</span>
-          <span className="stat-note">{m.late} finished late</span>
-        </div>
-        <div className="stat" style={{ cursor: 'default' }}>
-          <span className="stat-label">Kudos</span>
-          <span className="stat-value tnum">{m.kudos}</span>
-          <span className="stat-note">from colleagues</span>
-        </div>
+        {[
+          { metric: 'completed', label: 'Completed', value: m.completed,
+            note: `${m.previous.completed} last month`, count: m.completed },
+          { metric: 'onTimeRate', label: 'On time',
+            value: m.onTimeRate == null ? '—' : `${m.onTimeRate}%`,
+            note: m.previous.onTimeRate == null ? 'no history' : `${m.previous.onTimeRate}% last month`,
+            count: m.late, title: 'The ones that missed the deadline' },
+          { metric: 'overdueNow', label: 'Overdue now', value: m.overdueNow,
+            note: `of ${m.openNow} open`, count: m.overdueNow },
+          { metric: 'markCount', label: 'Black marks', value: m.markCount,
+            note: `${m.markPoints} points`, count: m.markCount },
+          { metric: 'late', label: 'Avg days late',
+            value: m.late ? m.avgDaysLate.toFixed(1) : '—',
+            note: `${m.late} finished late`, count: m.late,
+            title: 'The ones that finished late' },
+          { metric: 'kudos', label: 'Kudos', value: m.kudos,
+            note: 'from colleagues', count: m.kudos },
+        ].map((stat) => {
+          const openable = stat.count > 0;
+          return (
+            <button
+              key={stat.metric}
+              type="button"
+              className={`stat${openable ? ' is-openable' : ''}`}
+              disabled={!openable}
+              title={openable ? (stat.title || `Show the ${stat.count} behind this`) : 'Nothing to show'}
+              onClick={() => openable && setEvidence({ metric: stat.metric, title: stat.title })}
+            >
+              <span className="stat-label">{stat.label}</span>
+              <span className="stat-value tnum">{stat.value}</span>
+              <span className="stat-note">{stat.note}</span>
+              {openable && <span className="stat-open"><Icon name="chevron" size={12} /></span>}
+            </button>
+          );
+        })}
       </div>
 
       <div className="grid-2" style={{ alignItems: 'start' }}>
@@ -140,24 +150,42 @@ function ReviewBody({ review, month, canShare }) {
             {review.concerns.length === 0 && (
               <div className="small muted">Nothing is flagged for this period.</div>
             )}
-            {review.concerns.map((concern) => (
-              <div key={concern.title} className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
-                <Icon
-                  name="alert"
-                  size={14}
-                  style={{ marginTop: 2, color: `var(--${concern.severity === 'high' ? 'critical' : 'warning'})` }}
-                />
-                <div className="grow">
-                  <div className="row" style={{ gap: 6 }}>
-                    <strong>{concern.title}</strong>
-                    {concern.severity && (
-                      <Badge tone={SEVERITY_TONE[concern.severity]}>{concern.severity}</Badge>
-                    )}
+            {review.concerns.map((concern) => {
+              const openable = Boolean(concern.metric);
+              const Wrapper = openable ? 'button' : 'div';
+              return (
+                <Wrapper
+                  key={concern.title}
+                  {...(openable
+                    ? {
+                      type: 'button',
+                      className: 'finding is-openable',
+                      onClick: () => setEvidence({
+                        metric: concern.metric,
+                        taskType: concern.task_type,
+                        title: concern.title,
+                      }),
+                    }
+                    : { className: 'finding' })}
+                >
+                  <Icon
+                    name="alert"
+                    size={14}
+                    style={{ marginTop: 2, color: `var(--${concern.severity === 'high' ? 'critical' : 'warning'})` }}
+                  />
+                  <div className="grow">
+                    <div className="row wrap" style={{ gap: 6 }}>
+                      <strong>{concern.title}</strong>
+                      {concern.severity && (
+                        <Badge tone={SEVERITY_TONE[concern.severity]}>{concern.severity}</Badge>
+                      )}
+                    </div>
+                    <div className="small dim">{concern.detail}</div>
+                    {openable && <div className="small finding-open">Show me which ones →</div>}
                   </div>
-                  <div className="small dim">{concern.detail}</div>
-                </div>
-              </div>
-            ))}
+                </Wrapper>
+              );
+            })}
           </div>
         </section>
 
@@ -201,6 +229,23 @@ function ReviewBody({ review, month, canShare }) {
       )}
 
       {sharing && <ShareDialog review={review} month={month} onClose={() => setSharing(false)} />}
+
+      {evidence && (
+        <EvidenceDrawer
+          userId={review.user.id}
+          userName={review.user.full_name}
+          metric={evidence.metric}
+          taskType={evidence.taskType}
+          title={evidence.title}
+          month={month}
+          onClose={() => setEvidence(null)}
+          onOpenTask={(task) => setOpenTask(task.id)}
+        />
+      )}
+
+      {/* a finished task opens on its record, so "why did this go wrong" is
+          answered rather than handed back as a form */}
+      {openTask && <TaskDialog taskId={openTask} onClose={() => setOpenTask(null)} onSaved={() => {}} />}
     </div>
   );
 }

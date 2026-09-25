@@ -812,6 +812,114 @@ router.post(
   }),
 );
 
+// ---------------------------------------------------------------- the record
+//
+// What happened, rather than what the fields are.
+
+/**
+ * A finished task's record.
+ *
+ * The task form is for changing a task. Once work is done the question is a
+ * different one — what was this, who did it, how long did it take, was it on
+ * time, what did they say they did, and what did it cost — and answering that
+ * from a form full of editable inputs makes a reader reconstruct it themselves.
+ *
+ * Everything here is read from what was already stored as the work happened.
+ * Nothing is inferred, and a task with no completion note says so plainly rather
+ * than filling the gap.
+ */
+router.get(
+  '/:id/summary',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const params = [id];
+    const visibility = visibilityClause(req.currentUser, params);
+    const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1 AND ${visibility}`, params);
+    const task = rows[0];
+    if (!task) throw notFound('Task not found');
+
+    const [marks, activity, threads, checklist, subtasks, keyResults, collaborators] =
+      await Promise.all([
+        // what it cost, if anything
+        query(
+          `SELECT bm.*, r.name AS rule_name, u.full_name AS waived_by_name
+             FROM black_marks bm
+             LEFT JOIN blackmark_rules r ON r.id = bm.rule_id
+             LEFT JOIN users u ON u.id = bm.waived_by
+            WHERE bm.task_id = $1 ORDER BY bm.occurred_at`,
+          [id],
+        ),
+        // the milestones, not every field edit: who picked it up, moved it, closed it
+        query(
+          `SELECT a.*, u.full_name AS actor_name, u.avatar_color
+             FROM task_activity a LEFT JOIN users u ON u.id = a.actor_id
+            WHERE a.task_id = $1
+              AND (a.action <> 'updated' OR a.field IN ('assignee_id', 'due_date', 'status_id'))
+            ORDER BY a.created_at`,
+          [id],
+        ),
+        listThreads('TASK', id),
+        query('SELECT * FROM task_checklist_items WHERE task_id = $1 ORDER BY position, id', [id]),
+        query(
+          `SELECT t.id, t.ref, t.title, t.completed_at, s.stage, s.name AS status_name,
+                  u.full_name AS assignee_name, u.avatar_color AS assignee_color
+             FROM tasks t
+             JOIN workflow_statuses s ON s.id = t.status_id
+             LEFT JOIN users u ON u.id = t.assignee_id
+            WHERE t.parent_task_id = $1 AND t.is_archived = FALSE
+            ORDER BY t.position, t.id`,
+          [id],
+        ),
+        query(
+          `SELECT kr.id, kr.title, l.is_primary, o.id AS objective_id, o.title AS objective_title
+             FROM task_key_result_links l
+             JOIN key_results kr ON kr.id = l.key_result_id
+             JOIN objectives o ON o.id = kr.objective_id
+            WHERE l.task_id = $1 ORDER BY l.is_primary DESC`,
+          [id],
+        ),
+        query(
+          `SELECT u.id, u.full_name, u.avatar_color
+             FROM task_collaborators tc JOIN users u ON u.id = tc.user_id
+            WHERE tc.task_id = $1 ORDER BY u.full_name`,
+          [id],
+        ),
+      ]);
+
+    const withMessages = await Promise.all(
+      threads.map(async (thread) => ({ ...thread, messages: await listMessages(thread.id) })),
+    );
+
+    const closedBy = [...activity.rows].reverse()
+      .find((row) => row.action === 'completed' || row.action === 'moved');
+
+    res.json({
+      task,
+      // the shape of how it went, worked out from stored timestamps only
+      timeline: {
+        created_at: task.created_at,
+        started_at: activity.rows.find((a) => a.action === 'moved')?.created_at ?? null,
+        due_date: task.due_date,
+        original_due_date: task.original_due_date,
+        due_date_changes: task.due_date_changes,
+        completed_at: task.completed_at,
+      },
+      closed_by: closedBy
+        ? { name: closedBy.actor_name, color: closedBy.avatar_color, at: closedBy.created_at }
+        : null,
+      outcome_note: task.completion_note || null,
+      black_marks: marks.rows,
+      milestones: activity.rows,
+      threads: withMessages,
+      checklist: checklist.rows,
+      subtasks: subtasks.rows,
+      key_results: keyResults.rows,
+      collaborators: collaborators.rows,
+      can_edit: canEdit(req.currentUser, task),
+    });
+  }),
+);
+
 // ---------------------------------------------------------------- comments
 
 router.post(

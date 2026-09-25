@@ -1919,3 +1919,176 @@ button.sig-row { font: inherit; cursor: pointer; }
   .channel-chip { max-width: 100%; }
   .value-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ------------------------------------------------------------------
+   Opening up a review, and the record of a finished task
+   ------------------------------------------------------------------ */
+
+/* a stat with records behind it is a way in, and looks like one */
+button.stat {
+  position: relative;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: default;
+}
+button.stat.is-openable { cursor: pointer; }
+button.stat.is-openable:hover { border-color: var(--brand); background: var(--brand-wash); }
+button.stat:disabled { opacity: 1; }
+.stat-open {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  color: var(--ink-muted);
+}
+button.stat.is-openable:hover .stat-open { color: var(--brand-ink); }
+
+.finding {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+}
+.finding.is-openable { cursor: pointer; }
+.finding.is-openable:hover { border-color: var(--border); background: var(--surface-2); }
+.finding-open { color: var(--brand-ink); font-weight: 600; margin-top: 3px; opacity: 0; }
+.finding.is-openable:hover .finding-open { opacity: 1; }
+/* keyboard users never hover, so the affordance shows on focus too */
+.finding.is-openable:focus-visible .finding-open { opacity: 1; }
+
+/* ---------------------------------------------------------- evidence list */
+
+.evidence-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.evidence-row:hover { border-color: var(--border-strong); background: var(--surface-2); }
+.evidence-row.is-static { cursor: default; }
+.evidence-row.is-static:hover { border-color: var(--border); background: var(--surface); }
+.evidence-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.evidence-title { font-size: 13px; font-weight: 550; line-height: 1.35; }
+.evidence-note {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.evidence-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+  flex: none;
+}
+
+/* ---------------------------------------------------------- the record */
+
+.record-verdict {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border-left: 3px solid var(--axis);
+  background: var(--surface-2);
+}
+.record-verdict.is-ontime { border-left-color: var(--good); background: var(--good-wash); }
+.record-verdict.is-late { border-left-color: var(--warning); background: var(--warning-wash); }
+
+.record-block {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.record-block-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+.record-text {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* what they said they did is the answer to the question being asked */
+.record-outcome {
+  padding: 10px 12px;
+  border-left: 3px solid var(--brand);
+  border-radius: var(--radius-sm);
+  background: var(--brand-wash);
+}
+
+.record-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 9px;
+}
+.record-fact {
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.record-fact.record-critical { border-color: var(--critical); background: var(--critical-wash); }
+.record-fact-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+.record-fact-value { font-size: 13px; font-weight: 600; margin-top: 3px; }
+
+.record-mark {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.record-step { display: flex; align-items: flex-start; gap: 10px; }
+.record-step-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--axis);
+  flex: none;
+}
+
+@media (max-width: 640px) {
+  .evidence-row { flex-wrap: wrap; }
+  .evidence-figure { align-items: flex-start; flex-direction: row; gap: 6px; }
+  .record-facts { grid-template-columns: 1fr 1fr; }
+}

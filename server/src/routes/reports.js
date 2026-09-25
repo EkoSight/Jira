@@ -11,7 +11,9 @@ import {
   upcomingDeadlines,
   recentActivity,
 } from '../services/metrics.js';
-import { performanceReview, teamReview } from '../services/performance.js';
+import {
+  evidenceFor, kudosEvidence, markEvidence, performanceReview, teamReview,
+} from '../services/performance.js';
 import { notify } from '../services/activity.js';
 import { getSettings } from '../services/settings.js';
 
@@ -92,6 +94,38 @@ router.get(
     const review = await performanceReview({ userId, month: req.query.month });
     if (!review) throw notFound('Team member not found');
     res.json({ review });
+  }),
+);
+
+/**
+ * The records behind one figure on a review.
+ *
+ * A review that cannot be opened up is an accusation: "8 tasks are overdue" is
+ * only useful if you can see which eight and go and do something about them.
+ * Same permission rule as the review itself — being able to read a number and
+ * being able to read the rows it came from are the same permission.
+ */
+router.get(
+  '/performance/:userId/evidence',
+  asyncHandler(async (req, res) => {
+    const userId = Number(req.params.userId);
+    if (userId !== req.currentUser.id && !hasPermission(req.currentUser, 'report.view')) {
+      throw forbidden('You can only view your own review');
+    }
+
+    const metric = String(req.query.metric || '');
+    const options = { month: req.query.month, taskType: req.query.task_type };
+
+    if (metric === 'markCount' || metric === 'markPoints') {
+      return res.json({ evidence: await markEvidence(userId, options) });
+    }
+    if (metric === 'kudos') {
+      return res.json({ evidence: await kudosEvidence(userId, options) });
+    }
+
+    const evidence = await evidenceFor(userId, metric, options);
+    if (!evidence) throw notFound('There is nothing recorded behind that figure');
+    return res.json({ evidence });
   }),
 );
 
