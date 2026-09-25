@@ -614,3 +614,449 @@ test('an ordinary task is untouched by any of this', async (t) => {
   assert.equal(detail.status, 200);
   assert.equal(detail.body.task.engagement_id, null);
 });
+
+// ------------------------------------------------------------ meetings
+
+test('a scheduled demo is not a completed demo', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const before = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  const clockBefore = new Date(before.body.account.last_external_at).getTime();
+
+  const booked = await call('POST', '/meetings', {
+    token: tokens.manager,
+    body: {
+      account_id: ids.account,
+      opportunity_id: ids.secondOpportunity,
+      kind: 'DEMO',
+      mode: 'IN_PERSON',
+      title: 'Soil Doctor demo at their Pune office',
+      objective: 'Show the device and the advisory flow end to end',
+      scheduled_at: new Date(Date.now() + 3 * 86400000).toISOString(),
+      location: 'KVF head office, Pune',
+      participant_contact_ids: [ids.meera],
+      participant_user_ids: [ids.manager],
+    },
+  });
+  assert.equal(booked.status, 201);
+  ids.meeting = booked.body.meeting.id;
+  assert.equal(booked.body.meeting.status, 'SCHEDULED');
+  assert.equal(booked.body.meeting.happened, false);
+  // and it says plainly that nothing was sent to anyone outside
+  assert.match(booked.body.note, /No calendar invitation or message was sent/);
+
+  // booking it is not engaging them
+  const after = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.equal(
+    new Date(after.body.account.last_external_at).getTime(),
+    clockBefore,
+    'putting a demo in the diary is not the same as having given one',
+  );
+
+  // the timeline distinguishes it
+  const scheduled = after.body.activities.find((a) => a.meeting_id === ids.meeting);
+  assert.ok(scheduled);
+  assert.equal(scheduled.outcome, 'SCHEDULED');
+});
+
+test('scheduling a demo creates its preparation work as ordinary tasks, once', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const detail = await call('GET', `/meetings/${ids.meeting}`, { token: tokens.manager });
+  const prep = detail.body.tasks.filter((task) => task.meeting_role === 'PREP');
+  assert.ok(prep.length >= 3, 'a demo has prerequisites worth tracking');
+
+  // they are real task records, in the ordinary system
+  const first = await call('GET', `/tasks/${prep[0].id}`, { token: tokens.manager });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.task.meeting_id, ids.meeting);
+  assert.ok(first.body.task.ref.startsWith('PAR-'), 'it takes a reference in the ordinary department series');
+
+  // asking again does not mint a second set
+  const again = await call('POST', `/meetings/${ids.meeting}/prep-tasks`, { token: tokens.manager });
+  assert.equal(again.body.created, 0, 'preparation work is created once, not once per save');
+
+  const still = await call('GET', `/meetings/${ids.meeting}`, { token: tokens.manager });
+  assert.equal(still.body.tasks.filter((task) => task.meeting_role === 'PREP').length, prep.length);
+});
+
+test('rescheduling moves the meeting and its prep, it does not duplicate them', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const listBefore = await call('GET', `/meetings?account_id=${ids.account}`, { token: tokens.manager });
+  const countBefore = listBefore.body.meetings.length;
+
+  const moved = await call('POST', `/meetings/${ids.meeting}/reschedule`, {
+    token: tokens.manager,
+    body: {
+      scheduled_at: new Date(Date.now() + 9 * 86400000).toISOString(),
+      reason: 'Dr Rao is travelling that week',
+    },
+  });
+  assert.equal(moved.status, 200);
+  assert.equal(moved.body.meeting.reschedule_count, 1);
+  assert.equal(moved.body.meeting.was_rescheduled, true);
+  assert.ok(moved.body.meeting.first_scheduled_at, 'the date first booked is kept');
+
+  const listAfter = await call('GET', `/meetings?account_id=${ids.account}`, { token: tokens.manager });
+  assert.equal(listAfter.body.meetings.length, countBefore, 'still one meeting, not two');
+
+  // the preparation work moved with it rather than being recreated
+  const detail = await call('GET', `/meetings/${ids.meeting}`, { token: tokens.manager });
+  const prep = detail.body.tasks.filter((task) => task.meeting_role === 'PREP');
+  assert.ok(prep.length >= 3);
+  assert.ok(
+    prep.every((task) => new Date(task.due_date).getTime() > Date.now() + 6 * 86400000),
+    'prep is now due just before the new date',
+  );
+});
+
+test('recording the outcome is what turns a demo into evidence', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const silent = await call('POST', `/meetings/${ids.meeting}/outcome`, {
+    token: tokens.manager,
+    body: { status: 'COMPLETED' },
+  });
+  assert.equal(silent.status, 400, 'a demo with no outcome recorded is the same as one that never happened');
+
+  const done = await call('POST', `/meetings/${ids.meeting}/outcome`, {
+    token: tokens.manager,
+    body: {
+      status: 'COMPLETED',
+      outcome: 'Showed the device and the advisory flow. Dr Rao wants lab correlation data.',
+      objections_raised: 'Concerned the per-farmer cost is too high for their grant.',
+      validations_requested: 'Third-party lab correlation on 200 samples',
+      next_decision: 'Whether to fund a 2,000-farmer pilot',
+      attended_contact_ids: [ids.meera],
+      follow_up: { title: 'Send the lab correlation report to Dr Rao' },
+    },
+  });
+  assert.equal(done.status, 200);
+  assert.equal(done.body.meeting.status, 'COMPLETED');
+  assert.equal(done.body.meeting.happened, true);
+  assert.ok(done.body.meeting.completed_at);
+
+  // the follow-up is an ordinary task, in the ordinary system
+  assert.ok(done.body.follow_up_task, 'the work that came out of it exists');
+  const task = await call('GET', `/tasks/${done.body.follow_up_task.id}`, { token: tokens.manager });
+  assert.equal(task.body.task.title, 'Send the lab correlation report to Dr Rao');
+  assert.equal(task.body.task.meeting_id, ids.meeting);
+  assert.equal(task.body.task.account_id, ids.account);
+
+  // NOW it counts as having engaged them
+  const account = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  const logged = account.body.activities.find(
+    (a) => a.meeting_id === ids.meeting && a.outcome === 'COMPLETED',
+  );
+  assert.ok(logged, 'a completed demo is evidence');
+  assert.equal(logged.is_external, true);
+});
+
+test('a cancelled meeting is recorded and counts for nothing', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const booked = await call('POST', '/meetings', {
+    token: tokens.manager,
+    body: {
+      account_id: ids.account,
+      title: 'Follow-up call that did not happen',
+      scheduled_at: new Date(Date.now() + 2 * 86400000).toISOString(),
+      create_prep_tasks: false,
+    },
+  });
+  const id = booked.body.meeting.id;
+
+  const before = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  const clockBefore = new Date(before.body.account.last_external_at).getTime();
+
+  const cancelled = await call('POST', `/meetings/${id}/outcome`, {
+    token: tokens.manager,
+    body: { status: 'CANCELLED', cancel_reason: 'They postponed to after the harvest' },
+  });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.body.meeting.status, 'CANCELLED');
+  assert.equal(cancelled.body.meeting.happened, false);
+
+  const after = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.equal(
+    new Date(after.body.account.last_external_at).getTime(),
+    clockBefore,
+    'a cancellation is not engagement',
+  );
+  // but it is on the record, distinguishable
+  assert.ok(after.body.activities.some((a) => a.meeting_id === id && a.outcome === 'CANCELLED'));
+});
+
+// ------------------------------------------------------------ delivery
+
+test('winning a deal starts delivery, and doing it twice does not split it in two', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const first = await call('POST', `/engagements/from-opportunity/${ids.firstOpportunity}`, {
+    token: tokens.manager,
+    body: { kickoff_on: dateOnly(7) },
+  });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.created, true);
+  ids.engagement = first.body.engagement.id;
+  assert.equal(first.body.engagement.state, 'PLANNING');
+
+  // the scope and agreement came across; the money did not
+  assert.equal(first.body.engagement.agreement_type, 'Signed pilot agreement');
+  assert.equal(first.body.engagement.agreed_value, 420000,
+    'the value is shown from the deal, not re-recorded here');
+  const { rows: columns } = await query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = $1 AND table_name = 'engagements'
+        AND column_name IN ('agreed_value','value','collected_value')`,
+    [config.db.schema],
+  );
+  assert.deepEqual(columns, [], 'delivery holds no amount of its own to double-count');
+
+  // pressing it again resolves to the same engagement
+  const again = await call('POST', `/engagements/from-opportunity/${ids.firstOpportunity}`, {
+    token: tokens.manager,
+    body: {},
+  });
+  assert.equal(again.status, 200);
+  assert.equal(again.body.created, false);
+  assert.equal(again.body.engagement.id, ids.engagement);
+
+  const listed = await call('GET', `/engagements?account_id=${ids.account}`, { token: tokens.manager });
+  assert.equal(listed.body.engagements.length, 1, 'one delivery, not two');
+});
+
+test('delivery work is created once, through the ordinary task engine', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const detail = await call('GET', `/engagements/${ids.engagement}`, { token: tokens.manager });
+  assert.ok(detail.body.tasks.length >= 3, 'kickoff work exists');
+
+  const task = await call('GET', `/tasks/${detail.body.tasks[0].id}`, { token: tokens.manager });
+  assert.equal(task.body.task.engagement_id, ids.engagement);
+  assert.equal(task.body.task.account_id, ids.account);
+
+  // re-running the link does not add more
+  await call('POST', `/engagements/from-opportunity/${ids.firstOpportunity}`, {
+    token: tokens.manager, body: {},
+  });
+  const again = await call('GET', `/engagements/${ids.engagement}`, { token: tokens.manager });
+  assert.equal(again.body.tasks.length, detail.body.tasks.length);
+});
+
+test('delivery runs on its own state, independent of the sales stage', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const atRisk = await call('PATCH', `/engagements/${ids.engagement}`, {
+    token: tokens.manager,
+    body: { state: 'AT_RISK', blockers: 'Their field team has not been freed up' },
+  });
+  assert.equal(atRisk.status, 200);
+  assert.equal(atRisk.body.engagement.state, 'AT_RISK');
+  assert.equal(atRisk.body.engagement.needs_attention, true);
+
+  // the deal is still won — a signed agreement says nothing about how delivery goes
+  const opportunity = await call('GET', `/opportunities/${ids.firstOpportunity}`, { token: tokens.manager });
+  assert.equal(opportunity.body.opportunity.status, 'WON');
+
+  // and the relationship history carries it
+  const account = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.ok(account.body.activities.some((a) => /at risk/i.test(a.subject || '')));
+});
+
+test('a milestone delivered is not a milestone accepted', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const created = await call('POST', `/engagements/${ids.engagement}/milestones`, {
+    token: tokens.manager,
+    body: { title: 'First 500 farmers onboarded', due_date: dateOnly(30) },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.milestone.status, 'PLANNED');
+  const milestoneId = created.body.milestone.id;
+
+  const delivered = await call('PATCH', `/engagements/${ids.engagement}/milestones/${milestoneId}`, {
+    token: tokens.manager, body: { status: 'DELIVERED' },
+  });
+  assert.equal(delivered.body.milestone.accepted_at, null, 'we delivered it; they have not accepted it');
+
+  const accepted = await call('PATCH', `/engagements/${ids.engagement}/milestones/${milestoneId}`, {
+    token: tokens.manager, body: { status: 'ACCEPTED' },
+  });
+  assert.ok(accepted.body.milestone.accepted_at, 'acceptance is recorded with who and when');
+  assert.equal(accepted.body.milestone.accepted_by, ids.manager);
+});
+
+test('delivery cannot be started on a deal that has not been won', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const denied = await call('POST', `/engagements/from-opportunity/${ids.secondOpportunity}`, {
+    token: tokens.manager, body: {},
+  });
+  assert.equal(denied.status, 400);
+  assert.match(denied.body.error, /once the deal is won/);
+});
+
+// ------------------------------------------------------------ the link library
+
+test('a resource is a link, and the shared library is referenced rather than copied', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // something reusable, in the shared library
+  const global = await call('POST', '/resources', {
+    token: tokens.admin,
+    body: {
+      title: 'Soil Doctor validation summary 2026',
+      url: 'https://drive.example.com/file/validation-2026',
+      category: 'Validation',
+      tags: ['validation', 'evidence'],
+      version_label: 'v3',
+    },
+  });
+  assert.equal(global.status, 201);
+  assert.equal(global.body.resource.account_id, null, 'it belongs to the shared library');
+  assert.match(global.body.note, /has not changed who can open it/);
+  ids.globalResource = global.body.resource.id;
+
+  // two leads point at the same one
+  const other = await call('POST', '/accounts', {
+    token: tokens.manager, body: { name: 'Second Org For Library', owner_user_id: ids.manager },
+  });
+  for (const accountId of [ids.account, other.body.account.id]) {
+    const referenced = await call('POST', `/resources/${ids.globalResource}/reference`, {
+      token: tokens.manager, body: { account_id: accountId },
+    });
+    assert.equal(referenced.status, 201);
+    assert.match(referenced.body.note, /Referenced, not copied/);
+  }
+
+  // one row in the library, referenced twice — no duplicates
+  const { rows: copies } = await query(
+    'SELECT COUNT(*)::int AS n FROM crm_resources WHERE url = $1',
+    ['https://drive.example.com/file/validation-2026'],
+  );
+  assert.equal(copies[0].n, 1, 'referencing a shared resource never makes a second copy of it');
+
+  // it shows in the lead's library, marked as coming from the shared one
+  const library = await call('GET', `/resources?account_id=${ids.account}`, { token: tokens.manager });
+  const seen = library.body.resources.find((r) => r.id === ids.globalResource);
+  assert.ok(seen);
+  assert.equal(seen.is_reference, true);
+  assert.equal(seen.from_global, true);
+
+  // removing the reference leaves the shared resource alone
+  await call('DELETE', `/resources/${ids.globalResource}/reference/${other.body.account.id}`, {
+    token: tokens.manager,
+  });
+  const stillThere = await call('GET', '/resources?account_id=global', { token: tokens.admin });
+  assert.ok(stillThere.body.resources.some((r) => r.id === ids.globalResource),
+    'the original is still in the shared library for everyone else');
+});
+
+test('a lead library starts with the shelves people actually use', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const library = await call('GET', `/resources?account_id=${ids.account}`, { token: tokens.manager });
+  const names = library.body.folders.map((f) => f.name);
+  assert.ok(names.includes('Proposals & Offers'));
+  assert.ok(names.includes('Validation & Evidence'));
+  assert.ok(names.includes('Agreements'));
+});
+
+test('only real, reachable web links are saved', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  for (const url of ['not a url', 'ftp://files.example.com/x', 'http://localhost:4000/admin',
+    'http://192.168.1.10/internal']) {
+    const refused = await call('POST', '/resources', {
+      token: tokens.manager,
+      body: { account_id: ids.account, title: 'Bad link', url },
+    });
+    assert.equal(refused.status, 400, `${url} is not a link worth storing`);
+  }
+});
+
+test('saving a link is not sending it, and sending it is recorded separately', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const before = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  const clockBefore = new Date(before.body.account.last_external_at).getTime();
+
+  const saved = await call('POST', '/resources', {
+    token: tokens.manager,
+    body: {
+      account_id: ids.account,
+      opportunity_id: ids.secondOpportunity,
+      title: 'Testing contract proposal v2',
+      url: 'https://docs.example.com/proposal-v2',
+      version_label: 'v2',
+    },
+  });
+  assert.equal(saved.status, 201);
+  ids.resource = saved.body.resource.id;
+
+  // putting it in the library did not engage anyone
+  const afterSave = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.equal(
+    new Date(afterSave.body.account.last_external_at).getTime(),
+    clockBefore,
+    'a document in the library is not a document that was sent',
+  );
+
+  // actually sending it is a separate claim, and that one counts
+  const shared = await call('POST', `/resources/${ids.resource}/shares`, {
+    token: tokens.manager,
+    body: {
+      account_id: ids.account,
+      opportunity_id: ids.secondOpportunity,
+      contact_id: ids.meera,
+      channel: 'EMAIL',
+      purpose: 'For her board meeting on Friday',
+    },
+  });
+  assert.equal(shared.status, 201);
+  assert.match(shared.body.note, /did not send anything and cannot grant access/);
+
+  const afterShare = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.ok(
+    new Date(afterShare.body.account.last_external_at).getTime() > clockBefore,
+    'sending something to a person is engagement',
+  );
+
+  // and the record says which version went to whom, by which channel
+  const shares = await call('GET', `/resources/${ids.resource}/shares`, { token: tokens.manager });
+  assert.equal(shares.body.shares.length, 1);
+  assert.equal(shares.body.shares[0].contact_name, 'Meera Joshi');
+  assert.equal(shares.body.shares[0].channel, 'EMAIL');
+  assert.equal(shares.body.shares[0].version_label, 'v2');
+});
+
+test('removing a link does not pretend to delete the document behind it', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const temp = await call('POST', '/resources', {
+    token: tokens.manager,
+    body: { account_id: ids.account, title: 'A link to drop', url: 'https://docs.example.com/drop-me' },
+  });
+  const removed = await call('DELETE', `/resources/${temp.body.resource.id}`, { token: tokens.manager });
+  assert.equal(removed.status, 200);
+  assert.match(removed.body.note, /document itself is untouched/);
+});
+
+test('only a manager may change the shared library', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const denied = await call('POST', '/resources', {
+    token: tokens.member,
+    body: { title: 'Member adding to the shared shelf', url: 'https://docs.example.com/nope' },
+  });
+  assert.equal(denied.status, 403);
+
+  // but they can add to a lead they work on
+  const allowed = await call('POST', '/resources', {
+    token: tokens.member,
+    body: { account_id: ids.account, title: 'Notes from the field day', url: 'https://docs.example.com/field-day' },
+  });
+  assert.equal(allowed.status, 201);
+});

@@ -21,6 +21,7 @@ import { runAccountScan } from '../jobs/accountScanner.js';
 import {
   listContacts, opportunitiesFor, possibleDuplicateContacts, recordOwnershipChange,
 } from '../services/opportunities.js';
+import { ensureFolders } from '../services/resources.js';
 
 const router = Router();
 
@@ -350,6 +351,9 @@ router.post(
           [created.id, data.contact_name ?? '', data.contact_email ?? '', data.contact_phone ?? '', req.currentUser.id],
         );
       }
+
+      // the shelves everyone ends up making by hand anyway
+      await ensureFolders(client, created.id);
 
       await logActivity(client, {
         accountId: created.id,
