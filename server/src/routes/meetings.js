@@ -357,7 +357,17 @@ router.post(
     const existing = await mustEdit(req.currentUser, id);
     const created = await withTransaction((client) =>
       createPrepTasks(client, existing, req.currentUser));
-    res.json({ created: created.length, tasks: created, meeting: await getMeeting(id) });
+
+    // creating nothing has two very different causes, and saying which is the
+    // difference between "already done" and "silently did nothing"
+    const meeting = await getMeeting(id);
+    let note = null;
+    if (created.length === 0) {
+      note = meeting.prep_tasks_created
+        ? 'The preparation tasks were already created.'
+        : 'No tasks were created: this organization has no department, so there is nowhere to file them.';
+    }
+    res.json({ created: created.length, tasks: created, meeting, note });
   }),
 );
 

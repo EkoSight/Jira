@@ -31,6 +31,32 @@ export const CRM_SIGNAL_META = {
   account_cold: { label: 'Going cold', severity: 'warning' },
   account_next_step_overdue: { label: 'Next step overdue', severity: 'warning' },
   account_no_next_step: { label: 'No next step', severity: 'warning' },
+
+  // the pipeline nudges: each says what to do, not just that something is wrong
+  gone_quiet: {
+    label: 'Gone quiet', severity: 'warning',
+    action: 'Speak to them, then log it',
+  },
+  next_action_overdue: {
+    label: 'Next action overdue', severity: 'warning',
+    action: 'Do it, or agree a new one with a date',
+  },
+  no_next_action: {
+    label: 'No next action', severity: 'warning',
+    action: 'Agree what happens next, and by when',
+  },
+  closing_with_blockers: {
+    label: 'Closing with blockers', severity: 'critical',
+    action: 'Resolve the must-haves, or move the close date honestly',
+  },
+  meeting_outcome_missing: {
+    label: 'Outcome not recorded', severity: 'warning',
+    action: 'Say what came of it',
+  },
+  milestone_overdue: {
+    label: 'Milestone overdue', severity: 'warning',
+    action: 'Deliver it, or say what is holding it up',
+  },
 };
 
 export const crmSignalMeta = (kind) => CRM_SIGNAL_META[kind] || { label: 'Needs a nudge', severity: 'warning' };
@@ -197,4 +223,45 @@ export function describeForecast(opportunity) {
       ? basis
       : `${basis} × ${probability}% (${opportunity.probability_source === 'explicit' ? 'set by hand' : 'stage default'})`,
   };
+}
+
+/**
+ * What a stage expects to be true before a deal enters it.
+ *
+ * The server returns the gaps for the stage a deal is IN. This works out the gaps
+ * for the stage it is about to move TO, which is the only moment the question is
+ * actually useful — so the same rules are applied here, against the target
+ * stage's own gate columns.
+ *
+ * Advisory, always. It tells somebody what is missing and lets them move the deal
+ * anyway: a real deal sometimes jumps a stage, and a tool that refuses is a tool
+ * people route around by lying to it.
+ */
+export function stageEntryGaps(opportunity, stage) {
+  if (!stage || stage.kind !== 'open') return [];
+  const gaps = [];
+  if (stage.requires_contact && !opportunity.contact_count) {
+    gaps.push({ kind: 'no_contact', label: 'No one named at the organization' });
+  }
+  if (stage.requires_next_action && !opportunity.next_step) {
+    gaps.push({ kind: 'no_next_step', label: 'No next action' });
+  }
+  if (stage.requires_next_action && opportunity.next_step && !opportunity.next_step_due) {
+    gaps.push({ kind: 'no_next_step_date', label: 'Next action has no date' });
+  }
+  if (stage.requires_value
+      && opportunity.eligible_value === null
+      && !opportunity.value_unknown) {
+    gaps.push({ kind: 'no_value', label: 'No value recorded, and not marked unknown' });
+  }
+  if (!opportunity.expected_close && stage.position >= 4) {
+    gaps.push({ kind: 'no_close_date', label: 'No expected close date' });
+  }
+  if (opportunity.unmet_must_haves > 0) {
+    gaps.push({
+      kind: 'unmet_must_haves',
+      label: `${opportunity.unmet_must_haves} must-have requirement${opportunity.unmet_must_haves === 1 ? '' : 's'} unresolved`,
+    });
+  }
+  return gaps;
 }

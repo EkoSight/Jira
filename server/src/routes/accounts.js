@@ -1,6 +1,8 @@
+import fs from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db/pool.js';
+import { upload, resolveStoredFile, deleteStoredFile } from '../lib/uploads.js';
 import { asyncHandler, notFound, badRequest, forbidden } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
@@ -841,6 +843,110 @@ router.delete(
     await query('DELETE FROM account_locations WHERE id = $1 AND account_id = $2',
       [Number(req.params.locationId), accountId]);
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- the dossier's images
+//
+// A logo or a banner can be either a link to an image already on the web or a
+// file uploaded here. Both are supported and kept apart: uploading does not
+// erase a pasted logo_url, and removing the upload falls back to it.
+
+const IMAGE_KINDS = { logo: 'LOGO', banner: 'BANNER' };
+const IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
+
+async function mustEditAccount(user, id) {
+  const { rows } = await query('SELECT * FROM accounts WHERE id = $1', [id]);
+  if (!rows[0]) throw notFound('Organization not found');
+  if (!canEditAccount(user, rows[0])) throw forbidden('You cannot edit this organization');
+  return rows[0];
+}
+
+router.post(
+  '/:id/image/:kind',
+  upload.single('file'),
+  asyncHandler(async (req, res) => {
+    const kind = IMAGE_KINDS[String(req.params.kind).toLowerCase()];
+    if (!kind) throw badRequest('Only a logo or a banner can be uploaded');
+    if (!req.file) throw badRequest('No file was uploaded');
+    if (!IMAGE_MIME.has(req.file.mimetype)) {
+      deleteStoredFile(req.file.filename);
+      throw badRequest('That has to be an image');
+    }
+
+    const id = Number(req.params.id);
+    try {
+      await mustEditAccount(req.currentUser, id);
+    } catch (err) {
+      // do not leave an orphan on disk when the upload is refused
+      deleteStoredFile(req.file.filename);
+      throw err;
+    }
+
+    const replaced = await withTransaction(async (client) => {
+      const { rows: old } = await client.query(
+        'SELECT stored_name FROM account_images WHERE account_id = $1 AND kind = $2', [id, kind],
+      );
+      await client.query(
+        `INSERT INTO account_images
+           (account_id, kind, stored_name, file_name, mime_type, size_bytes, uploaded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (account_id, kind) DO UPDATE
+           SET stored_name = EXCLUDED.stored_name, file_name = EXCLUDED.file_name,
+               mime_type = EXCLUDED.mime_type, size_bytes = EXCLUDED.size_bytes,
+               uploaded_by = EXCLUDED.uploaded_by, created_at = now()`,
+        [id, kind, req.file.filename, req.file.originalname, req.file.mimetype,
+          req.file.size, req.currentUser.id],
+      );
+      return old[0]?.stored_name ?? null;
+    });
+
+    // only once the row is safely committed
+    if (replaced && replaced !== req.file.filename) deleteStoredFile(replaced);
+
+    res.status(201).json({ account: await getAccount(id) });
+  }),
+);
+
+/** Streams it back. Visible to anyone who can see the organization. */
+router.get(
+  '/:id/image/:kind',
+  asyncHandler(async (req, res) => {
+    const kind = IMAGE_KINDS[String(req.params.kind).toLowerCase()];
+    if (!kind) throw notFound('No such image');
+
+    const { rows } = await query(
+      'SELECT * FROM account_images WHERE account_id = $1 AND kind = $2',
+      [Number(req.params.id), kind],
+    );
+    const image = rows[0];
+    if (!image) throw notFound('No image uploaded');
+
+    const filePath = resolveStoredFile(image.stored_name);
+    if (!fs.existsSync(filePath)) throw notFound('The file is no longer on the server');
+
+    res.setHeader('Content-Type', image.mime_type);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    fs.createReadStream(filePath).pipe(res);
+  }),
+);
+
+router.delete(
+  '/:id/image/:kind',
+  asyncHandler(async (req, res) => {
+    const kind = IMAGE_KINDS[String(req.params.kind).toLowerCase()];
+    if (!kind) throw badRequest('Only a logo or a banner can be removed');
+    const id = Number(req.params.id);
+    await mustEditAccount(req.currentUser, id);
+
+    const { rows } = await query(
+      'SELECT stored_name FROM account_images WHERE account_id = $1 AND kind = $2', [id, kind],
+    );
+    await query('DELETE FROM account_images WHERE account_id = $1 AND kind = $2', [id, kind]);
+    deleteStoredFile(rows[0]?.stored_name);
+
+    // the pasted link, if there was one, is still there and takes over again
+    res.json({ account: await getAccount(id) });
   }),
 );
 

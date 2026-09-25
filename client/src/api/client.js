@@ -1,4 +1,4 @@
-const BASE = import.meta.env.VITE_API_URL || '/api/taskflow';
+export const BASE = import.meta.env.VITE_API_URL || '/api/taskflow';
 const TOKEN_KEY = 'taskflow.token';
 
 export const tokenStore = {
@@ -160,6 +160,8 @@ export const api = {
   addAccountLocation: (id, data) => request('POST', `/accounts/${id}/locations`, data),
   deleteAccountLocation: (accountId, locationId) =>
     request('DELETE', `/accounts/${accountId}/locations/${locationId}`),
+  uploadAccountImage: (id, kind, file) => upload(`/accounts/${id}/image/${kind}`, file),
+  removeAccountImage: (id, kind) => request('DELETE', `/accounts/${id}/image/${kind}`),
 
   opportunities: (params) => request('GET', `/opportunities${qs(params)}`),
   opportunity: (id) => request('GET', `/opportunities/${id}`),
@@ -177,6 +179,52 @@ export const api = {
   linkOpportunityContact: (id, data) => request('POST', `/opportunities/${id}/contacts`, data),
   unlinkOpportunityContact: (id, contactId, role) =>
     request('DELETE', `/opportunities/${id}/contacts/${contactId}${qs({ role })}`),
+
+  // meetings and demos — scheduled is not completed, and the API keeps them apart
+  meetings: (params) => request('GET', `/meetings${qs(params)}`),
+  meeting: (id) => request('GET', `/meetings/${id}`),
+  scheduleMeeting: (data) => request('POST', '/meetings', data),
+  updateMeeting: (id, data) => request('PATCH', `/meetings/${id}`, data),
+  rescheduleMeeting: (id, data) => request('POST', `/meetings/${id}/reschedule`, data),
+  recordMeetingOutcome: (id, data) => request('POST', `/meetings/${id}/outcome`, data),
+  addMeetingPrepTasks: (id) => request('POST', `/meetings/${id}/prep-tasks`),
+
+  // delivery, after the win
+  engagements: (params) => request('GET', `/engagements${qs(params)}`),
+  engagement: (id) => request('GET', `/engagements/${id}`),
+  startDelivery: (opportunityId, data) =>
+    request('POST', `/engagements/from-opportunity/${opportunityId}`, data ?? {}),
+  updateEngagement: (id, data) => request('PATCH', `/engagements/${id}`, data),
+  addMilestone: (id, data) => request('POST', `/engagements/${id}/milestones`, data),
+  updateMilestone: (engagementId, milestoneId, data) =>
+    request('PATCH', `/engagements/${engagementId}/milestones/${milestoneId}`, data),
+  deleteMilestone: (engagementId, milestoneId) =>
+    request('DELETE', `/engagements/${engagementId}/milestones/${milestoneId}`),
+
+  // the link library — links, never files
+  resources: (params) => request('GET', `/resources${qs(params)}`),
+  resourceFolders: (params) => request('GET', `/resources/folders${qs(params)}`),
+  createResourceFolder: (data) => request('POST', '/resources/folders', data),
+  addResource: (data) => request('POST', '/resources', data),
+  updateResource: (id, data) => request('PATCH', `/resources/${id}`, data),
+  pinResource: (id) => request('POST', `/resources/${id}/pin`),
+  removeResource: (id) => request('DELETE', `/resources/${id}`),
+  referenceResource: (id, data) => request('POST', `/resources/${id}/reference`, data),
+  unreferenceResource: (id, accountId) =>
+    request('DELETE', `/resources/${id}/reference/${accountId}`),
+  resourceShares: (id) => request('GET', `/resources/${id}/shares`),
+  accountShares: (accountId) => request('GET', `/resources/shares/account/${accountId}`),
+  recordShare: (id, data) => request('POST', `/resources/${id}/shares`, data),
+
+  // the views and the dashboards
+  crmMap: (params) => request('GET', `/accounts/views/map${qs(params)}`),
+  crmTree: (params) => request('GET', `/accounts/views/tree${qs(params)}`),
+  crmDashboard: (params) => request('GET', `/accounts/dashboard/b2b${qs(params)}`),
+  crmPeople: (params) => request('GET', `/accounts/dashboard/people${qs(params)}`),
+  crmNudges: (params) => request('GET', `/accounts/nudges${qs(params)}`),
+  snoozeNudge: (data) => request('POST', '/accounts/nudges/snooze', data),
+  crmSnoozes: () => request('GET', '/accounts/nudges/snoozes'),
+  unsnoozeNudge: (id) => request('DELETE', `/accounts/nudges/snoozes/${id}`),
 
   pipeline: (params) => request('GET', `/accounts/pipeline${qs(params)}`),
   crmInsights: (params) => request('GET', `/accounts/insights${qs(params)}`),

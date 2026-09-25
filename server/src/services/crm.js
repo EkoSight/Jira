@@ -17,6 +17,14 @@ export const ACCOUNT_SELECT = `
          st.name AS stage_name, st.slug AS stage_slug, st.kind AS stage_kind,
          st.color AS stage_color, st.position AS stage_position,
          d.name AS department_name, d.color AS department_color,
+         seg.name AS segment_name, seg.slug AS segment_slug, seg.color AS segment_color,
+         seg.scope_template AS segment_scope_template,
+         -- when an image was uploaded rather than linked; the URL columns stay
+         -- exactly as they were, so a lead can have either
+         (SELECT i.created_at FROM account_images i
+           WHERE i.account_id = a.id AND i.kind = 'LOGO') AS logo_uploaded_at,
+         (SELECT i.created_at FROM account_images i
+           WHERE i.account_id = a.id AND i.kind = 'BANNER') AS banner_uploaded_at,
          (SELECT COUNT(*)::int FROM account_activities x WHERE x.account_id = a.id) AS activity_count,
          (SELECT COUNT(*)::int FROM tasks t
             WHERE t.account_id = a.id AND t.is_archived = FALSE) AS task_count,
@@ -31,6 +39,7 @@ export const ACCOUNT_SELECT = `
     LEFT JOIN users f ON f.id = a.follower_user_id
     LEFT JOIN account_stages st ON st.id = a.stage_id
     LEFT JOIN departments d ON d.id = a.department_id
+    LEFT JOIN crm_segments seg ON seg.id = a.segment_id
 `;
 
 const daysSince = (value, now = Date.now()) =>
@@ -44,6 +53,14 @@ export function decorateAccount(row, now = Date.now()) {
     days_since_activity: daysSince(row.last_activity_at, now),
     days_since_stage_change: daysSince(row.stage_changed_at, now),
     next_step_overdue: row.next_step_due ? new Date(row.next_step_due).getTime() < now : false,
+    // where the UI should actually fetch the image from: an upload wins over a
+    // pasted link, and the timestamp busts the cache when it is replaced
+    logo_src: row.logo_uploaded_at
+      ? `/accounts/${row.id}/image/logo?v=${new Date(row.logo_uploaded_at).getTime()}`
+      : row.logo_url || null,
+    banner_src: row.banner_uploaded_at
+      ? `/accounts/${row.id}/image/banner?v=${new Date(row.banner_uploaded_at).getTime()}`
+      : row.banner_url || null,
   };
 }
 

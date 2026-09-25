@@ -4,72 +4,10 @@ import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import AccountDialog from '../components/AccountDialog.jsx';
-import { ACCOUNT_TYPE_META, crmSignalMeta, formatMoney, freshnessLabel } from '../lib/crm.js';
-
-function NudgeStrip({ insights, onRunScan, canScan }) {
-  const [scanning, setScanning] = useState(false);
-  if (!insights || insights.summary.total_signals === 0) {
-    return (
-      <section className="card card-pad attention-clear">
-        <div className="row" style={{ gap: 10 }}>
-          <span className="sig-dot sig-good" aria-hidden="true" />
-          <div>
-            <div style={{ fontWeight: 650 }}>Every lead is being worked</div>
-            <div className="small muted">Nothing has stalled or gone cold. Keep it up.</div>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
-  const run = async () => {
-    setScanning(true);
-    try {
-      await onRunScan();
-    } finally {
-      setScanning(false);
-    }
-  };
-
-  return (
-    <section className="card card-pad stack">
-      <div className="row-between wrap">
-        <div>
-          <h2>Needs a nudge</h2>
-          <div className="small muted">
-            {insights.summary.stalled > 0 && <span className="crit-count">{insights.summary.stalled} stalled</span>}
-            {insights.summary.stalled > 0 && insights.summary.cold > 0 && ' · '}
-            {insights.summary.cold > 0 && `${insights.summary.cold} going cold`}
-            {insights.summary.no_next_step > 0 && ` · ${insights.summary.no_next_step} with no next step`}
-          </div>
-        </div>
-        {canScan && (
-          <button type="button" className="btn btn-sm" onClick={run} disabled={scanning}>
-            <Icon name="bell" size={13} /> {scanning ? 'Sending…' : 'Remind owners now'}
-          </button>
-        )}
-      </div>
-      <div className="stack-sm">
-        {insights.attention.slice(0, 6).map((signal) => {
-          const meta = crmSignalMeta(signal.kind);
-          return (
-            <Link key={signal.account_id} to={`/accounts/${signal.account_id}`} className="sig-row">
-              <span className={`sig-dot sig-${signal.severity}`} aria-hidden="true" />
-              <div className="grow" style={{ minWidth: 0 }}>
-                <div className="row wrap" style={{ gap: 6 }}>
-                  <span style={{ fontWeight: 600, fontSize: 13 }} className="truncate">{signal.title}</span>
-                  <Badge tone={signal.severity === 'critical' ? 'critical' : 'warning'}>{meta.label}</Badge>
-                </div>
-                <div className="small muted">{signal.stage_name} — {signal.detail}</div>
-              </div>
-              {signal.owner_name && <Avatar name={signal.owner_name} color={signal.owner_color} size={22} />}
-            </Link>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
+import CrmNudges from '../components/CrmNudges.jsx';
+import CrmDashboard from '../components/CrmDashboard.jsx';
+import { ListView, MapView, TreeView } from '../components/CrmViews.jsx';
+import { crmSignalMeta, formatMoney, freshnessLabel } from '../lib/crm.js';
 
 function AccountCard({ account, onOpen, onDragStart, onDragEnd, stages, onMove }) {
   const fresh = freshnessLabel(account.days_since_activity);
@@ -129,14 +67,18 @@ export default function Pipeline() {
   const navigate = useNavigate();
 
   const [board, setBoard] = useState(null);
-  const [insights, setInsights] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [ownerFilter, setOwnerFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
+  const [segmentFilter, setSegmentFilter] = useState('');
   const [mine, setMine] = useState(false);
+  const [segments, setSegments] = useState([]);
+  const [search, setSearch] = useState('');
+  // board, list, map, tree and dashboard are five ways of reading one dataset
+  const [view, setView] = useState('board');
 
   const filters = useMemo(
     () => ({
@@ -150,12 +92,14 @@ export default function Pipeline() {
   const load = useCallback(() => {
     setLoading(true);
     api.pipeline(filters).then(setBoard).catch((err) => toast.error(err)).finally(() => setLoading(false));
-    api.crmInsights({ owner_id: ownerFilter || undefined, department_id: departmentFilter || undefined })
-      .then(setInsights).catch(() => setInsights(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
   useEffect(load, [load]);
+
+  useEffect(() => {
+    api.crmSegments().then((r) => setSegments(r.segments)).catch(() => setSegments([]));
+  }, []);
 
   const move = async (account, stageId) => {
     if (account.stage_id === stageId) return;
@@ -176,19 +120,6 @@ export default function Pipeline() {
       load();
     } catch (err) {
       setBoard(previous);
-      toast.error(err);
-    }
-  };
-
-  const runScan = async () => {
-    try {
-      const result = await api.runCrmScan();
-      toast.success(
-        result.notified?.length
-          ? `Reminded ${result.notified.length} ${result.notified.length === 1 ? 'person' : 'people'}`
-          : 'Everyone has already been reminded today',
-      );
-    } catch (err) {
       toast.error(err);
     }
   };
@@ -237,10 +168,59 @@ export default function Pipeline() {
             <option key={d.id} value={d.id}>{d.name}</option>
           ))}
         </select>
+        {(view === 'map' || view === 'dashboard') && segments.length > 0 && (
+          <select className="select" value={segmentFilter}
+            onChange={(e) => setSegmentFilter(e.target.value)}>
+            <option value="">Every kind of partner</option>
+            {segments.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        )}
+        {view === 'list' && (
+          <input className="input" style={{ maxWidth: 220 }} placeholder="Search the list"
+            value={search} onChange={(e) => setSearch(e.target.value)} />
+        )}
       </div>
 
-      <NudgeStrip insights={insights} onRunScan={runScan} canScan={can('settings.manage')} />
+      <div className="tabs tabs-scroll" role="tablist">
+        {[
+          ['board', 'Board'],
+          ['list', 'List'],
+          ['map', 'Map'],
+          ['tree', 'Who leads what'],
+          ['dashboard', 'Dashboard'],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={view === key}
+            className={`tab${view === key ? ' active' : ''}`}
+            onClick={() => setView(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
+      {/* on the board the nudges lead; elsewhere the view you chose does, and
+          they follow it */}
+      {view === 'board' && <CrmNudges departmentId={departmentFilter} compact />}
+
+      {view === 'list' && <ListView board={board} search={search} />}
+      {view === 'map' && <MapView departmentId={departmentFilter} segmentId={segmentFilter} />}
+      {view === 'tree' && <TreeView departmentId={departmentFilter} />}
+      {view === 'dashboard' && (
+        <CrmDashboard departmentId={departmentFilter} ownerId={ownerFilter}
+          segmentId={segmentFilter} />
+      )}
+
+      {view !== 'board' && view !== 'dashboard' && (
+        <CrmNudges departmentId={departmentFilter} />
+      )}
+
+      {view === 'board' && (
       <div className="board-scroll">
         {openStages.map((stage) => (
           <section
@@ -283,8 +263,9 @@ export default function Pipeline() {
           </section>
         ))}
       </div>
+      )}
 
-      {closedStages.some((s) => s.accounts.length > 0) && (
+      {view === 'board' && closedStages.some((s) => s.accounts.length > 0) && (
         <div className="row wrap" style={{ gap: 8 }}>
           {closedStages.map((stage) => (
             <Badge key={stage.id} dot={stage.color}>

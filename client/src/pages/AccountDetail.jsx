@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, ConfirmButton, EmptyState, Icon, Spinner } from '../components/ui.jsx';
+import { AuthedImage, Avatar, Badge, ConfirmButton, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import AccountDialog from '../components/AccountDialog.jsx';
 import LogActivityDialog from '../components/LogActivityDialog.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import CrmPeople from '../components/CrmPeople.jsx';
 import CrmOpportunities from '../components/CrmOpportunities.jsx';
+import CrmMeetings from '../components/CrmMeetings.jsx';
+import CrmDelivery from '../components/CrmDelivery.jsx';
+import CrmResources from '../components/CrmResources.jsx';
+import AccountDossier from '../components/AccountDossier.jsx';
 import { ACCOUNT_TYPE_META, QUICK_ACTIVITIES, activityMeta, formatMoney, freshnessLabel } from '../lib/crm.js';
 import { formatDate, relativeTime, dueLabel, STAGE_LABEL } from '../lib/format.js';
 
@@ -75,7 +79,8 @@ export default function AccountDetail() {
   if (!data) return <EmptyState title="Account not found" />;
 
   const {
-    account, activities, tasks, contacts = [], opportunities = [], can_edit: canEdit,
+    account, activities, tasks, contacts = [], opportunities = [], locations = [],
+    engagements = [], can_edit: canEdit,
   } = data;
   const typeMeta = ACCOUNT_TYPE_META[account.type];
   const fresh = freshnessLabel(account.days_since_activity);
@@ -113,9 +118,11 @@ export default function AccountDetail() {
         <div className="row-between wrap" style={{ alignItems: 'flex-start' }}>
           <div className="grow" style={{ minWidth: 0 }}>
             <div className="row wrap" style={{ gap: 8 }}>
+              <AuthedImage src={account.logo_src} alt="" className="account-logo" />
               <h1 style={{ fontSize: 22 }}>{account.name}</h1>
               <Badge tone={typeMeta.tone}>{typeMeta.label}</Badge>
               {account.stage_name && <Badge dot={account.stage_color}>{account.stage_name}</Badge>}
+              {account.segment_name && <Badge dot={account.segment_color}>{account.segment_name}</Badge>}
             </div>
             <div className="small muted row wrap" style={{ gap: 6, marginTop: 4 }}>
               {money && <span>{money}</span>}
@@ -233,8 +240,12 @@ export default function AccountDetail() {
       <div className="tabs tabs-scroll" role="tablist">
         {[
           ['overview', 'Overview'],
+          ['dossier', 'Who they are'],
           ['people', `People${contacts.length ? ` (${contacts.length})` : ''}`],
           ['opportunities', `Opportunities${opportunities.length ? ` (${opportunities.length})` : ''}`],
+          ['meetings', 'Meetings'],
+          ['delivery', `Delivery${engagements.length ? ` (${engagements.length})` : ''}`],
+          ['library', 'Links'],
           ['activity', 'Activity'],
           ['tasks', `Tasks${tasks.length ? ` (${tasks.length})` : ''}`],
         ].map(([key, label]) => (
@@ -267,6 +278,45 @@ export default function AccountDetail() {
           opportunities={opportunities}
           stages={stages}
           canEdit={canEdit}
+          segmentTemplate={account.segment_scope_template || []}
+          segmentName={account.segment_name}
+          onChanged={load}
+        />
+      )}
+
+      {tab === 'dossier' && (
+        <AccountDossier
+          account={account}
+          locations={locations}
+          canEdit={canEdit}
+          onChanged={load}
+        />
+      )}
+
+      {tab === 'meetings' && (
+        <CrmMeetings
+          accountId={account.id}
+          opportunities={opportunities}
+          contacts={contacts}
+          canEdit={canEdit && can('crm.activity.log')}
+          onChanged={load}
+        />
+      )}
+
+      {tab === 'delivery' && (
+        <CrmDelivery
+          accountId={account.id}
+          opportunities={opportunities}
+          onChanged={load}
+        />
+      )}
+
+      {tab === 'library' && (
+        <CrmResources
+          accountId={account.id}
+          opportunities={opportunities}
+          contacts={contacts}
+          canEdit={canEdit && can('crm.create')}
           onChanged={load}
         />
       )}

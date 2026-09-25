@@ -1,5 +1,44 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { initials } from '../lib/format.js';
+import { BASE, fetchBlobUrl } from '../api/client.js';
+
+/**
+ * An image that may live behind the API's bearer token.
+ *
+ * A path starting with "/" is one of ours and has to be fetched with the token,
+ * so it goes through a blob URL. Anything else is already a public address and is
+ * used as it stands — a logo hosted on the partner's own site is not proxied.
+ */
+export function AuthedImage({ src, alt, className, style, fallback = null }) {
+  const internal = typeof src === 'string' && src.startsWith('/');
+  const [url, setUrl] = useState(internal ? null : src || null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+    if (!internal) {
+      setUrl(src || null);
+      return undefined;
+    }
+    let objectUrl;
+    let cancelled = false;
+    setUrl(null);
+    fetchBlobUrl(`${BASE}${src}`)
+      .then((result) => {
+        if (cancelled) return URL.revokeObjectURL(result);
+        objectUrl = result;
+        return setUrl(result);
+      })
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src, internal]);
+
+  if (!src || failed || !url) return fallback;
+  return <img className={className} style={style} src={url} alt={alt} />;
+}
 
 export function Avatar({ name, color = '#3b82f6', size = 26, title }) {
   return (

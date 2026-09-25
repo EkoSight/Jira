@@ -1271,3 +1271,147 @@ test('a nudge can be put down, but only with a reason and a date', async (t) => 
   assert.equal(record.reason, 'Waiting on their notes before I write it up');
   assert.ok(new Date(record.until).getTime() > Date.now());
 });
+
+// ---------------------------------------------------------------- the dossier
+
+test('a segment brings the scope questions worth asking that kind of partner', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const segments = await call('GET', '/accounts/meta/segments', { token: tokens.manager });
+  assert.equal(segments.status, 200);
+
+  const csr = segments.body.segments.find((s) => s.slug === 'csr');
+  const manufacturer = segments.body.segments.find((s) => s.slug === 'input-mfr');
+  assert.ok(csr && manufacturer);
+
+  // the point of templates is that they differ — a CSR team and an input
+  // manufacturer are not asked the same things
+  assert.ok(csr.scope_template.length >= 4, 'a CSR team has its own prompts');
+  assert.ok(manufacturer.scope_template.length >= 4);
+  const csrKeys = csr.scope_template.map((f) => f.key);
+  const mfrKeys = manufacturer.scope_template.map((f) => f.key);
+  assert.ok(csrKeys.includes('impact_metrics'));
+  assert.ok(mfrKeys.includes('dealer_network'));
+  assert.notDeepEqual(csrKeys, mfrKeys);
+  // every prompt is usable: it has a key and something to show a person
+  for (const field of [...csr.scope_template, ...manufacturer.scope_template]) {
+    assert.ok(field.key && field.label, 'a prompt with no label cannot be asked');
+  }
+
+  // setting the segment carries the template onto the organization's record, so
+  // the deal screen knows what to ask without a second lookup
+  const patched = await call('PATCH', `/accounts/${ids.account}`, {
+    token: tokens.manager,
+    body: { segment_id: csr.id },
+  });
+  assert.equal(patched.status, 200);
+
+  const detail = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.equal(detail.body.account.segment_name, 'CSR team');
+  assert.deepEqual(
+    detail.body.account.segment_scope_template.map((f) => f.key),
+    csrKeys,
+  );
+});
+
+test('answering a scope prompt keeps anything the template does not cover', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const opportunities = await call('GET', `/opportunities?account_id=${ids.account}`, {
+    token: tokens.manager,
+  });
+  const opportunity = opportunities.body.opportunities[0];
+  assert.ok(opportunity);
+
+  await call('PATCH', `/opportunities/${opportunity.id}`, {
+    token: tokens.manager,
+    body: { scope: { districts: 'Pune, Satara', legacy_note: 'written before templates existed' } },
+  });
+
+  const saved = await call('GET', `/opportunities/${opportunity.id}`, { token: tokens.manager });
+  assert.equal(saved.body.opportunity.scope.districts, 'Pune, Satara');
+  assert.equal(
+    saved.body.opportunity.scope.legacy_note,
+    'written before templates existed',
+    'a value outside the current template is not discarded',
+  );
+});
+
+test('a logo can be uploaded, served and removed without losing a pasted one', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // a pasted address first — an externally hosted logo is a perfectly good answer
+  await call('PATCH', `/accounts/${ids.account}`, {
+    token: tokens.manager,
+    body: { logo_url: 'https://partner.example/logo.png' },
+  });
+  const linked = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.equal(linked.body.account.logo_src, 'https://partner.example/logo.png');
+
+  // the smallest valid PNG, so the test exercises the real mime check
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AARAwMAA8AAf8Ao7wAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const form = new FormData();
+  form.append('file', new Blob([png], { type: 'image/png' }), 'logo.png');
+
+  const upload = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/logo`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${tokens.manager}` },
+    body: form,
+  });
+  assert.equal(upload.status, 201);
+  const uploaded = await upload.json();
+  // the upload wins over the pasted address, and says where to fetch it
+  assert.match(uploaded.account.logo_src, new RegExp(`^/accounts/${ids.account}/image/logo\\?v=\\d+$`));
+  assert.ok(uploaded.account.logo_uploaded_at);
+  // and the pasted address is still on the record, not overwritten
+  assert.equal(uploaded.account.logo_url, 'https://partner.example/logo.png');
+
+  const served = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/logo`, {
+    headers: { authorization: `Bearer ${tokens.manager}` },
+  });
+  assert.equal(served.status, 200);
+  assert.equal(served.headers.get('content-type'), 'image/png');
+  assert.equal(Buffer.from(await served.arrayBuffer()).length, png.length);
+
+  // a non-image is refused rather than stored and served as one
+  const bad = new FormData();
+  bad.append('file', new Blob([Buffer.from('not an image')], { type: 'text/plain' }), 'notes.txt');
+  const refused = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/logo`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${tokens.manager}` },
+    body: bad,
+  });
+  assert.equal(refused.status, 400);
+
+  // removing the upload falls back to the address, it does not blank the logo
+  const removed = await call('DELETE', `/accounts/${ids.account}/image/logo`, {
+    token: tokens.manager,
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.body.account.logo_src, 'https://partner.example/logo.png');
+  assert.equal(removed.body.account.logo_uploaded_at, null);
+});
+
+test('somebody who cannot edit the organization cannot change its banner', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AARAwMAA8AAf8Ao7wAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const form = new FormData();
+  form.append('file', new Blob([png], { type: 'image/png' }), 'banner.png');
+
+  const attempt = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/banner`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${tokens.member}` },
+    body: form,
+  });
+  assert.equal(attempt.status, 403);
+
+  const detail = await call('GET', `/accounts/${ids.account}`, { token: tokens.manager });
+  assert.equal(detail.body.account.banner_uploaded_at, null, 'nothing was stored');
+});

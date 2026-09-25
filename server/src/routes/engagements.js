@@ -115,18 +115,25 @@ router.post(
         kickoffOn: data.kickoff_on ?? undefined,
       });
 
+      let kickoffTasks = [];
       if (linked.created && data.create_kickoff_tasks !== false) {
         const { rows: fresh } = await client.query(
           'SELECT * FROM engagements WHERE id = $1', [linked.engagement_id],
         );
-        await createKickoffTasks(client, fresh[0], req.currentUser);
+        kickoffTasks = await createKickoffTasks(client, fresh[0], req.currentUser);
       }
-      return linked;
+      return { ...linked, kickoffTasks };
     });
 
+    // asking for kick-off tasks and getting none is worth saying out loud
+    const wantedTasks = result.created && data.create_kickoff_tasks !== false;
     res.status(result.created ? 201 : 200).json({
       engagement: await getEngagement(result.engagement_id),
       created: result.created,
+      kickoff_tasks: result.kickoffTasks.length,
+      note: wantedTasks && result.kickoffTasks.length === 0
+        ? 'No kick-off tasks were created: this organization has no department, so there is nowhere to file them.'
+        : null,
     });
   }),
 );

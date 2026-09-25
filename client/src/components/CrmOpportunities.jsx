@@ -5,7 +5,7 @@ import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx
 import {
   ENGAGEMENT_MODELS, IMPORTANCE_META, OPPORTUNITY_STATUS_META, REQUIREMENT_CATEGORIES,
   REQUIREMENT_STATUS_META, VALUE_BASIS_LABEL, VALUE_FIELDS,
-  describeForecast, exactMoney, formatMoney, modelLabel,
+  describeForecast, exactMoney, formatMoney, modelLabel, stageEntryGaps,
 } from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
 
@@ -126,6 +126,8 @@ function StageDialog({ opportunity, stages, onClose, onSaved }) {
   const target = stages.find((s) => String(s.id) === String(stageId));
   const isWon = target?.kind === 'won';
   const isLost = target?.kind === 'lost';
+  // what the stage being entered expects, not what the current one does
+  const entryGaps = stageEntryGaps(opportunity, target);
 
   const save = async () => {
     if (!stageId) return toast.error('Pick a stage');
@@ -180,16 +182,25 @@ function StageDialog({ opportunity, stages, onClose, onSaved }) {
           </select>
         </Field>
 
-        {opportunity.gaps?.length > 0 && target?.kind === 'open' && (
+        {entryGaps.length > 0 && (
           <div className="ask-banner ask-warning">
             <Icon name="alert" size={15} />
             <div className="grow">
-              <strong>Still missing</strong>
-              <div className="small">
-                {opportunity.gaps.map((g) => g.label).join(' · ')}. You can move it anyway — this is
-                a reminder, not a gate.
+              <strong>{target.name} usually expects these first</strong>
+              <ul className="gap-list">
+                {entryGaps.map((gap) => <li key={gap.kind}>{gap.label}</li>)}
+              </ul>
+              <div className="small muted">
+                You can move it anyway. This is what the stage expects, not a lock — and it is said
+                here because now is when it matters.
               </div>
             </div>
+          </div>
+        )}
+        {target?.kind === 'open' && entryGaps.length === 0 && (
+          <div className="ask-banner ask-good">
+            <Icon name="check" size={15} />
+            <span className="small">Everything {target.name} expects is in place.</span>
           </div>
         )}
 
@@ -344,6 +355,137 @@ function ValuePanel({ opportunity, canEdit, onChanged }) {
   );
 }
 
+/**
+ * The scope questions that matter for this kind of partner.
+ *
+ * The fields come from the organization's segment, so a CSR team is asked about
+ * budget cycles and impact reporting while an input manufacturer is asked about
+ * territories and dealer networks. They are prompts: an unanswered one stays
+ * blank rather than being filled with a guess, and a partner who does not fit the
+ * template is still recorded — the free-text summary is always there.
+ */
+function ScopePanel({ opportunity, template, segmentName, canEdit, onChanged }) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({});
+  const [summary, setSummary] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const scope = opportunity.scope || {};
+  const answered = template.filter((f) => scope[f.key]);
+
+  const startEdit = () => {
+    setForm(Object.fromEntries(template.map((f) => [f.key, scope[f.key] ?? ''])));
+    setSummary(opportunity.scope_summary || '');
+    setEditing(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      // anything already in scope that the template does not cover is preserved —
+      // a segment change must not silently discard what somebody wrote
+      const next = { ...scope };
+      for (const field of template) {
+        const value = String(form[field.key] ?? '').trim();
+        if (value) next[field.key] = value;
+        else delete next[field.key];
+      }
+      await api.updateOpportunity(opportunity.id, {
+        scope: next,
+        scope_summary: summary.trim() || null,
+      });
+      toast.success('Scope saved');
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const extras = Object.keys(scope).filter((key) => !template.some((f) => f.key === key));
+
+  return (
+    <div className="stack-sm">
+      <div className="row-between wrap">
+        <span className="stat-label">
+          Scope{segmentName ? ` · what matters for a ${segmentName.toLowerCase()}` : ''}
+        </span>
+        {canEdit && (
+          <button type="button" className="btn-link small" onClick={() => (editing ? setEditing(false) : startEdit())}>
+            {editing ? 'Cancel' : 'Edit scope'}
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div className="stack-sm">
+          {template.length === 0 && (
+            <div className="small muted">
+              This organization has no segment set, so there are no tailored prompts. Set one on the
+              "Who they are" tab and the right questions appear here.
+            </div>
+          )}
+          <div className="grid-2">
+            {template.map((field) => (
+              <Field key={field.key} label={field.label} hint={field.hint}>
+                <input className="input" value={form[field.key] ?? ''}
+                  onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))} />
+              </Field>
+            ))}
+          </div>
+          <Field label="Anything the prompts do not cover">
+            <textarea className="textarea" rows={2} value={summary}
+              onChange={(e) => setSummary(e.target.value)} />
+          </Field>
+          <div className="small muted">
+            Leave a prompt blank if you do not know. Blank means unknown, and unknown is worth
+            recording honestly.
+          </div>
+          <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Save scope'}
+          </button>
+        </div>
+      ) : (
+        <>
+          {answered.length === 0 && extras.length === 0 && !opportunity.scope_summary ? (
+            <div className="small muted">
+              {template.length > 0
+                ? `Nothing pinned down yet. ${template.length} question${template.length === 1 ? '' : 's'} worth asking: ${template.map((f) => f.label.toLowerCase()).join(', ')}.`
+                : 'Nothing recorded, and no segment set to suggest what to ask.'}
+            </div>
+          ) : (
+            <dl className="scope-grid">
+              {answered.map((field) => (
+                <div key={field.key}>
+                  <dt>{field.label}</dt>
+                  <dd>{scope[field.key]}</dd>
+                </div>
+              ))}
+              {extras.map((key) => (
+                <div key={key}>
+                  <dt>{key.replaceAll('_', ' ')}</dt>
+                  <dd>{String(scope[key])}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {answered.length > 0 && answered.length < template.length && (
+            <div className="small muted">
+              Still open: {template.filter((f) => !scope[f.key]).map((f) => f.label.toLowerCase()).join(', ')}.
+            </div>
+          )}
+          {opportunity.scope_summary && (
+            <p className="small">{opportunity.scope_summary}</p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function RequirementsPanel({ opportunity, canEdit, onChanged }) {
   const toast = useToast();
   const { users } = useRefData();
@@ -471,7 +613,9 @@ function RequirementsPanel({ opportunity, canEdit, onChanged }) {
   );
 }
 
-export default function CrmOpportunities({ accountId, opportunities, stages, canEdit, onChanged }) {
+export default function CrmOpportunities({
+  accountId, opportunities, stages, canEdit, onChanged, segmentTemplate = [], segmentName = null,
+}) {
   const [adding, setAdding] = useState(false);
   const [moving, setMoving] = useState(null);
   const [open, setOpen] = useState(() => opportunities[0]?.id ?? null);
@@ -545,6 +689,9 @@ export default function CrmOpportunities({ accountId, opportunities, stages, can
                 {expanded && (
                   <div className="opportunity-body">
                     <ValuePanel opportunity={opportunity} canEdit={canEdit} onChanged={onChanged} />
+                    <hr className="divider" />
+                    <ScopePanel opportunity={opportunity} template={segmentTemplate}
+                      segmentName={segmentName} canEdit={canEdit} onChanged={onChanged} />
                     <hr className="divider" />
                     <RequirementsPanel opportunity={opportunity} canEdit={canEdit} onChanged={onChanged} />
                     {canEdit && (
