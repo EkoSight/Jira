@@ -135,24 +135,77 @@ export async function pipeline(filters = {}) {
  * System events (stage changes, conversions) come through here too, so the
  * timeline is the single record of everything that happened.
  */
-export async function logActivity(client, { accountId, type, actorId, subject = null, body = null, nextStep = null, taskId = null, occurredAt = null, meta = {} }) {
+/**
+ * Which kinds of touch actually count as having engaged the partner.
+ *
+ * A stage change, an internal note or a new opportunity is bookkeeping. Only a
+ * real exchange with a real person resets the follow-up clock — otherwise
+ * tidying up a record looks like working the relationship.
+ */
+const EXTERNAL_TYPES = new Set(['EMAIL', 'CALL', 'PPT', 'PROPOSAL', 'MEETING', 'DEMO', 'IN_PERSON']);
+
+/**
+ * What a touch of each kind means by default, when the caller does not say.
+ * Sending is not the same as being answered, and neither is the same as a
+ * conversation that actually happened.
+ */
+const DEFAULT_OUTCOME = {
+  EMAIL: 'SENT', PPT: 'SENT', PROPOSAL: 'SENT',
+  CALL: 'COMPLETED', MEETING: 'COMPLETED', DEMO: 'COMPLETED', IN_PERSON: 'COMPLETED',
+};
+
+export async function logActivity(client, {
+  accountId, type, actorId, subject = null, body = null, nextStep = null,
+  taskId = null, occurredAt = null, meta = {},
+  opportunityId = null, engagementId = null, meetingId = null, contactId = null,
+  channel = null, direction = null, outcome = null, externalParticipants = null,
+  isExternal = null,
+}) {
   const runner = client || { query };
+
+  // "did we actually engage them" is decided by what happened, not by who typed it
+  const external = isExternal === null ? EXTERNAL_TYPES.has(type) : isExternal;
+  const resolvedOutcome = outcome ?? DEFAULT_OUTCOME[type] ?? 'NOTED';
+  // an attempt that did not connect is not engagement, whatever its type
+  const countsAsEngagement = external && !['ATTEMPTED', 'CANCELLED', 'NO_SHOW', 'SCHEDULED'].includes(resolvedOutcome);
+
   const { rows } = await runner.query(
-    `INSERT INTO account_activities (account_id, type, actor_id, subject, body, next_step, task_id, occurred_at, meta)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()),$9)
+    `INSERT INTO account_activities
+       (account_id, type, actor_id, subject, body, next_step, task_id, occurred_at, meta,
+        opportunity_id, engagement_id, meeting_id, contact_id, channel, direction,
+        outcome, external_participants, is_external)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()),$9,
+             $10,$11,$12,$13,$14,$15,$16,$17,$18)
      RETURNING *`,
-    [accountId, type, actorId, subject, body, nextStep, taskId, occurredAt, meta],
+    [
+      accountId, type, actorId, subject, body, nextStep, taskId, occurredAt, meta,
+      opportunityId, engagementId, meetingId, contactId, channel, direction,
+      resolvedOutcome, externalParticipants, external,
+    ],
   );
 
   // the account is only as "worked" as its most recent real touch
   await runner.query(
     `UPDATE accounts
         SET last_activity_at = GREATEST(COALESCE(last_activity_at, to_timestamp(0)), $2),
+            last_external_at = CASE WHEN $4 THEN
+              GREATEST(COALESCE(last_external_at, to_timestamp(0)), $2) ELSE last_external_at END,
             next_step = COALESCE($3, next_step),
             updated_at = now()
       WHERE id = $1`,
-    [accountId, rows[0].occurred_at, nextStep],
+    [accountId, rows[0].occurred_at, nextStep, countsAsEngagement],
   );
+
+  // and so is the deal it was about
+  if (opportunityId && countsAsEngagement) {
+    await runner.query(
+      `UPDATE opportunities
+          SET last_external_at = GREATEST(COALESCE(last_external_at, to_timestamp(0)), $2),
+              updated_at = now()
+        WHERE id = $1`,
+      [opportunityId, rows[0].occurred_at],
+    );
+  }
 
   return rows[0];
 }

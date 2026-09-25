@@ -16,6 +16,7 @@ import objectiveRoutes from './routes/objectives.js';
 import keyResultRoutes from './routes/keyResults.js';
 import accountRoutes from './routes/accounts.js';
 import threadRoutes from './routes/threads.js';
+import opportunityRoutes from './routes/opportunities.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
 import { requirePermission } from './middleware/auth.js';
@@ -60,6 +61,8 @@ export function createTaskFlowRouter() {
 
   // CRM / pipeline, mounted the same way — off cleanly when disabled
   router.use('/accounts', requireCrmEnabled, requirePermission('crm.view'), accountRoutes);
+  // deals live alongside the organizations that hold them, behind the same gate
+  router.use('/opportunities', requireCrmEnabled, requirePermission('crm.view'), opportunityRoutes);
 
   return router;
 }

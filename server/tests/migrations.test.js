@@ -173,3 +173,161 @@ test('the new features work on data created before them', async (t) => {
   );
   assert.ok(note[0].id);
 });
+
+test('an existing lead keeps everything it had when it becomes an organization', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // The riskiest change in the B2B upgrade: `accounts` held the organization AND
+  // the deal, and 011 splits them. Production is holding real leads, so this
+  // builds a database at the old shape and upgrades it, exactly as a deploy does.
+  const files = (await fs.readdir(migrationsDir)).filter((f) => f.endsWith('.sql')).sort();
+  const beforeSplit = files.filter((f) => f < '011');
+
+  await query(`DROP SCHEMA IF EXISTS "${config.db.schema}" CASCADE`);
+  await query(`CREATE SCHEMA "${config.db.schema}"`);
+  await query(`
+    CREATE TABLE schema_migrations (
+      name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`);
+  for (const file of beforeSplit) {
+    await query(await fs.readFile(path.join(migrationsDir, file), 'utf8'));
+    await query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+  }
+
+  await query(`INSERT INTO departments (key, name, position) VALUES ('CRM', 'Partnerships', 1)`);
+  await query(
+    `INSERT INTO workflow_statuses (name, slug, stage, position, is_default)
+     VALUES ('To Do', 'to-do', 'todo', 1, TRUE), ('Done', 'done', 'done', 2, FALSE)`,
+  );
+  await query(
+    `INSERT INTO users (full_name, email, password_hash, role, must_change_password)
+     VALUES ('Lead Owner', 'crm-owner@test.local', $1, 'manager', FALSE)`,
+    [await hashPassword('Password123!')],
+  );
+
+  const { rows: seed } = await query(`
+    SELECT (SELECT id FROM departments WHERE key = 'CRM') AS dept,
+           (SELECT id FROM workflow_statuses WHERE slug = 'to-do') AS status,
+           (SELECT id FROM users WHERE email = 'crm-owner@test.local') AS usr,
+           (SELECT id FROM account_stages WHERE slug = 'proposal') AS proposal
+  `);
+  const { dept, status, usr, proposal } = seed[0];
+
+  // a lead worked the old way: a stage, a value, one contact, a next step
+  const { rows: leadRows } = await query(
+    `INSERT INTO accounts
+       (name, type, stage_id, status, owner_user_id, department_id, value, currency,
+        contact_name, contact_email, contact_phone, next_step, next_step_due, created_by)
+     VALUES ('Krishi Foundation', 'LEAD', $1, 'ACTIVE', $2, $3, 1250000, 'INR',
+             'Meera Joshi', 'meera@krishi.example', '+91 98200 11111',
+             'Send the pilot proposal', CURRENT_DATE + 3, $2)
+     RETURNING id`,
+    [proposal, usr, dept],
+  );
+  const leadId = leadRows[0].id;
+
+  // a lost lead too, so the outcome is not quietly revived by the split
+  await query(
+    `INSERT INTO accounts (name, type, stage_id, status, owner_user_id, created_by)
+     VALUES ('Cold Co', 'LEAD', (SELECT id FROM account_stages WHERE slug = 'lost'), 'LOST', $1, $1)`,
+    [usr],
+  );
+
+  await query(
+    `INSERT INTO account_activities (account_id, type, actor_id, subject, occurred_at)
+     VALUES ($1, 'CALL', $2, 'Intro call', now() - interval '9 days'),
+            ($1, 'PROPOSAL', $2, 'Sent the deck', now() - interval '2 days'),
+            ($1, 'NOTE', $2, 'Internal note', now() - interval '1 day')`,
+    [leadId, usr],
+  );
+
+  await query(
+    `INSERT INTO tasks (ref, title, department_id, status_id, assignee_id, created_by, account_id)
+     VALUES ('CRM-1', 'Follow up on the proposal', $1, $2, $3, $3, $4)`,
+    [dept, status, usr, leadId],
+  );
+
+  const before = await query(
+    `SELECT COUNT(*)::int AS accounts,
+            (SELECT COUNT(*)::int FROM account_activities) AS activities,
+            (SELECT COUNT(*)::int FROM tasks WHERE account_id IS NOT NULL) AS linked_tasks
+       FROM accounts`,
+  );
+
+  // ---- upgrade
+  assert.ok(await runMigrations({ verbose: false }) >= 1, 'the split actually ran');
+
+  const after = await query(
+    `SELECT COUNT(*)::int AS accounts,
+            (SELECT COUNT(*)::int FROM account_activities) AS activities,
+            (SELECT COUNT(*)::int FROM tasks WHERE account_id IS NOT NULL) AS linked_tasks
+       FROM accounts`,
+  );
+  assert.deepEqual(after.rows[0], before.rows[0], 'no lead, activity or task link was lost');
+
+  // every lead now has exactly one opportunity carrying the deal it already held
+  const { rows: opps } = await query(
+    `SELECT o.*, a.primary_opportunity_id, s.slug AS stage_slug
+       FROM opportunities o
+       JOIN accounts a ON a.id = o.account_id
+       LEFT JOIN account_stages s ON s.id = o.stage_id
+      WHERE o.account_id = $1`,
+    [leadId],
+  );
+  assert.equal(opps.length, 1, 'one opportunity, not none and not two');
+  const opportunity = opps[0];
+  assert.equal(opportunity.stage_slug, 'proposal', 'it kept the stage it was in');
+  assert.equal(Number(opportunity.estimated_value), 1250000, 'and the value it was worth');
+  assert.equal(opportunity.status, 'ACTIVE');
+  assert.equal(opportunity.next_step, 'Send the pilot proposal');
+  assert.equal(opportunity.primary_opportunity_id, opportunity.id, 'the lead points at it');
+
+  // a settled lead stays settled
+  const { rows: lost } = await query(
+    `SELECT o.status FROM opportunities o JOIN accounts a ON a.id = o.account_id
+      WHERE a.name = 'Cold Co'`,
+  );
+  assert.equal(lost[0].status, 'LOST', 'a lost deal is not revived by the split');
+
+  // the one contact it had is now the first stakeholder, not a lost field
+  const { rows: contacts } = await query(
+    'SELECT * FROM account_contacts WHERE account_id = $1',
+    [leadId],
+  );
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].full_name, 'Meera Joshi');
+  assert.equal(contacts[0].email, 'meera@krishi.example');
+  assert.equal(contacts[0].is_primary, true);
+  // and the original columns are untouched, so a rollback still reads them
+  const { rows: original } = await query('SELECT contact_name FROM accounts WHERE id = $1', [leadId]);
+  assert.equal(original[0].contact_name, 'Meera Joshi');
+
+  // history and work are attached to the deal they belonged to
+  const { rows: attached } = await query(
+    `SELECT (SELECT COUNT(*)::int FROM account_activities WHERE opportunity_id = $1) AS activities,
+            (SELECT COUNT(*)::int FROM tasks WHERE opportunity_id = $1) AS tasks`,
+    [opportunity.id],
+  );
+  assert.equal(attached[0].activities, 3);
+  assert.equal(attached[0].tasks, 1, 'the follow-up task follows the deal');
+
+  // the external clock ignores the internal note: the last real touch was the deck
+  const { rows: clock } = await query(
+    `SELECT last_external_at, (SELECT occurred_at FROM account_activities
+       WHERE account_id = $1 AND type = 'PROPOSAL') AS deck_at
+       FROM accounts WHERE id = $1`,
+    [leadId],
+  );
+  assert.equal(
+    new Date(clock[0].last_external_at).getTime(),
+    new Date(clock[0].deck_at).getTime(),
+    'an internal note does not count as having engaged them',
+  );
+
+  // running it twice must not mint a second opportunity for the same lead
+  assert.equal(await runMigrations({ verbose: false }), 0);
+  const { rows: again } = await query(
+    'SELECT COUNT(*)::int AS n FROM opportunities WHERE account_id = $1', [leadId],
+  );
+  assert.equal(again[0].n, 1, 'the backfill is not repeated');
+});

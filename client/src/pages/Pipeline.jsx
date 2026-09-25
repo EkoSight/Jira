@@ -204,7 +204,7 @@ export default function Pipeline() {
     <div className="stack" style={{ gap: 14 }}>
       <div className="row-between wrap">
         <div>
-          <h1>Pipeline</h1>
+          <h1>B2B Pipeline</h1>
           <div className="small muted">
             {board.total} open lead{board.total === 1 ? '' : 's'}
             {formatMoney(totalValue) && ` · ${formatMoney(totalValue)} in play`}

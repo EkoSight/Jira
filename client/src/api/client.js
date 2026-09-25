@@ -149,6 +149,35 @@ export const api = {
   linkTask: (id, data) => request('POST', `/key-results/${id}/tasks`, data),
   unlinkTask: (id, taskId) => request('DELETE', `/key-results/${id}/tasks/${taskId}`),
 
+  // ---- B2B: organizations, the deals inside them, and the people who decide
+  crmSegments: () => request('GET', '/accounts/meta/segments'),
+  accountContacts: (id, params) => request('GET', `/accounts/${id}/contacts${qs(params)}`),
+  addContact: (id, data) => request('POST', `/accounts/${id}/contacts`, data),
+  updateContact: (accountId, contactId, data) =>
+    request('PATCH', `/accounts/${accountId}/contacts/${contactId}`, data),
+  deactivateContact: (accountId, contactId) =>
+    request('DELETE', `/accounts/${accountId}/contacts/${contactId}`),
+  addAccountLocation: (id, data) => request('POST', `/accounts/${id}/locations`, data),
+  deleteAccountLocation: (accountId, locationId) =>
+    request('DELETE', `/accounts/${accountId}/locations/${locationId}`),
+
+  opportunities: (params) => request('GET', `/opportunities${qs(params)}`),
+  opportunity: (id) => request('GET', `/opportunities/${id}`),
+  createOpportunity: (data) => request('POST', '/opportunities', data),
+  updateOpportunity: (id, data) => request('PATCH', `/opportunities/${id}`, data),
+  moveOpportunityStage: (id, data) => request('POST', `/opportunities/${id}/stage`, data),
+  setOpportunityStatus: (id, data) => request('POST', `/opportunities/${id}/status`, data),
+  archiveOpportunity: (id) => request('DELETE', `/opportunities/${id}`),
+  opportunityRequirements: (id) => request('GET', `/opportunities/${id}/requirements`),
+  addRequirement: (id, data) => request('POST', `/opportunities/${id}/requirements`, data),
+  updateRequirement: (opportunityId, requirementId, data) =>
+    request('PATCH', `/opportunities/${opportunityId}/requirements/${requirementId}`, data),
+  deleteRequirement: (opportunityId, requirementId) =>
+    request('DELETE', `/opportunities/${opportunityId}/requirements/${requirementId}`),
+  linkOpportunityContact: (id, data) => request('POST', `/opportunities/${id}/contacts`, data),
+  unlinkOpportunityContact: (id, contactId, role) =>
+    request('DELETE', `/opportunities/${id}/contacts/${contactId}${qs({ role })}`),
+
   pipeline: (params) => request('GET', `/accounts/pipeline${qs(params)}`),
   crmInsights: (params) => request('GET', `/accounts/insights${qs(params)}`),
   runCrmScan: (force) => request('POST', '/accounts/scan', { force: force === true }),

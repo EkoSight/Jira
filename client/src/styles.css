@@ -1644,6 +1644,7 @@ button.sig-row { font: inherit; cursor: pointer; }
   background: var(--warning-wash);
   color: var(--ink);
 }
+.ask-banner.ask-warning { border-left-color: var(--warning); background: var(--warning-wash); }
 .ask-banner.ask-info { border-left-color: var(--brand); background: var(--brand-wash); }
 .ask-banner.ask-critical { border-left-color: var(--critical); background: var(--critical-wash); }
 
@@ -1776,4 +1777,145 @@ button.sig-row { font: inherit; cursor: pointer; }
 @media (max-width: 640px) {
   .kind-picker { gap: 5px; }
   .kind-chip { font-size: 11.5px; padding: 3px 9px; }
+}
+
+/* ------------------------------------------------------------------
+   B2B CRM — organizations, their people, and the deals inside them
+   ------------------------------------------------------------------ */
+
+.contact-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.contact-card:hover { border-color: var(--border-strong); }
+
+/* a way to open the channel this person answers on — nothing is sent for them */
+.channel-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 220px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.channel-chip:hover { border-color: var(--brand); color: var(--brand-ink); }
+.channel-chip.is-preferred {
+  border-color: transparent;
+  background: var(--brand-wash);
+  color: var(--brand-ink);
+  font-weight: 600;
+}
+
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* ---------------------------------------------------------- deals */
+
+.opportunity {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.opportunity.is-settled { background: var(--surface-2); }
+.opportunity:hover { border-color: var(--border-strong); }
+
+.opportunity-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 12px 11px 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.opportunity-head:hover { background: var(--surface-3); }
+.opportunity-rail { width: 4px; align-self: stretch; min-height: 44px; flex: none; }
+
+.opportunity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* the four amounts, side by side so nobody reads them as one number */
+.value-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.value-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 9px;
+}
+.value-cell {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.value-cell-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+.value-cell-amount { font-size: 16px; font-weight: 680; letter-spacing: -0.02em; margin-top: 2px; }
+/* "not known" is a fact about the deal, not a number — so it does not look like one */
+.value-cell-amount.is-unknown {
+  font-size: 12px;
+  font-weight: 500;
+  font-style: italic;
+  color: var(--ink-muted);
+  letter-spacing: 0;
+}
+.value-cell-exact { font-size: 10.5px; color: var(--ink-muted); }
+
+.forecast-line {
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.requirement-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+@media (max-width: 640px) {
+  .contact-card { flex-wrap: wrap; }
+  .channel-chip { max-width: 100%; }
+  .value-grid { grid-template-columns: 1fr 1fr; }
 }

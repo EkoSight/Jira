@@ -19,7 +19,7 @@ const NAV = [
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
   { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },
-  { to: '/pipeline', label: 'Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
+  { to: '/pipeline', label: 'B2B Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
   { to: '/notes', label: 'My notes', icon: 'note', permission: 'note.use' },
   { to: '/team', label: 'Team', icon: 'team', permission: 'user.view' },
   { to: '/recognition', label: 'Recognition', icon: 'trophy' },

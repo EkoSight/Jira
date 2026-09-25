@@ -6,6 +6,8 @@ import { Avatar, Badge, ConfirmButton, EmptyState, Icon, Spinner } from '../comp
 import AccountDialog from '../components/AccountDialog.jsx';
 import LogActivityDialog from '../components/LogActivityDialog.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
+import CrmPeople from '../components/CrmPeople.jsx';
+import CrmOpportunities from '../components/CrmOpportunities.jsx';
 import { ACCOUNT_TYPE_META, QUICK_ACTIVITIES, activityMeta, formatMoney, freshnessLabel } from '../lib/crm.js';
 import { formatDate, relativeTime, dueLabel, STAGE_LABEL } from '../lib/format.js';
 
@@ -53,6 +55,7 @@ export default function AccountDetail() {
   const [editing, setEditing] = useState(false);
   const [logging, setLogging] = useState(null);
   const [addingTask, setAddingTask] = useState(false);
+  const [tab, setTab] = useState('overview');
   const [openTask, setOpenTask] = useState(null);
 
   const load = () => {
@@ -71,7 +74,9 @@ export default function AccountDetail() {
   if (loading && !data) return <Spinner label="Loading the account" />;
   if (!data) return <EmptyState title="Account not found" />;
 
-  const { account, activities, tasks, can_edit: canEdit } = data;
+  const {
+    account, activities, tasks, contacts = [], opportunities = [], can_edit: canEdit,
+  } = data;
   const typeMeta = ACCOUNT_TYPE_META[account.type];
   const fresh = freshnessLabel(account.days_since_activity);
   const money = formatMoney(account.value, account.currency);
@@ -99,7 +104,7 @@ export default function AccountDetail() {
   return (
     <div className="stack" style={{ gap: 16 }}>
       <div className="row small muted">
-        <Link to="/pipeline" className="btn-link">Pipeline</Link>
+        <Link to="/pipeline" className="btn-link">B2B Pipeline</Link>
         <span>/</span>
         <span className="truncate">{account.name}</span>
       </div>
@@ -225,10 +230,59 @@ export default function AccountDetail() {
         </section>
       )}
 
-      <div className="grid-2" style={{ alignItems: 'start' }}>
+      <div className="tabs tabs-scroll" role="tablist">
+        {[
+          ['overview', 'Overview'],
+          ['people', `People${contacts.length ? ` (${contacts.length})` : ''}`],
+          ['opportunities', `Opportunities${opportunities.length ? ` (${opportunities.length})` : ''}`],
+          ['activity', 'Activity'],
+          ['tasks', `Tasks${tasks.length ? ` (${tasks.length})` : ''}`],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            className={`tab${tab === key ? ' active' : ''}`}
+            onClick={() => setTab(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'people' && (
+        <CrmPeople
+          accountId={account.id}
+          contacts={contacts}
+          opportunities={opportunities}
+          canEdit={canEdit}
+          onChanged={load}
+        />
+      )}
+
+      {tab === 'opportunities' && (
+        <CrmOpportunities
+          accountId={account.id}
+          opportunities={opportunities}
+          stages={stages}
+          canEdit={canEdit}
+          onChanged={load}
+        />
+      )}
+
+      {tab === 'activity' && (
         <section className="card card-pad stack">
           <h2>Activity</h2>
           <Timeline activities={activities} />
+        </section>
+      )}
+
+      {tab === 'overview' && (
+      <div className="grid-2" style={{ alignItems: 'start' }}>
+        <section className="card card-pad stack">
+          <h2>Recent activity</h2>
+          <Timeline activities={activities.slice(0, 6)} />
         </section>
 
         <section className="card card-pad stack">
@@ -261,6 +315,42 @@ export default function AccountDetail() {
           )}
         </section>
       </div>
+      )}
+
+      {tab === 'tasks' && (
+        <section className="card card-pad stack">
+          <div className="row-between">
+            <h2>Tasks</h2>
+            {can('task.create') && (
+              <button type="button" className="btn btn-sm" onClick={() => setAddingTask(true)}>
+                <Icon name="plus" size={13} /> Add task
+              </button>
+            )}
+          </div>
+          <div className="small muted">
+            The same task records as everywhere else — editing one here changes it in My Tasks too.
+          </div>
+          {tasks.length === 0 ? (
+            <div className="small muted">No tasks yet. Work on this relationship shows up here.</div>
+          ) : (
+            <div className="stack-sm">
+              {tasks.map((task) => {
+                const due = dueLabel(task.due_date, { done: task.stage === 'done' });
+                return (
+                  <button key={task.id} type="button" className="link-row" onClick={() => setOpenTask(task.id)}>
+                    <span className="task-ref">{task.ref}</span>
+                    <span className="grow truncate">{task.title}</span>
+                    {task.assignee_name && <Avatar name={task.assignee_name} color={task.assignee_color} size={20} />}
+                    <Badge tone={task.stage === 'done' ? 'good' : due.tone}>
+                      {task.stage === 'done' ? 'Done' : due.text}
+                    </Badge>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
       {editing && (
         <AccountDialog account={account} stages={stages} onClose={() => setEditing(false)} onSaved={load} />

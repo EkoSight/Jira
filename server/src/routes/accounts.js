@@ -18,6 +18,10 @@ import {
 import { analyseAccounts } from '../services/accountInsights.js';
 import { runAccountScan } from '../jobs/accountScanner.js';
 
+import {
+  listContacts, opportunitiesFor, possibleDuplicateContacts, recordOwnershipChange,
+} from '../services/opportunities.js';
+
 const router = Router();
 
 const slugify = (value) =>
@@ -41,6 +45,38 @@ const accountInput = z.object({
   next_step: z.string().max(2000).nullable().optional(),
   next_step_due: z.string().min(8).nullable().optional(),
   status: z.enum(ACCOUNT_STATUSES).optional(),
+
+  // the organization dossier
+  segment_id: z.number().int().positive().nullable().optional(),
+  logo_url: z.string().max(500).nullable().optional(),
+  banner_url: z.string().max(500).nullable().optional(),
+  linkedin_url: z.string().max(500).nullable().optional(),
+  hq_address: z.string().max(1000).nullable().optional(),
+  operating_regions: z.array(z.string().max(80)).optional(),
+  crops: z.array(z.string().max(80)).optional(),
+  tags: z.array(z.string().max(40)).optional(),
+  relationship_summary: z.string().max(20000).nullable().optional(),
+  why_it_matters: z.string().max(20000).nullable().optional(),
+  relationship_potential: z.number().min(0).nullable().optional(),
+});
+
+const contactInput = z.object({
+  full_name: z.string().min(2).max(160),
+  designation: z.string().max(160).nullable().optional(),
+  department: z.string().max(160).nullable().optional(),
+  // deliberately not validated as an Indian number: partners are not all here
+  email: z.string().max(200).nullable().optional(),
+  phone: z.string().max(60).nullable().optional(),
+  whatsapp: z.string().max(60).nullable().optional(),
+  linkedin_url: z.string().max(500).nullable().optional(),
+  other_link: z.string().max(500).nullable().optional(),
+  photo_url: z.string().max(500).nullable().optional(),
+  location: z.string().max(200).nullable().optional(),
+  preferred_channel: z.enum(['EMAIL', 'PHONE', 'WHATSAPP', 'LINKEDIN', 'IN_PERSON']).nullable().optional(),
+  influence: z.enum(['LOW', 'MEDIUM', 'HIGH']).nullable().optional(),
+  notes: z.string().max(20000).nullable().optional(),
+  is_primary: z.boolean().optional(),
+  is_active: z.boolean().optional(),
 });
 
 // ---------------------------------------------------------------- pipeline & insights
@@ -197,11 +233,35 @@ router.get(
       ),
     ]);
 
+    // the organization dossier: who is there, what deals are live, where they are
+    const [contacts, opportunities, locations, engagements] = await Promise.all([
+      listContacts(account.id),
+      opportunitiesFor(account.id),
+      query('SELECT * FROM account_locations WHERE account_id = $1 ORDER BY kind, id', [account.id]),
+      query(
+        `SELECT e.*, u.full_name AS owner_name, u.avatar_color AS owner_color,
+                o.name AS opportunity_name,
+                (SELECT COUNT(*)::int FROM engagement_milestones m
+                  WHERE m.engagement_id = e.id) AS milestone_total,
+                (SELECT COUNT(*)::int FROM engagement_milestones m
+                  WHERE m.engagement_id = e.id AND m.status = 'ACCEPTED') AS milestone_accepted
+           FROM engagements e
+           LEFT JOIN users u ON u.id = e.owner_user_id
+           LEFT JOIN opportunities o ON o.id = e.opportunity_id
+          WHERE e.account_id = $1 AND e.is_archived = FALSE ORDER BY e.id DESC`,
+        [account.id],
+      ),
+    ]);
+
     res.json({
       account,
       activities,
       tasks: tasks.rows,
       goals: goals.rows,
+      contacts,
+      opportunities,
+      locations: locations.rows,
+      engagements: engagements.rows,
       can_edit: canEditAccount(req.currentUser, account),
     });
   }),
@@ -255,8 +315,45 @@ router.post(
         ],
       );
       const created = rows[0];
+
+      // Every new organization starts with one opportunity, because a lead with
+      // nowhere to record a deal is a contact list entry. The migration gave one
+      // to every lead that already existed; this keeps that true going forward.
+      const { rows: oppRows } = await client.query(
+        `INSERT INTO opportunities
+           (account_id, name, stage_id, owner_user_id, estimated_value, currency,
+            next_step, next_step_due, created_by)
+         VALUES ($1,$2,$3,$4,$5::numeric,COALESCE($6,'INR'),$7,$8::date,$9)
+         RETURNING id`,
+        [
+          created.id,
+          created.name,
+          created.stage_id,
+          created.owner_user_id,
+          data.value ?? null,
+          data.currency ?? null,
+          data.next_step ?? null,
+          data.next_step_due ?? null,
+          req.currentUser.id,
+        ],
+      );
+      await client.query('UPDATE accounts SET primary_opportunity_id = $1 WHERE id = $2',
+        [oppRows[0].id, created.id]);
+
+      // the contact captured on the quick-add form becomes the first stakeholder
+      if ((data.contact_name || '').trim() || (data.contact_email || '').trim()
+          || (data.contact_phone || '').trim()) {
+        await client.query(
+          `INSERT INTO account_contacts (account_id, full_name, email, phone, is_primary, created_by)
+           VALUES ($1, COALESCE(NULLIF(TRIM($2), ''), 'Primary contact'),
+                   NULLIF(TRIM($3), ''), NULLIF(TRIM($4), ''), TRUE, $5)`,
+          [created.id, data.contact_name ?? '', data.contact_email ?? '', data.contact_phone ?? '', req.currentUser.id],
+        );
+      }
+
       await logActivity(client, {
         accountId: created.id,
+        opportunityId: oppRows[0].id,
         type: 'NOTE',
         actorId: req.currentUser.id,
         subject: 'Lead created',
@@ -275,6 +372,10 @@ const TRACKED = [
   'name', 'owner_user_id', 'follower_user_id', 'department_id', 'value', 'currency',
   'source', 'website', 'contact_name', 'contact_email', 'contact_phone', 'description',
   'next_step', 'next_step_due', 'status',
+  // the organization dossier
+  'segment_id', 'logo_url', 'banner_url', 'linkedin_url', 'hq_address',
+  'operating_regions', 'crops', 'tags', 'relationship_summary', 'why_it_matters',
+  'relationship_potential',
 ];
 
 router.patch(
@@ -431,7 +532,21 @@ router.post(
         next_step: z.string().max(2000).nullable().optional(),
         next_step_due: z.string().min(8).nullable().optional(),
         task_id: z.number().int().positive().nullable().optional(),
+        // when it happened, which is not when it was typed in
         occurred_at: z.string().min(8).nullable().optional(),
+
+        // which deal it was about, and who at the organization was on it
+        opportunity_id: z.number().int().positive().nullable().optional(),
+        engagement_id: z.number().int().positive().nullable().optional(),
+        meeting_id: z.number().int().positive().nullable().optional(),
+        contact_id: z.number().int().positive().nullable().optional(),
+        channel: z.string().max(40).nullable().optional(),
+        direction: z.enum(['OUTBOUND', 'INBOUND']).nullable().optional(),
+        // an attempt, a message sent, a reply received and a conversation that
+        // actually happened are four different facts
+        outcome: z.enum(['ATTEMPTED', 'COMPLETED', 'SENT', 'RECEIVED',
+                         'SCHEDULED', 'CANCELLED', 'NO_SHOW', 'NOTED']).nullable().optional(),
+        external_participants: z.string().max(1000).nullable().optional(),
       })
       .parse(req.body);
     const id = Number(req.params.id);
@@ -450,6 +565,14 @@ router.post(
         nextStep: data.next_step ?? null,
         taskId: data.task_id ?? null,
         occurredAt: data.occurred_at ?? null,
+        opportunityId: data.opportunity_id ?? account.primary_opportunity_id ?? null,
+        engagementId: data.engagement_id ?? null,
+        meetingId: data.meeting_id ?? null,
+        contactId: data.contact_id ?? null,
+        channel: data.channel ?? null,
+        direction: data.direction ?? null,
+        outcome: data.outcome ?? null,
+        externalParticipants: data.external_participants ?? null,
       });
       // recording a next step with a date sets it on the account too
       if (data.next_step_due !== undefined) {
@@ -470,6 +593,197 @@ router.post(
     }
 
     res.status(201).json({ activity, account: await getAccount(id) });
+  }),
+);
+
+// ---------------------------------------------------------------- contacts
+//
+// The people at the organization. They are records, never TaskFlow users: adding
+// someone here does not create an account or send them anything.
+
+router.get(
+  '/:id/contacts',
+  asyncHandler(async (req, res) => {
+    const account = await getAccount(Number(req.params.id));
+    if (!account) throw notFound('Account not found');
+    res.json({
+      contacts: await listContacts(account.id, { includeInactive: req.query.all === 'true' }),
+    });
+  }),
+);
+
+router.post(
+  '/:id/contacts',
+  requirePermission('crm.create'),
+  asyncHandler(async (req, res) => {
+    const data = contactInput.parse(req.body);
+    const id = Number(req.params.id);
+
+    const { rows: accountRows } = await query('SELECT * FROM accounts WHERE id = $1', [id]);
+    if (!accountRows[0]) throw notFound('Account not found');
+    if (!canEditAccount(req.currentUser, accountRows[0])) throw forbidden('You cannot add contacts here');
+
+    // a shared name or email domain does not prove two people are the same
+    // person, so near-matches are reported and the caller decides
+    const duplicates = await possibleDuplicateContacts(id, {
+      email: data.email, phone: data.phone, fullName: data.full_name,
+    });
+
+    const contact = await withTransaction(async (client) => {
+      if (data.is_primary) {
+        await client.query(
+          'UPDATE account_contacts SET is_primary = FALSE WHERE account_id = $1', [id],
+        );
+      }
+      const { rows } = await client.query(
+        `INSERT INTO account_contacts
+           (account_id, full_name, designation, department, email, phone, whatsapp,
+            linkedin_url, other_link, photo_url, location, preferred_channel, influence,
+            notes, is_primary, created_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,COALESCE($15,FALSE),$16)
+         RETURNING *`,
+        [
+          id, data.full_name.trim(), data.designation ?? null, data.department ?? null,
+          data.email ?? null, data.phone ?? null, data.whatsapp ?? null,
+          data.linkedin_url ?? null, data.other_link ?? null, data.photo_url ?? null,
+          data.location ?? null, data.preferred_channel ?? null, data.influence ?? null,
+          data.notes ?? null, data.is_primary ?? null, req.currentUser.id,
+        ],
+      );
+      return rows[0];
+    });
+
+    res.status(201).json({ contact, possible_duplicates: duplicates });
+  }),
+);
+
+router.patch(
+  '/:accountId/contacts/:contactId',
+  asyncHandler(async (req, res) => {
+    const data = contactInput.partial().parse(req.body);
+    const accountId = Number(req.params.accountId);
+
+    const { rows: accountRows } = await query('SELECT * FROM accounts WHERE id = $1', [accountId]);
+    if (!accountRows[0]) throw notFound('Account not found');
+    if (!canEditAccount(req.currentUser, accountRows[0])) throw forbidden('You cannot edit contacts here');
+
+    const fields = [];
+    const params = [];
+    for (const key of ['full_name', 'designation', 'department', 'email', 'phone', 'whatsapp',
+      'linkedin_url', 'other_link', 'photo_url', 'location', 'preferred_channel',
+      'influence', 'notes', 'is_primary', 'is_active']) {
+      if (data[key] === undefined) continue;
+      params.push(data[key] === '' ? null : data[key]);
+      fields.push(`${key} = $${params.length}`);
+    }
+    if (!fields.length) throw badRequest('Nothing to update');
+
+    const contact = await withTransaction(async (client) => {
+      if (data.is_primary) {
+        await client.query(
+          'UPDATE account_contacts SET is_primary = FALSE WHERE account_id = $1', [accountId],
+        );
+      }
+      params.push(Number(req.params.contactId), accountId);
+      const { rows } = await client.query(
+        `UPDATE account_contacts SET ${fields.join(', ')}, updated_at = now()
+          WHERE id = $${params.length - 1} AND account_id = $${params.length}
+          RETURNING *`,
+        params,
+      );
+      return rows[0];
+    });
+
+    if (!contact) throw notFound('Contact not found');
+    res.json({ contact });
+  }),
+);
+
+// Marking someone inactive keeps every meeting and message they were part of.
+// There is no delete: erasing a person erases the history they are in.
+router.delete(
+  '/:accountId/contacts/:contactId',
+  asyncHandler(async (req, res) => {
+    const accountId = Number(req.params.accountId);
+    const { rows: accountRows } = await query('SELECT * FROM accounts WHERE id = $1', [accountId]);
+    if (!accountRows[0]) throw notFound('Account not found');
+    if (!canEditAccount(req.currentUser, accountRows[0])) throw forbidden('You cannot edit contacts here');
+
+    const { rows } = await query(
+      `UPDATE account_contacts SET is_active = FALSE, updated_at = now()
+        WHERE id = $1 AND account_id = $2 RETURNING id`,
+      [Number(req.params.contactId), accountId],
+    );
+    if (!rows[0]) throw notFound('Contact not found');
+    res.json({ ok: true, deactivated: true });
+  }),
+);
+
+// ---------------------------------------------------------------- locations
+
+router.post(
+  '/:id/locations',
+  asyncHandler(async (req, res) => {
+    const data = z
+      .object({
+        label: z.string().max(160).nullable().optional(),
+        kind: z.enum(['HQ', 'OPERATING', 'SITE']).optional(),
+        address: z.string().max(1000).nullable().optional(),
+        city: z.string().max(120).nullable().optional(),
+        state: z.string().max(120).nullable().optional(),
+        country: z.string().max(120).optional(),
+        // entered by hand; nothing here is geocoded or invented
+        latitude: z.number().min(-90).max(90).nullable().optional(),
+        longitude: z.number().min(-180).max(180).nullable().optional(),
+        precision: z.enum(['EXACT', 'APPROXIMATE', 'REGION']).optional(),
+      })
+      .parse(req.body);
+    const id = Number(req.params.id);
+
+    const { rows: accountRows } = await query('SELECT * FROM accounts WHERE id = $1', [id]);
+    if (!accountRows[0]) throw notFound('Account not found');
+    if (!canEditAccount(req.currentUser, accountRows[0])) throw forbidden('You cannot edit this account');
+
+    const { rows } = await query(
+      `INSERT INTO account_locations
+         (account_id, label, kind, address, city, state, country, latitude, longitude, precision, created_by)
+       VALUES ($1,$2,COALESCE($3,'OPERATING'),$4,$5,$6,COALESCE($7,'India'),
+               $8::numeric,$9::numeric,COALESCE($10,'APPROXIMATE'),$11)
+       RETURNING *`,
+      [
+        id, data.label ?? null, data.kind ?? null, data.address ?? null, data.city ?? null,
+        data.state ?? null, data.country ?? null, data.latitude ?? null, data.longitude ?? null,
+        data.precision ?? null, req.currentUser.id,
+      ],
+    );
+    res.status(201).json({ location: rows[0] });
+  }),
+);
+
+router.delete(
+  '/:accountId/locations/:locationId',
+  asyncHandler(async (req, res) => {
+    const accountId = Number(req.params.accountId);
+    const { rows: accountRows } = await query('SELECT * FROM accounts WHERE id = $1', [accountId]);
+    if (!accountRows[0]) throw notFound('Account not found');
+    if (!canEditAccount(req.currentUser, accountRows[0])) throw forbidden('You cannot edit this account');
+    await query('DELETE FROM account_locations WHERE id = $1 AND account_id = $2',
+      [Number(req.params.locationId), accountId]);
+    res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- segments
+
+router.get(
+  '/meta/segments',
+  asyncHandler(async (req, res) => {
+    const { rows } = await query(
+      `SELECT s.*, (SELECT COUNT(*)::int FROM accounts a
+                     WHERE a.segment_id = s.id AND a.is_archived = FALSE) AS account_count
+         FROM crm_segments s WHERE s.is_active = TRUE ORDER BY s.position, s.id`,
+    );
+    res.json({ segments: rows });
   }),
 );
 
