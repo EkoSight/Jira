@@ -320,11 +320,17 @@ person who asked.
 |---|---|
 | each completed task | +1 |
 | high priority | +0.5 |
-| critical priority | +1 |
+| critical priority | +0.5 — the same as high |
 | finished on or before the deadline | +0.5 |
 | finished after the deadline | −0.5 |
 | each active black mark point | −1 |
 | kudos received | +0.25 each, capped at +2 |
+
+Critical and high earn the same so that choosing a priority never changes what a
+task pays; the label only says how urgent it is. Months before September 2026 are
+still scored by the earlier rule (critical +1), so a month already ranked does not
+re-order itself; `rule` in the response is `equal_priority` or `critical_double`
+to say which applied. Awards keep the score they were given either way.
 
 The weights come back in the response as `weights`, so the UI can explain the
 number to the person being measured. Awarding the same person twice in a month

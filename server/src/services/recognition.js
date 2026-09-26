@@ -9,22 +9,42 @@ import { query } from '../db/pool.js';
  *
  *   each completed task      1 point
  *     high priority         +0.5
- *     critical priority     +1
+ *     critical priority     +0.5  (the same as high — see below)
  *     finished on time      +0.5
  *     finished late         -0.5
  *   each active black mark  -1 per point
  *   each kudos received     +0.25 (capped at 2)
+ *
+ * Critical and high are worth the same on purpose. When critical paid double,
+ * marking your own work critical was the cheapest way to raise your score, and
+ * the label stopped meaning "urgent" and started meaning "mine". The priority
+ * still says how urgent a task is; it just no longer says how much it pays.
  */
 export const WEIGHTS = {
   base: 1,
   high: 0.5,
-  critical: 1,
+  critical: 0.5,
   onTime: 0.5,
   late: -0.5,
   blackMark: -1,
   kudos: 0.25,
   kudosCap: 2,
 };
+
+/**
+ * The rule in force before critical and high were made equal.
+ *
+ * Past months are scored by the rule people were working under at the time, so
+ * a month that has already been ranked — and perhaps awarded — does not quietly
+ * re-order itself. Awards themselves store the score they were given, so they
+ * never move either way.
+ */
+export const PREVIOUS_WEIGHTS = { ...WEIGHTS, critical: 1 };
+
+/** The first month scored with critical and high equal. */
+export const EQUAL_PRIORITY_FROM = '2026-09';
+
+export const weightsFor = (monthKey) => (monthKey < EQUAL_PRIORITY_FROM ? PREVIOUS_WEIGHTS : WEIGHTS);
 
 const monthBounds = (month) => {
   const anchor = month ? new Date(`${month}-01T00:00:00Z`) : new Date();
@@ -83,16 +103,18 @@ export async function leaderboard({ month, departmentId = null } = {}) {
     [start, end, departmentId],
   );
 
+  const weights = weightsFor(key);
+
   const scored = rows
     .map((row) => {
-      const kudosBonus = Math.min(WEIGHTS.kudosCap, row.kudos_count * WEIGHTS.kudos);
+      const kudosBonus = Math.min(weights.kudosCap, row.kudos_count * weights.kudos);
       const score =
-        row.done_count * WEIGHTS.base +
-        row.high_done * WEIGHTS.high +
-        row.critical_done * WEIGHTS.critical +
-        row.on_time * WEIGHTS.onTime +
-        row.late * WEIGHTS.late +
-        Number(row.mark_points) * WEIGHTS.blackMark +
+        row.done_count * weights.base +
+        row.high_done * weights.high +
+        row.critical_done * weights.critical +
+        row.on_time * weights.onTime +
+        row.late * weights.late +
+        Number(row.mark_points) * weights.blackMark +
         kudosBonus;
 
       const withDeadline = row.on_time + row.late;
@@ -108,7 +130,15 @@ export async function leaderboard({ month, departmentId = null } = {}) {
     .filter((row) => row.done_count > 0 || row.mark_count > 0 || row.kudos_count > 0)
     .sort((a, b) => b.score - a.score || b.on_time - a.on_time || a.mark_points - b.mark_points);
 
-  return { month: key, period: { start: start.toISOString(), end: end.toISOString() }, weights: WEIGHTS, members: scored };
+  return {
+    month: key,
+    period: { start: start.toISOString(), end: end.toISOString() },
+    weights,
+    // said when a month was scored by the earlier rule, so nobody compares
+    // two months without knowing the rule changed between them
+    rule: weights === WEIGHTS ? 'equal_priority' : 'critical_double',
+    members: scored,
+  };
 }
 
 /** The standing winner for a month, if one has been awarded. */

@@ -206,6 +206,40 @@ function KudosDialog({ onClose, onSaved }) {
   );
 }
 
+const signed = (n) => `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n)}`;
+
+/**
+ * How the score is worked out, read from the weights the server actually used
+ * for this month — so the explanation can never drift from the arithmetic.
+ */
+function ScoreRule({ weights, rule }) {
+  if (!weights) return null;
+  const equal = weights.critical === weights.high;
+  return (
+    <div className="card-pad small muted stack-sm" style={{ gap: 4 }}>
+      <div>
+        Score = {weights.base} per completed task
+        {equal
+          ? ` (${signed(weights.high)} critical or high priority`
+          : ` (${signed(weights.critical)} critical, ${signed(weights.high)} high`}
+        , {signed(weights.onTime)} on time, {signed(weights.late)} late),
+        {' '}{signed(weights.blackMark)} per black mark point, plus up to {weights.kudosCap} for kudos.
+      </div>
+      {equal ? (
+        <div>
+          Critical and high earn the same, so choosing a priority never changes what a task pays —
+          the label only says how urgent it is.
+        </div>
+      ) : rule === 'critical_double' && (
+        <div>
+          This month was scored under the earlier rule, when critical earned more than high. Months
+          from September 2026 score them equally.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Recognition() {
   const { can } = useAuth();
   const { departments } = useRefData();
@@ -394,10 +428,7 @@ export default function Recognition() {
               </tbody>
             </table>
           )}
-          <div className="card-pad small muted">
-            Score = 1 per completed task (+1 critical, +0.5 high, +0.5 on time, −0.5 late),
-            −1 per black mark point, plus up to 2 for kudos.
-          </div>
+          <ScoreRule weights={board.weights} rule={board.rule} />
         </section>
 
         <div className="stack">

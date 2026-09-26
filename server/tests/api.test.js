@@ -1994,3 +1994,57 @@ test('the record of a task respects who is allowed to see the task', async (t) =
   const denied = await call('GET', `/tasks/${hidden.body.task.id}/summary`, { token: tokens.member });
   assert.equal(denied.status, 404, 'the record is no easier to reach than the task');
 });
+
+test('critical and high priority earn the same, from September 2026 on', async () => {
+  const { WEIGHTS, weightsFor } = await import('../src/services/recognition.js');
+
+  // choosing "critical" over "high" must not change what a task pays
+  assert.equal(WEIGHTS.critical, WEIGHTS.high);
+  assert.equal(WEIGHTS.critical, 0.5);
+
+  // the rest of the proposal, unchanged
+  assert.equal(WEIGHTS.base, 1);
+  assert.equal(WEIGHTS.onTime, 0.5);
+  assert.equal(WEIGHTS.late, -0.5);
+  assert.equal(WEIGHTS.blackMark, -1);
+  assert.equal(WEIGHTS.kudosCap, 2);
+
+  // a month already ranked keeps the rule it was ranked under
+  assert.equal(weightsFor('2026-08').critical, 1);
+  assert.equal(weightsFor('2026-09').critical, 0.5);
+  assert.equal(weightsFor('2027-01').critical, 0.5);
+});
+
+test('on the leaderboard, a finished critical task and a finished high one score the same', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // two people, identical months except for the priority label on one task
+  const password = await hashPassword('Password123!');
+  const people = [];
+  for (const name of ['Critical Closer', 'High Closer']) {
+    const { rows } = await query(
+      `INSERT INTO users (full_name, email, password_hash, role, department_id, must_change_password)
+       VALUES ($1, $2, $3, 'member', $4, FALSE) RETURNING id`,
+      [name, `${name.replace(' ', '.').toLowerCase()}@test.local`, password, ids.department],
+    );
+    people.push(rows[0].id);
+  }
+  for (const [index, priority] of ['critical', 'high'].entries()) {
+    await query(
+      `INSERT INTO tasks (ref, title, department_id, status_id, assignee_id, created_by, priority,
+                          due_date, completed_at)
+       VALUES ($1, 'Equal pay for equal work', $2, $3, $4, $4, $5, now() + interval '1 day', now())`,
+      [`EQ-${index + 1}`, ids.department, ids.done, people[index], priority],
+    );
+  }
+
+  const board = await call('GET', '/recognition/leaderboard', { token: tokens.admin });
+  assert.equal(board.body.rule, 'equal_priority');
+  const critical = board.body.members.find((m) => m.user_id === people[0]);
+  const high = board.body.members.find((m) => m.user_id === people[1]);
+  assert.equal(critical.critical_done, 1);
+  assert.equal(high.high_done, 1);
+  // 1 for finishing + 0.5 for the priority + 0.5 for on time
+  assert.equal(critical.score, 2);
+  assert.equal(high.score, 2, 'marking it critical instead would not have earned more');
+});
