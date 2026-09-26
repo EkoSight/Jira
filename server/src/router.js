@@ -20,6 +20,7 @@ import opportunityRoutes from './routes/opportunities.js';
 import meetingRoutes from './routes/meetings.js';
 import engagementRoutes from './routes/engagements.js';
 import resourceRoutes from './routes/resources.js';
+import availabilityRoutes from './routes/availability.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
 import { requirePermission } from './middleware/auth.js';
@@ -51,6 +52,8 @@ export function createTaskFlowRouter() {
   router.use('/notes', noteRoutes);
   router.use('/feature-requests', featureRequestRoutes);
   router.use('/recognition', recognitionRoutes);
+  // who is away and when — open to everyone signed in, so work is planned around it
+  router.use('/availability', availabilityRoutes);
 
   // Discussion and review threads. One mount for tasks, key results and goals,
   // because the conversation is the same shape wherever the work sits — and each

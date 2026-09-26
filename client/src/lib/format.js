@@ -21,7 +21,8 @@ export const STAGE_LABEL = {
 
 export const WORKLOAD_STATUS = {
   idle: { label: 'Idle', tone: 'neutral', note: 'No open work' },
-  available: { label: 'Available', tone: 'good', note: 'Has room for more' },
+  // "Available" now means "not on leave", so spare capacity is named for what it is
+  available: { label: 'Has capacity', tone: 'good', note: 'Has room for more' },
   busy: { label: 'Busy', tone: 'warning', note: 'Near capacity' },
   overloaded: { label: 'Overloaded', tone: 'critical', note: 'Over capacity' },
   stalled: { label: 'Stalled', tone: 'serious', note: 'No recent movement' },

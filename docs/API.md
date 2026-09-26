@@ -118,6 +118,36 @@ never retrievable again. Assigning the `admin` role, or any permission override,
 additionally requires `user.permissions`. The last active admin cannot be demoted
 or deactivated.
 
+Both user routes now also return `away_today` — today's leave entry, or `null`.
+
+---
+
+## Availability (leave)
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/availability?from=&to=&user_id=&department_id=` | signed in — everyone's, so work can be planned |
+| GET | `/availability/summary?days=14` | signed in — away today, upcoming, and your own |
+| GET | `/availability/on?date=YYYY-MM-DD` or `?at=<ISO instant>` | signed in — `{ away: { userId: entry } }` |
+| GET | `/availability/check?user_id=&due=<ISO instant>` | signed in — the warning before assigning |
+| POST | `/availability` | yourself; `user.edit` to record it for someone else |
+| PATCH | `/availability/:id` | the person, or `user.edit` |
+| DELETE | `/availability/:id` | the person, or `user.edit` (cancels; the row is kept) |
+
+Statuses are `ON_LEAVE`, `HALF_DAY` (one date, with `day_part` `MORNING` or
+`AFTERNOON`) and `UNAVAILABLE`. "Available" is never stored — it is any day with
+no entry. Dates are calendar days in `settings.organisation.timezone`
+(default `Asia/Kolkata`), so a deadline is checked against the date it falls on in
+India, not on the server's clock. Entries for one person may not overlap.
+
+There is no reason field on purpose: the team can read every entry, and a reason
+is often private. `note` is what the person chooses to share.
+
+`POST /tasks` and `PATCH /tasks/:id` return `availability_warning` when the owner
+is away on the deadline or for part of the run-up to it. It never blocks the
+save. Creating leave returns `tasks_due_during`, and whoever assigned those tasks
+is notified once.
+
 ---
 
 ## Structure

@@ -245,6 +245,16 @@ export const api = {
   // extra names the deal that was signed, so the month counts it as won
   convertAccount: (id, type, extra = {}) =>
     request('POST', `/accounts/${id}/convert`, { type, ...extra }),
+  // leave and availability — who is away, and when
+  availability: (params) => request('GET', `/availability${qs(params)}`),
+  availabilitySummary: (params) => request('GET', `/availability/summary${qs(params)}`),
+  availabilityOn: (params) => request('GET', `/availability/on${qs(params)}`),
+  checkAvailability: (userId, due) =>
+    request('GET', `/availability/check${qs({ user_id: userId, due })}`),
+  addAvailability: (data) => request('POST', '/availability', data),
+  updateAvailability: (id, data) => request('PATCH', `/availability/${id}`, data),
+  cancelAvailability: (id) => request('DELETE', `/availability/${id}`),
+
   crmStates: (params) => request('GET', `/accounts/views/states${qs(params)}`),
   archiveAccount: (id) => request('DELETE', `/accounts/${id}`),
   accountActivities: (id) => request('GET', `/accounts/${id}/activities`),

@@ -13,6 +13,8 @@ import {
 import CompleteTaskDialog from './CompleteTaskDialog.jsx';
 import DiscussionPanel from './DiscussionPanel.jsx';
 import CompletionRecord from './CompletionRecord.jsx';
+import { AvailabilityWarning, useAwayOn } from './Availability.jsx';
+import { STATUS_META as AWAY_META } from '../lib/availability.js';
 import { threadHeadline } from '../lib/threads.js';
 import {
   PRIORITIES,
@@ -434,6 +436,17 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     setForm((current) => ({ ...current, [key]: value }));
   };
 
+  // who is away on the deadline (or today, before one is picked), so the owner
+  // list can say so before anyone is chosen
+  const dueIso = form.due_date ? fromDateTimeLocal(form.due_date) : null;
+  const awayOnDue = useAwayOn(dueIso);
+  const awayLabel = (userId) => {
+    const entry = awayOnDue[userId];
+    if (!entry) return '';
+    const meta = AWAY_META[entry.status];
+    return ` — ${(meta?.label || 'away').toLowerCase()} ${dueIso ? 'that day' : 'today'}`;
+  };
+
   const canEdit = isNew ? can('task.create') : detail?.can_edit;
   // handing the task to someone else stays open even on a task you are not part of
   const canReassign = isNew ? can('task.create') : Boolean(detail?.can_edit || detail?.can_reassign);
@@ -768,6 +781,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                         <option key={u.id} value={u.id}>
                           {u.full_name}
                           {u.department_name ? ` · ${u.department_name}` : ''}
+                          {awayLabel(u.id)}
                         </option>
                       ))}
                   </select>
@@ -877,6 +891,20 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                   />
                 </Field>
               </div>
+
+              {!isDone && (
+                <AvailabilityWarning
+                  assigneeId={form.assignee_id}
+                  dueIso={dueIso}
+                  dueLocal={form.due_date}
+                  departmentId={form.department_id}
+                  away={awayOnDue}
+                  canReassign={canReassign && can('task.assign')}
+                  canEdit={canEdit}
+                  onReassign={(id) => setForm((c) => ({ ...c, assignee_id: String(id) }))}
+                  onMoveDeadline={(value) => setForm((c) => ({ ...c, due_date: value }))}
+                />
+              )}
 
               <Field label="Tags" hint="Comma separated">
                 <input

@@ -5,6 +5,7 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import { BarList, LoadMeter, Ring, TrendChart, STATUS_COLOR } from '../components/charts.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
+import { AwayBadge, AwayCard } from '../components/Availability.jsx';
 import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -65,7 +66,9 @@ export default function Dashboard() {
     color: STATUS_COLOR[PRIORITY_TONE[priority] === 'brand' ? 'brand' : PRIORITY_TONE[priority]] || STATUS_COLOR.neutral,
   }));
 
-  const idle = workload.filter((w) => w.status === 'idle');
+  // someone on leave with nothing open is away, not idle
+  const idle = workload.filter((w) => w.status === 'idle' && !w.away_today);
+  const away = workload.filter((w) => w.away_today);
   const stalled = workload.filter((w) => w.status === 'stalled');
   const overloaded = workload.filter((w) => w.status === 'overloaded');
 
@@ -105,15 +108,6 @@ export default function Dashboard() {
       </div>
 
       <div className="grid-2" style={{ alignItems: 'start' }}>
-        <section className="card">
-          <div className="card-head">
-            <h2>Created vs completed</h2>
-            <span className="small muted">last {trend.length} days</span>
-          </div>
-          <div className="card-pad">
-            <TrendChart data={trend} />
-          </div>
-        </section>
 
         <section className="card">
           <div className="card-head">
@@ -145,6 +139,8 @@ export default function Dashboard() {
             })}
           </div>
         </section>
+
+        <AwayCard onChanged={load} />
       </div>
 
       {workload.length > 0 && (
@@ -155,6 +151,7 @@ export default function Dashboard() {
               {overloaded.length > 0 && <Badge tone="critical">{overloaded.length} overloaded</Badge>}
               {stalled.length > 0 && <Badge tone="serious">{stalled.length} stalled</Badge>}
               {idle.length > 0 && <Badge>{idle.length} idle</Badge>}
+              {away.length > 0 && <Badge tone="warning">{away.length} away today</Badge>}
             </div>
           </div>
           <div className="table-wrap">
@@ -184,7 +181,10 @@ export default function Dashboard() {
                         <div className="row">
                           <Avatar name={member.full_name} color={member.avatar_color} size={26} />
                           <div>
-                            <div style={{ fontWeight: 600 }}>{member.full_name}</div>
+                            <div className="row wrap" style={{ gap: 6, fontWeight: 600 }}>
+                              {member.full_name}
+                              <AwayBadge entry={member.away_today} compact />
+                            </div>
                             <div className="small muted">{member.department || 'No department'}</div>
                           </div>
                         </div>
@@ -218,6 +218,16 @@ export default function Dashboard() {
           </div>
         </section>
       )}
+
+      <section className="card">
+        <div className="card-head">
+          <h2>Created vs completed</h2>
+          <span className="small muted">last {trend.length} days</span>
+        </div>
+        <div className="card-pad">
+          <TrendChart data={trend} />
+        </div>
+      </section>
 
       <div className="grid-3" style={{ alignItems: 'start' }}>
         <section className="card">

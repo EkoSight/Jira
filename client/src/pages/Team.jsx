@@ -5,6 +5,7 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import { LoadMeter } from '../components/charts.jsx';
 import { WORKLOAD_STATUS, loadSummary, relativeTime } from '../lib/format.js';
+import { AwayBadge, TeamCalendar } from '../components/Availability.jsx';
 
 const ROLE_NOTE = {
   admin: 'Full control, including permissions and rules',
@@ -329,6 +330,8 @@ export default function Team() {
         )}
       </div>
 
+      <TeamCalendar />
+
       <div className="filters">
         <input className="input" placeholder="Search people…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <label className="row small dim" style={{ gap: 6 }}>
@@ -363,9 +366,10 @@ export default function Team() {
                       <div className="row">
                         <Avatar name={member.full_name} color={member.avatar_color} size={30} />
                         <div>
-                          <div style={{ fontWeight: 600 }}>
+                          <div className="row wrap" style={{ gap: 6, fontWeight: 600 }}>
                             {member.full_name}
                             {!member.is_active && <Badge tone="critical" >Deactivated</Badge>}
+                            <AwayBadge entry={member.away_today} compact />
                           </div>
                           <div className="small muted">
                             {member.job_title || 'No title'} · {member.department_name || 'No department'}

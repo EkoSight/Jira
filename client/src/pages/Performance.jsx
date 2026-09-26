@@ -6,6 +6,7 @@ import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from '../compo
 import EvidenceDrawer from '../components/EvidenceDrawer.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import { monthKey, monthLabel } from '../lib/format.js';
+import { PersonAvailability } from '../components/Availability.jsx';
 
 const STANDING = {
   strong: { label: 'Strong', tone: 'good' },
@@ -85,6 +86,9 @@ function ReviewBody({ review, month, canShare }) {
               <h2>{review.user.full_name}</h2>
               <div className="small muted">
                 {[review.user.job_title, review.user.department].filter(Boolean).join(' · ') || 'No department'}
+              </div>
+              <div style={{ marginTop: 5 }}>
+                <PersonAvailability userId={review.user.id} />
               </div>
             </div>
           </div>

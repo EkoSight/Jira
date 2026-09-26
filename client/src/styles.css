@@ -2728,3 +2728,101 @@ button.metric-main:hover .metric-value { color: var(--brand-ink); }
   .state-layout { grid-template-columns: 1fr; }
   .won-grid { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------------------
+   Availability: the team calendar and the assignment warning
+   ------------------------------------------------------------------ */
+
+.availability-warning { align-items: flex-start; }
+
+.cal-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  min-width: 100%;
+}
+.cal-table th,
+.cal-table td { padding: 0; border-bottom: 1px solid var(--border); }
+.cal-person {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 170px;
+  max-width: 200px;
+  padding: 6px 10px !important;
+  background: var(--surface);
+  text-align: left;
+  border-right: 1px solid var(--border);
+}
+th.cal-person {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+
+.cal-day {
+  min-width: 30px;
+  padding: 4px 0 !important;
+  text-align: center;
+  font-weight: 500;
+  color: var(--ink-2);
+  position: relative;
+}
+.cal-dow { display: block; font-size: 9.5px; text-transform: uppercase; color: var(--ink-muted); }
+.cal-num { display: block; font-size: 12px; font-variant-numeric: tabular-nums; }
+.cal-count {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--warning-wash);
+  color: var(--warning-text);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+.cal-day.is-today { color: var(--brand-ink); }
+.cal-day.is-today .cal-num { font-weight: 800; }
+
+.cal-cell {
+  height: 30px;
+  position: relative;
+  border-left: 1px solid var(--border);
+}
+/* the weekly day off is shaded so a blank Sunday is not read as "in" */
+.cal-cell.is-off,
+.cal-day.is-off { background: var(--surface-3); }
+.cal-cell.is-today { box-shadow: inset 2px 0 0 var(--brand), inset -2px 0 0 var(--brand); }
+
+.cal-cell.cal-on_leave,
+.cal-swatch.cal-on_leave { background: var(--warning); }
+.cal-cell.cal-unavailable,
+.cal-swatch.cal-unavailable { background: var(--critical); opacity: 0.75; }
+/* half a day is drawn as half a cell */
+.cal-cell.cal-half_day.part-morning { background: linear-gradient(90deg, var(--brand) 50%, transparent 50%); }
+.cal-cell.cal-half_day.part-afternoon { background: linear-gradient(90deg, transparent 50%, var(--brand) 50%); }
+.cal-swatch.cal-half_day { background: linear-gradient(90deg, var(--brand) 50%, var(--surface-3) 50%); }
+
+.cal-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+}
+
+.cal-add {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.cal-add:hover,
+.cal-add:focus-visible { background: var(--brand-wash); }
+.cal-add:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+@media (max-width: 640px) {
+  .cal-person { min-width: 120px; max-width: 130px; }
+}

@@ -21,6 +21,7 @@ import { getSettings } from '../services/settings.js';
 import {
   addMessage, canRaiseReview, createThread, listMessages, listThreads,
 } from '../services/threads.js';
+import { checkAssignment } from '../services/availability.js';
 
 const router = Router();
 
@@ -455,7 +456,11 @@ router.post(
     });
 
     const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [task.id]);
-    res.status(201).json({ task: rows[0] });
+    res.status(201).json({
+      task: rows[0],
+      // never a refusal — a manager may have good reason — but always said
+      availability_warning: await checkAssignment(rows[0].assignee_id, rows[0].due_date).catch(() => null),
+    });
   }),
 );
 
@@ -672,6 +677,8 @@ router.patch(
     const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
     res.json({
       task: rows[0],
+      availability_warning: rows[0].stage === 'done' ? null
+        : await checkAssignment(rows[0].assignee_id, rows[0].due_date).catch(() => null),
       next_occurrence: updated.spawnedNext
         ? { id: updated.spawnedNext.id, ref: updated.spawnedNext.ref, due_date: updated.spawnedNext.due_date }
         : null,
@@ -763,6 +770,8 @@ router.post(
     const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
     res.json({
       task: rows[0],
+      availability_warning: rows[0].stage === 'done' ? null
+        : await checkAssignment(rows[0].assignee_id, rows[0].due_date).catch(() => null),
       next_occurrence: spawnedNext
         ? { id: spawnedNext.id, ref: spawnedNext.ref, due_date: spawnedNext.due_date }
         : null,

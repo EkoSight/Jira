@@ -1,5 +1,6 @@
 import { query } from '../db/pool.js';
 import { getSettings } from './settings.js';
+import { dateIn, orgCalendar, statusOn } from './availability.js';
 
 const scopeClause = (scope, params) => {
   const where = ['t.is_archived = FALSE'];
@@ -161,6 +162,8 @@ export async function workload(scope = {}) {
 
   const idleDays = settings.workload.idleDays;
   const overloadedPct = settings.workload.overloadedPercent;
+  const { timezone } = await orgCalendar();
+  const away = await statusOn(dateIn(timezone));
 
   return rows.map((r) => {
     const capacityHours = Number(r.weekly_capacity_hours) || 0;
@@ -193,6 +196,9 @@ export async function workload(scope = {}) {
       load_basis: loadBasis,
       capacity_hours: capacityHours,
       status,
+      // kept separate from the load status: being on leave says nothing about
+      // how busy someone is, and an idle person on leave is not idle
+      away_today: away.get(r.id) || null,
     };
   });
 }

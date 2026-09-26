@@ -38,6 +38,9 @@ export const DEFAULT_SETTINGS = {
   organisation: {
     name: 'EkoSight',
     workingDays: [1, 2, 3, 4, 5, 6],
+    // the clock leave days are counted in: "on leave on the 14th" means the
+    // 14th here, whatever timezone the server happens to run in
+    timezone: 'Asia/Kolkata',
   },
   deadlines: {
     // every task needs a date it is expected by; how far out one may be set

@@ -5,6 +5,12 @@ import { asyncHandler, notFound, badRequest, forbidden } from '../lib/errors.js'
 import { hashPassword, generateTempPassword } from '../lib/password.js';
 import { PERMISSIONS, PERMISSION_KEYS, ROLES, ROLE_PERMISSIONS, effectivePermissions } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
+import { dateIn, orgCalendar, statusOn } from '../services/availability.js';
+
+async function awayToday() {
+  const { timezone } = await orgCalendar();
+  return statusOn(dateIn(timezone));
+}
 
 const router = Router();
 
@@ -66,7 +72,9 @@ router.get(
 
     const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const { rows } = await query(`${SELECT_USER} ${where} ORDER BY u.full_name`, params);
-    res.json({ users: rows.map(withPermissions) });
+    // who is away today travels with the list, so every picker can show it
+    const away = await awayToday();
+    res.json({ users: rows.map((row) => ({ ...withPermissions(row), away_today: away.get(row.id) || null })) });
   }),
 );
 
@@ -76,7 +84,8 @@ router.get(
   asyncHandler(async (req, res) => {
     const { rows } = await query(`${SELECT_USER} WHERE u.id = $1`, [req.params.id]);
     if (!rows[0]) throw notFound('Team member not found');
-    res.json({ user: withPermissions(rows[0]) });
+    const away = await awayToday();
+    res.json({ user: { ...withPermissions(rows[0]), away_today: away.get(rows[0].id) || null } });
   }),
 );
 
