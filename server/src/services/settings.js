@@ -117,6 +117,17 @@ export const DEFAULT_SETTINGS = {
       // a close date approaching with must-haves still open
       closingSoonDays: 21,
     },
+    // how the state-wise view sorts leads into who to follow up with
+    followUp: {
+      // an open deal spoken to inside this many days is active
+      activeWithinDays: 30,
+      // what a lead is worth, in rupees: below this is lower potential…
+      lowPotentialBelow: 500000,
+      // …and from this up is high
+      highPotentialFrom: 2500000,
+    },
+    // a blocker nobody has replied to in this long is nudged
+    blockerQuietDays: 3,
   },
 };
 

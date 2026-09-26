@@ -57,6 +57,39 @@ export const CRM_SIGNAL_META = {
     label: 'Milestone overdue', severity: 'warning',
     action: 'Deliver it, or say what is holding it up',
   },
+  blocker_waiting: {
+    label: 'Blocker unanswered', severity: 'warning',
+    action: 'Reply, bring in someone who can help, or close it with what was decided',
+  },
+};
+
+/**
+ * The states and union territories of India, for the lead's State field.
+ * A pick list rather than free text, so "Maharashtra", "MH" and "maharastra" do
+ * not become three different rows in the state-wise view.
+ */
+export const INDIAN_STATES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat',
+  'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh',
+  'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan',
+  'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal',
+  'Andaman and Nicobar Islands', 'Chandigarh', 'Dadra and Nagar Haveli and Daman and Diu', 'Delhi',
+  'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry',
+];
+
+/** How a lead is being worked, as the state-wise view classifies it. */
+export const FOLLOW_UP_META = {
+  active: { label: 'Active', tone: 'good', color: 'var(--good)' },
+  inactive: { label: 'Needs follow-up', tone: 'warning', color: 'var(--warning)' },
+  paused: { label: 'Paused', tone: 'neutral', color: 'var(--axis)' },
+  closed: { label: 'Won or lost', tone: 'neutral', color: 'var(--ink-muted)' },
+};
+
+export const POTENTIAL_META = {
+  high: { label: 'High potential', short: 'High', tone: 'good' },
+  medium: { label: 'Medium potential', short: 'Medium', tone: 'brand' },
+  low: { label: 'Lower potential', short: 'Lower', tone: 'neutral' },
+  unknown: { label: 'Value not known', short: 'Not known', tone: 'neutral' },
 };
 
 export const crmSignalMeta = (kind) => CRM_SIGNAL_META[kind] || { label: 'Needs a nudge', severity: 'warning' };

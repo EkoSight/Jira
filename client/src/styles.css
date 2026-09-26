@@ -2649,3 +2649,82 @@ button.metric-main:hover .metric-value { color: var(--brand-ink); }
   .tree-list { padding-left: 8px; }
   .map-svg { max-height: 320px; }
 }
+
+/* ------------------------------------------------------------------
+   Pipeline suggestions: value on the card, blockers, states, wins
+   ------------------------------------------------------------------ */
+
+.metric-good { border-color: var(--good); background: var(--good-wash); }
+
+/* a card with no expected revenue asks for one, rather than showing nothing */
+.value-missing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  background: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.value-missing:hover { border-color: var(--brand); color: var(--brand-ink); background: var(--brand-wash); }
+
+.quick-value { display: flex; align-items: center; gap: 5px; width: 100%; }
+.quick-value .input { padding: 4px 7px; font-size: 12px; min-width: 0; flex: 1; }
+
+.account-card.is-blocked { border-left: 3px solid var(--critical); }
+
+/* ---------------------------------------------------------- blockers */
+
+.blocker-card { border-color: var(--critical); }
+.blocker { display: flex; flex-direction: column; gap: 6px; }
+.blocker-meta { gap: 6px; align-items: center; }
+
+/* ---------------------------------------------------------- states */
+
+.chip-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 50%;
+  vertical-align: 0;
+}
+
+.state-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 14px;
+  align-items: start;
+}
+.state-table tr.is-selected td { background: var(--brand-wash); }
+
+.follow-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.follow-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.follow-row.follow-inactive { border-left: 3px solid var(--warning); }
+.follow-dot { width: 9px; height: 9px; margin-top: 5px; flex: none; border-radius: 50%; }
+
+/* ---------------------------------------------------------- the month's wins */
+
+.won-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .state-layout { grid-template-columns: 1fr; }
+  .won-grid { grid-template-columns: 1fr; }
+}

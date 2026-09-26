@@ -331,3 +331,66 @@ test('an existing lead keeps everything it had when it becomes an organization',
   );
   assert.equal(again[0].n, 1, 'the backfill is not repeated');
 });
+
+test('existing leads get a state only where a person already recorded one', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // Build the database as it was before 014, place three leads the way a live
+  // site would have them, then upgrade.
+  const files = (await fs.readdir(migrationsDir)).filter((f) => f.endsWith('.sql')).sort();
+  await query(`DROP SCHEMA IF EXISTS "${config.db.schema}" CASCADE`);
+  await query(`CREATE SCHEMA "${config.db.schema}"`);
+  await query(`
+    CREATE TABLE schema_migrations (
+      name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`);
+  for (const file of files.filter((f) => f < '014')) {
+    await query(await fs.readFile(path.join(migrationsDir, file), 'utf8'));
+    await query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+  }
+
+  const lead = async (name, hqAddress = null) => {
+    const { rows } = await query(
+      `INSERT INTO accounts (name, type, hq_address) VALUES ($1, 'LEAD', $2) RETURNING id`,
+      [name, hqAddress],
+    );
+    return rows[0].id;
+  };
+  const place = (accountId, kind, state) => query(
+    `INSERT INTO account_locations (account_id, kind, state) VALUES ($1, $2, $3)`,
+    [accountId, kind, state],
+  );
+
+  const withHq = await lead('Has a head office');
+  await place(withHq, 'HQ', 'Maharashtra');
+  await place(withHq, 'OPERATING', 'Gujarat');
+
+  const agreeing = await lead('Two sites, one state');
+  await place(agreeing, 'OPERATING', 'Karnataka');
+  await place(agreeing, 'SITE', 'karnataka ');
+
+  const conflicting = await lead('Two sites, two states');
+  await place(conflicting, 'OPERATING', 'Punjab');
+  await place(conflicting, 'SITE', 'Haryana');
+
+  // a state appears in the address text, but nobody recorded it as the state
+  const addressOnly = await lead('Address only', '14 Mall Road, Shimla, Himachal Pradesh');
+
+  assert.ok(await runMigrations({ verbose: false }) >= 1);
+
+  const stateOf = async (id) =>
+    (await query('SELECT state, hq_address FROM accounts WHERE id = $1', [id])).rows[0];
+
+  assert.equal((await stateOf(withHq)).state, 'Maharashtra', 'the head office wins');
+  assert.equal((await stateOf(agreeing)).state, 'Karnataka', 'locations that agree are used');
+  assert.equal((await stateOf(conflicting)).state, null, 'disagreement is left for a person');
+  const parsed = await stateOf(addressOnly);
+  assert.equal(parsed.state, null, 'nothing is parsed out of free text');
+  assert.equal(parsed.hq_address, '14 Mall Road, Shimla, Himachal Pradesh', 'and the address is untouched');
+
+  // a thread written before blockers existed still reads, and the widened
+  // constraint still refuses nonsense
+  await assert.rejects(
+    query(`INSERT INTO discussion_threads (entity_type, entity_id, kind) VALUES ('WIDGET', 1, 'blocker')`),
+  );
+});

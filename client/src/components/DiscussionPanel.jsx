@@ -125,7 +125,7 @@ function ResolveBox({ onResolve, busy }) {
   );
 }
 
-function Thread({ thread, canRaiseReview, onChanged }) {
+export function Thread({ thread, canRaiseReview, canManage = false, onChanged }) {
   const { user } = useAuth();
   const toast = useToast();
   const [reply, setReply] = useState('');
@@ -134,7 +134,8 @@ function Thread({ thread, canRaiseReview, onChanged }) {
 
   const meta = threadKind(thread.kind);
   const resolved = thread.status === 'resolved';
-  const mayClose = thread.opened_by === user.id || canRaiseReview;
+  // on a lead, whoever works it may also say its obstacle is cleared
+  const mayClose = thread.opened_by === user.id || canRaiseReview || canManage;
   const replies = replyCount(thread);
 
   const run = async (fn, done) => {

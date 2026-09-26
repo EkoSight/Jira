@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from './ui.jsx';
-import { formatMoney, freshnessLabel } from '../lib/crm.js';
+import { FOLLOW_UP_META, POTENTIAL_META, formatMoney, freshnessLabel } from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
 
 /**
@@ -19,7 +19,8 @@ import { formatDate } from '../lib/format.js';
 const COLUMNS = [
   { key: 'name', label: 'Organization', get: (a) => a.name },
   { key: 'stage_name', label: 'Stage', get: (a) => a.stage_name || '' },
-  { key: 'value', label: 'Value', get: (a) => Number(a.value) || 0, numeric: true },
+  { key: 'state', label: 'State', get: (a) => a.state || '' },
+  { key: 'eligible_value', label: 'Expected', get: (a) => a.eligible_value ?? -1, numeric: true },
   { key: 'owner_name', label: 'Leading it', get: (a) => a.owner_name || '' },
   { key: 'days_since_activity', label: 'Last worked', get: (a) => a.days_since_activity ?? 9999, numeric: true },
   { key: 'next_step_due', label: 'Next action', get: (a) => a.next_step_due || '' },
@@ -87,7 +88,14 @@ export function ListView({ board, search }) {
                   )}
                 </td>
                 <td><Badge dot={account.stage_color}>{account.stage_name}</Badge></td>
-                <td className="tnum">{formatMoney(account.value, account.currency) || <span className="muted">—</span>}</td>
+                <td className="small">{account.state || <span className="muted">not recorded</span>}</td>
+                <td className="tnum">
+                  {formatMoney(account.eligible_value, account.currency)
+                    || <span className="muted small">{account.deals_without_value ? 'no value yet' : '—'}</span>}
+                  {account.open_blockers > 0 && (
+                    <div><Badge tone="critical">{account.open_blockers === 1 ? 'blocker' : `${account.open_blockers} blockers`}</Badge></div>
+                  )}
+                </td>
                 <td>
                   {account.owner_name ? (
                     <span className="row" style={{ gap: 5 }}>
@@ -150,52 +158,141 @@ const OUTLINE = [
   [70.5, 24.0], [71.0, 27.0], [73.0, 29.5], [74.5, 31.0], [75.5, 32.5],
 ];
 
-export function MapView({ departmentId, segmentId }) {
+const ACTIVITY_ORDER = { inactive: 0, active: 1, paused: 2, closed: 3 };
+const POTENTIAL_ORDER = { high: 0, medium: 1, low: 2, unknown: 3 };
+
+const spokenLabel = (days) => {
+  if (days === null || days === undefined) return 'never spoken to';
+  if (days === 0) return 'spoken to today';
+  if (days === 1) return 'spoken to yesterday';
+  return `spoken to ${days} days ago`;
+};
+
+/** A row of toggles: which kinds of lead to show. */
+function ChipSet({ meta, counts, selected, onToggle, label }) {
+  return (
+    <div className="row wrap" style={{ gap: 6 }} role="group" aria-label={label}>
+      {Object.entries(meta).map(([key, m]) => (
+        <button key={key} type="button" aria-pressed={selected.has(key)}
+          className={`kind-chip${selected.has(key) ? ' is-active' : ''}`}
+          onClick={() => onToggle(key)}>
+          {m.dotColor && <span className="chip-dot" style={{ background: m.dotColor }} />}
+          {m.label} ({counts[key] ?? 0})
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Where the leads are, state by state, and who to follow up with.
+ *
+ * Grouped by the state recorded on each lead — not by map pins — so a lead that
+ * nobody has put coordinates on is still in its state's list, and a lead with no
+ * state at all is a group of its own rather than a gap. The map shows only the
+ * pins somebody entered; nothing is geocoded and nothing is guessed.
+ *
+ * "Needs follow-up" and "lower potential" are rules, not opinions, and the rules
+ * are one click away on the same screen.
+ */
+export function MapView({ departmentId, segmentId, ownerId }) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [hover, setHover] = useState(null);
+  const [state, setState] = useState('');
+  const [activity, setActivity] = useState(() => new Set(['inactive', 'active', 'paused']));
+  const [potential, setPotential] = useState(() => new Set(['high', 'medium', 'low', 'unknown']));
+  const [showRules, setShowRules] = useState(false);
 
   useEffect(() => {
     setData(null);
-    api.crmMap({ department_id: departmentId || undefined, segment_id: segmentId || undefined })
-      .then(setData).catch((err) => toast.error(err));
-  }, [departmentId, segmentId]);
+    api.crmStates({
+      department_id: departmentId || undefined,
+      segment_id: segmentId || undefined,
+      owner_id: ownerId || undefined,
+    }).then(setData).catch((err) => toast.error(err));
+  }, [departmentId, segmentId, ownerId]);
 
-  if (!data) return <Spinner label="Loading the map" />;
+  const inState = useMemo(() => {
+    if (!data) return [];
+    if (state === '') return data.leads;
+    if (state === 'none') return data.leads.filter((l) => !l.state);
+    return data.leads.filter((l) => (l.state || '').toLowerCase() === state.toLowerCase());
+  }, [data, state]);
+
+  const shown = useMemo(() => inState
+    .filter((l) => activity.has(l.activity) && potential.has(l.potential))
+    .sort((a, b) => ACTIVITY_ORDER[a.activity] - ACTIVITY_ORDER[b.activity]
+      || POTENTIAL_ORDER[a.potential] - POTENTIAL_ORDER[b.potential]
+      || (b.days_since_spoken ?? 9999) - (a.days_since_spoken ?? 9999)
+      || a.name.localeCompare(b.name)), [inState, activity, potential]);
+
+  if (!data) return <Spinner label="Sorting leads by state" />;
+
+  const count = (key, field) => inState.filter((l) => l[field] === key).length;
+  const activityCounts = Object.fromEntries(Object.keys(FOLLOW_UP_META).map((k) => [k, count(k, 'activity')]));
+  const potentialCounts = Object.fromEntries(Object.keys(POTENTIAL_META).map((k) => [k, count(k, 'potential')]));
+  const toggle = (setter) => (key) => setter((current) => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
 
   const project = (lat, lon) => ({
     x: ((lon - BOX.minLon) / (BOX.maxLon - BOX.minLon)) * 100,
     y: ((BOX.maxLat - lat) / (BOX.maxLat - BOX.minLat)) * 100,
   });
-
-  const pins = data.mapped.flatMap((org) =>
-    org.pins.map((pin) => ({ ...project(Number(pin.latitude), Number(pin.longitude)), org, pin })));
-  const offBox = pins.filter((p) => p.x < 0 || p.x > 100 || p.y < 0 || p.y > 100);
+  const pins = shown.flatMap((lead) => (lead.pins || []).map((pin) => ({
+    ...project(Number(pin.latitude), Number(pin.longitude)), lead, pin,
+  }))).filter((p) => p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 100);
+  const placedLeads = new Set(pins.map((p) => p.lead.id)).size;
+  const followUps = shown.filter((l) => l.activity === 'inactive').length;
 
   return (
     <div className="stack">
-      <div className="row wrap" style={{ gap: 14 }}>
-        <div className="mini-stat">
-          <span className="stat-label">On the map</span>
-          <strong className="tnum">{data.organizations_mapped}</strong>
-          <span className="small muted">{data.pins_total} place{data.pins_total === 1 ? '' : 's'}</span>
-        </div>
-        <div className="mini-stat">
-          <span className="stat-label">Not on the map</span>
-          <strong className="tnum">{data.organizations_unmapped}</strong>
-          <span className="small muted">no coordinates entered</span>
-        </div>
+      <div className="row wrap" style={{ gap: 10, alignItems: 'flex-end' }}>
+        <label className="stack-sm" style={{ gap: 4 }}>
+          <span className="stat-label">State</span>
+          <select className="select" style={{ minWidth: 220 }} value={state}
+            onChange={(e) => setState(e.target.value)}>
+            <option value="">Every state ({data.leads.length})</option>
+            {data.states.filter((g) => g.state).map((g) => (
+              <option key={g.state} value={g.state}>{g.state} ({g.total})</option>
+            ))}
+            {data.states.some((g) => !g.state) && (
+              <option value="none">
+                No state recorded ({data.states.find((g) => !g.state).total})
+              </option>
+            )}
+          </select>
+        </label>
+        <button type="button" className="btn-link small" onClick={() => setShowRules((v) => !v)}>
+          {showRules ? 'Hide' : 'What do these mean?'}
+        </button>
       </div>
 
-      {pins.length === 0 ? (
-        <EmptyState title="Nothing to plot yet">
-          Coordinates are entered by hand on each organization's "Who they are" tab. Nothing is
-          looked up automatically, so no pin here is a guess.
-        </EmptyState>
-      ) : (
+      <ChipSet label="How they are being worked" meta={Object.fromEntries(Object.entries(FOLLOW_UP_META)
+        .map(([k, m]) => [k, { ...m, dotColor: m.color }]))}
+        counts={activityCounts} selected={activity} onToggle={toggle(setActivity)} />
+      <ChipSet label="What they are worth" meta={POTENTIAL_META}
+        counts={potentialCounts} selected={potential} onToggle={toggle(setPotential)} />
+
+      {showRules && (
+        <div className="callout is-quiet small stack-sm">
+          {Object.entries(data.definitions.activity).map(([key, text]) => (
+            <div key={key}><strong>{FOLLOW_UP_META[key]?.label}:</strong> {text}</div>
+          ))}
+          {Object.entries(data.definitions.potential).map(([key, text]) => (
+            <div key={key}><strong>{POTENTIAL_META[key]?.label}:</strong> {text}</div>
+          ))}
+          <div className="muted">Worth means: {data.definitions.potential_basis}</div>
+        </div>
+      )}
+
+      <div className="state-layout">
         <div className="map-frame">
           <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" className="map-svg"
-            role="img" aria-label="Where the organizations are">
+            role="img" aria-label="Leads with coordinates, coloured by how they are being worked">
             {[20, 40, 60, 80].map((v) => (
               <g key={v}>
                 <line x1={v} y1="0" x2={v} y2="100" className="map-grid" />
@@ -209,66 +306,130 @@ export function MapView({ departmentId, segmentId }) {
                 return `${x.toFixed(2)},${y.toFixed(2)}`;
               }).join(' ')}
             />
-            {pins.filter((p) => p.x >= 0 && p.x <= 100 && p.y >= 0 && p.y <= 100).map((p) => (
+            {pins.map((p) => (
               <circle
-                key={`${p.org.id}-${p.pin.id}`}
+                key={`${p.lead.id}-${p.pin.id}`}
                 cx={p.x} cy={p.y}
-                r={p.pin.precision === 'EXACT' ? 1.3 : 2.1}
-                className={`map-pin${p.pin.precision === 'EXACT' ? ' is-exact' : ''}`}
-                style={{ fill: p.org.segment_color || 'var(--brand)' }}
+                r={p.pin.precision === 'EXACT' ? 1.4 : 2.1}
+                className="map-pin is-exact"
+                style={{ fill: FOLLOW_UP_META[p.lead.activity]?.color || 'var(--brand)' }}
                 onMouseEnter={() => setHover(p)}
                 onMouseLeave={() => setHover(null)}
               />
             ))}
           </svg>
           <div className="map-caption small muted">
-            A rough outline of India, drawn here rather than fetched — no address is sent anywhere,
-            and this is for orientation, not a boundary. A larger dot means the location is only
-            approximate.
+            {placedLeads} of {shown.length} lead{shown.length === 1 ? '' : 's'} in view have
+            coordinates. The rest are in the list below — nobody is left out for lacking a pin, and
+            no location is guessed.
           </div>
           {hover && (
             <div className="map-tip">
-              <strong>{hover.org.name}</strong>
+              <strong>{hover.lead.name}</strong>
+              <div className="small muted">
+                {FOLLOW_UP_META[hover.lead.activity]?.label} · {POTENTIAL_META[hover.lead.potential]?.label}
+              </div>
               <div className="small muted">
                 {[hover.pin.label, hover.pin.city, hover.pin.state].filter(Boolean).join(' · ')}
-                {` · ${String(hover.pin.precision || '').toLowerCase()}`}
               </div>
             </div>
           )}
         </div>
-      )}
 
-      {offBox.length > 0 && (
-        <div className="callout is-quiet">
-          <Icon name="alert" size={15} />
-          <span className="small">
-            {offBox.length} place{offBox.length === 1 ? ' is' : 's are'} outside the plotted
-            area ({offBox.map((p) => p.org.name).join(', ')}) — listed here rather than pushed
-            to the edge of the map.
-          </span>
-        </div>
-      )}
-
-      {data.unmapped.length > 0 && (
-        <section className="card card-pad stack-sm">
-          <div className="stat-label">Not on the map ({data.unmapped.length})</div>
-          <div className="small muted">
-            These have no coordinates. They are listed in full — never silently left out.
+        <div className="card card-pad stack-sm" style={{ alignSelf: 'start' }}>
+          <div className="stat-label">State by state</div>
+          <div className="table-scroll">
+            <table className="data-table state-table">
+              <thead>
+                <tr>
+                  <th>State</th>
+                  <th title="Open deal, spoken to recently">Active</th>
+                  <th title="Open deal, nobody has spoken to them lately">Follow up</th>
+                  <th>Lower</th>
+                  <th>Expected</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.states.map((g) => {
+                  const key = g.state || 'none';
+                  const selected = state.toLowerCase() === key.toLowerCase();
+                  return (
+                    <tr key={key} className={selected ? 'is-selected' : ''}>
+                      <td>
+                        <button type="button" className="btn-link"
+                          onClick={() => setState(selected ? '' : (g.state || 'none'))}>
+                          {g.state || 'No state recorded'}
+                        </button>
+                        <span className="muted small"> · {g.total}</span>
+                      </td>
+                      <td className="tnum">{g.activity.active}</td>
+                      <td className="tnum">
+                        {g.activity.inactive > 0
+                          ? <Badge tone="warning">{g.activity.inactive}</Badge> : '0'}
+                      </td>
+                      <td className="tnum">{g.potential.low}</td>
+                      <td className="tnum">{g.eligible_value > 0 ? formatMoney(g.eligible_value) : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
-          <ul className="plain-list">
-            {data.unmapped.map((org) => (
-              <li key={org.id} className="row" style={{ gap: 8 }}>
-                <Link to={`/accounts/${org.id}`} className="btn-link grow truncate">{org.name}</Link>
-                {org.segment_name && <Badge dot={org.segment_color}>{org.segment_name}</Badge>}
-                <span className="small muted">
-                  {(org.operating_regions || []).join(', ') || org.hq_address || 'no location recorded'}
-                </span>
-                {org.owner_name && <Avatar name={org.owner_name} color={org.owner_color} size={20} />}
+        </div>
+      </div>
+
+      <section className="card card-pad stack-sm">
+        <div className="row-between wrap">
+          <div>
+            <h3>
+              {state === '' ? 'Every state' : state === 'none' ? 'Leads with no state recorded' : state}
+              {' — '}{shown.length} lead{shown.length === 1 ? '' : 's'}
+            </h3>
+            <div className="small muted">
+              {followUps > 0
+                ? `${followUps} need${followUps === 1 ? 's' : ''} following up, listed first; then by what they are worth.`
+                : 'Nobody here has gone quiet.'}
+            </div>
+          </div>
+        </div>
+        {shown.length === 0 ? (
+          <EmptyState title="No leads match">Widen the chips above, or pick another state.</EmptyState>
+        ) : (
+          <ul className="follow-list">
+            {shown.map((lead) => (
+              <li key={lead.id} className={`follow-row follow-${lead.activity}`}>
+                <span className="follow-dot" style={{ background: FOLLOW_UP_META[lead.activity]?.color }} />
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <div className="row wrap" style={{ gap: 6 }}>
+                    <Link to={`/accounts/${lead.id}`} className="nudge-title">{lead.name}</Link>
+                    <Badge tone={FOLLOW_UP_META[lead.activity]?.tone}>{FOLLOW_UP_META[lead.activity]?.label}</Badge>
+                    <Badge tone={POTENTIAL_META[lead.potential]?.tone}>{POTENTIAL_META[lead.potential]?.label}</Badge>
+                    {lead.open_blockers > 0 && <Badge tone="critical">blocked</Badge>}
+                  </div>
+                  <div className="small muted row wrap" style={{ gap: 6 }}>
+                    <span>{lead.state || 'no state'}</span>
+                    {lead.stage_name && <><span>·</span><span>{lead.stage_name}</span></>}
+                    <span>·</span><span>{spokenLabel(lead.days_since_spoken)}</span>
+                    {lead.eligible_value !== null && lead.eligible_value !== undefined && (
+                      <><span>·</span><span>{formatMoney(lead.eligible_value)} expected</span></>
+                    )}
+                    {lead.segment_name && <><span>·</span><span>{lead.segment_name}</span></>}
+                  </div>
+                  {lead.next_step && (
+                    <div className="small">
+                      Next: {lead.next_step}
+                      {lead.next_step_due && <span className="muted"> · {formatDate(lead.next_step_due)}</span>}
+                    </div>
+                  )}
+                </div>
+                {lead.owner_name && (
+                  <Avatar name={lead.owner_name} color={lead.owner_color} size={22} title={`${lead.owner_name} leads it`} />
+                )}
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        )}
+      </section>
     </div>
   );
 }

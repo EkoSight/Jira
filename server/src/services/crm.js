@@ -107,6 +107,9 @@ export async function listAccounts(filters = {}) {
     const term = push(`%${filters.search}%`);
     where.push(`(a.name ILIKE ${term} OR a.contact_name ILIKE ${term})`);
   }
+  // "none" asks for the leads nobody has placed yet, which is its own answer
+  if (filters.state === 'none') where.push(`NULLIF(TRIM(a.state), '') IS NULL`);
+  else if (filters.state) where.push(`LOWER(TRIM(a.state)) = LOWER(TRIM(${push(filters.state)}))`);
 
   const limit = Math.min(Number(filters.limit) || 500, 1000);
   const { rows } = await query(

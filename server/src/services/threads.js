@@ -25,7 +25,19 @@ import { getSettings } from './settings.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 
-export const ENTITY_TYPES = ['TASK', 'KEY_RESULT', 'OBJECTIVE'];
+export const ENTITY_TYPES = ['TASK', 'KEY_RESULT', 'OBJECTIVE', 'OPPORTUNITY', 'ACCOUNT'];
+
+/** The things in the B2B pipeline a thread can be about. */
+export const CRM_ENTITY_TYPES = ['OPPORTUNITY', 'ACCOUNT'];
+
+/**
+ * What sort of thing is stopping a lead converting. Kept to a short list so the
+ * same obstacle can be seen recurring across leads instead of being described
+ * forty different ways.
+ */
+export const BLOCKER_CATEGORIES = [
+  'BUDGET', 'APPROVAL', 'PRICING', 'PROOF', 'TECHNICAL', 'TIMING', 'COMPETITION', 'CONTACT', 'OTHER',
+];
 
 export const THREAD_KINDS = [
   'review',
@@ -35,10 +47,11 @@ export const THREAD_KINDS = [
   'help_needed',
   'feedback',
   'discussion',
+  'blocker',
 ];
 
 /** The kinds that mean somebody is waiting on somebody else. */
-export const ASKING_KINDS = ['review', 'question', 'help_needed', 'feedback'];
+export const ASKING_KINDS = ['review', 'question', 'help_needed', 'feedback', 'blocker'];
 
 /** How each kind reads, and whether it is asking for something. */
 export const KIND_META = {
@@ -49,6 +62,7 @@ export const KIND_META = {
   challenge: { label: 'Challenge', asking: false, severity: 'warning' },
   progress: { label: 'Progress', asking: false, severity: 'info' },
   discussion: { label: 'Discussion', asking: false, severity: 'info' },
+  blocker: { label: 'Blocker', asking: true, severity: 'warning' },
 };
 
 const THREAD_SELECT = `
@@ -157,25 +171,29 @@ export function canRaiseReview(user) {
  * answer; and anyone who could have raised it, so a thread never outlives the
  * person who opened it.
  */
-export function canResolveThread(user, thread) {
-  return thread.opened_by === user.id || canRaiseReview(user);
+export function canResolveThread(user, thread, entity = null) {
+  // on a lead, whoever may work the lead may also say the obstacle is cleared
+  return thread.opened_by === user.id || canRaiseReview(user) || Boolean(entity?.canManage);
 }
 
 /** Creates a thread with its first message. Both, or neither. */
 export async function createThread(client, {
   entityType, entityId, kind, title, body, actor, awaitingUserId = null,
+  category = null, participantIds = [],
 }) {
   if (!ENTITY_TYPES.includes(entityType)) throw badRequest('Unknown thing to discuss');
   if (!THREAD_KINDS.includes(kind)) throw badRequest('Unknown kind of thread');
 
   const { rows } = await client.query(
     `INSERT INTO discussion_threads
-       (entity_type, entity_id, kind, title, opened_by, awaiting_user)
-     VALUES ($1, $2, $3, $4, $5, $6)
+       (entity_type, entity_id, kind, title, opened_by, awaiting_user, category)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [entityType, entityId, kind, title || null, actor.id, awaitingUserId],
+    [entityType, entityId, kind, title || null, actor.id, awaitingUserId, category],
   );
   const thread = rows[0];
+
+  await addParticipants(client, { threadId: thread.id, userIds: participantIds, actor });
 
   await client.query(
     `INSERT INTO discussion_messages (thread_id, author_id, body) VALUES ($1, $2, $3)`,
@@ -183,6 +201,32 @@ export async function createThread(client, {
   );
 
   return thread;
+}
+
+/** The people brought in to help, who keep hearing about it until it closes. */
+export async function addParticipants(client, { threadId, userIds = [], actor }) {
+  for (const userId of new Set(userIds)) {
+    await client.query(
+      `INSERT INTO discussion_thread_participants (thread_id, user_id, added_by)
+       SELECT $1, id, $3 FROM users WHERE id = $2 AND is_active = TRUE
+       ON CONFLICT DO NOTHING`,
+      [threadId, userId, actor.id],
+    );
+  }
+}
+
+export async function listParticipants(threadIds) {
+  if (!threadIds.length) return new Map();
+  const { rows } = await query(
+    `SELECT p.thread_id, u.id, u.full_name, u.avatar_color
+       FROM discussion_thread_participants p JOIN users u ON u.id = p.user_id
+      WHERE p.thread_id = ANY($1::int[])
+      ORDER BY u.full_name`,
+    [threadIds],
+  );
+  const byThread = new Map(threadIds.map((id) => [id, []]));
+  for (const row of rows) byThread.get(row.thread_id)?.push(row);
+  return byThread;
 }
 
 /** Appends to a thread and moves its updated_at, which is what orders the list. */
@@ -233,12 +277,20 @@ export async function reopenThread(client, { threadId, actor }) {
  * the thread hears about replies, because a conversation nobody is told about is
  * a conversation that stops.
  */
-export async function notifyThread(client, { thread, actor, body, entityLabel, taskId, objectiveId }) {
+export async function notifyThread(client, {
+  thread, actor, body, entityLabel, taskId, objectiveId, accountId = null,
+}) {
   const meta = KIND_META[thread.kind] || KIND_META.discussion;
   const recipients = new Set();
 
   if (thread.awaiting_user) recipients.add(thread.awaiting_user);
   if (thread.opened_by) recipients.add(thread.opened_by);
+
+  // whoever was brought in to help keeps hearing about it, reply or not
+  const { rows: brought } = await client.query(
+    'SELECT user_id FROM discussion_thread_participants WHERE thread_id = $1', [thread.id],
+  );
+  for (const row of brought) recipients.add(row.user_id);
 
   const { rows } = await client.query(
     'SELECT DISTINCT author_id FROM discussion_messages WHERE thread_id = $1 AND author_id IS NOT NULL',
@@ -252,11 +304,12 @@ export async function notifyThread(client, { thread, actor, body, entityLabel, t
   for (const userId of recipients) {
     await notify(client, {
       userId,
-      type: thread.kind === 'review' ? 'review' : 'comment',
+      type: thread.kind === 'review' ? 'review' : thread.kind === 'blocker' ? 'crm_blocker' : 'comment',
       title: `${meta.label} on ${entityLabel}`,
       body: body.slice(0, 140),
       taskId: taskId ?? null,
       objectiveId: objectiveId ?? null,
+      accountId: accountId ?? null,
     });
   }
 }

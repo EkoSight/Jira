@@ -5,12 +5,13 @@ import { query, withTransaction } from '../db/pool.js';
 import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { canAccess } from './tasks.js';
-import { logActivity } from '../services/activity.js';
+import { logActivity, notify } from '../services/activity.js';
 import { logOkrActivity } from '../services/okr.js';
+import { canEditAccount, logActivity as logCrmActivity } from '../services/crm.js';
 import {
-  ENTITY_TYPES, THREAD_KINDS,
-  addMessage, canRaiseReview, canResolveThread, createThread, getThread,
-  listMessages, listThreads, notifyThread, reopenThread, resolveThread,
+  BLOCKER_CATEGORIES, CRM_ENTITY_TYPES, ENTITY_TYPES, THREAD_KINDS,
+  addMessage, addParticipants, canRaiseReview, canResolveThread, createThread, getThread,
+  listMessages, listParticipants, listThreads, notifyThread, reopenThread, resolveThread,
 } from '../services/threads.js';
 
 const router = Router();
@@ -72,13 +73,61 @@ async function resolveEntity(user, entityType, entityId) {
         objectiveId: rows[0].id,
       };
     }
+    case 'OPPORTUNITY':
+    case 'ACCOUNT': {
+      if (!hasPermission(user, 'crm.view')) throw forbidden('You cannot see the pipeline');
+      const { rows } = entityType === 'OPPORTUNITY'
+        ? await query(
+          `SELECT o.id, o.name AS title, o.owner_user_id, o.account_id, a.name AS account_name,
+                  a.owner_user_id AS account_owner_id, a.follower_user_id, a.created_by
+             FROM opportunities o JOIN accounts a ON a.id = o.account_id WHERE o.id = $1`,
+          [entityId],
+        )
+        : await query(
+          `SELECT a.id, a.name AS title, a.owner_user_id, a.id AS account_id, a.name AS account_name,
+                  a.owner_user_id AS account_owner_id, a.follower_user_id, a.created_by
+             FROM accounts a WHERE a.id = $1`,
+          [entityId],
+        );
+      if (!rows[0]) throw notFound(entityType === 'OPPORTUNITY' ? 'Deal not found' : 'Lead not found');
+      const row = rows[0];
+      return {
+        row,
+        label: entityType === 'OPPORTUNITY' ? `${row.account_name} — ${row.title}` : row.account_name,
+        ownerId: row.owner_user_id || row.account_owner_id,
+        taskId: null,
+        objectiveId: null,
+        accountId: row.account_id,
+        // may this person work the lead, and so say its obstacle is cleared
+        canManage: canEditAccount(user, {
+          owner_user_id: row.account_owner_id,
+          follower_user_id: row.follower_user_id,
+          created_by: row.created_by,
+        }) || row.owner_user_id === user.id,
+      };
+    }
     default:
       throw badRequest('Unknown thing to discuss');
   }
 }
 
 /** Leaves a trace on the item itself, so its own history shows the conversation. */
-async function traceOnEntity(client, { entityType, entity, actor, action, kind }) {
+async function traceOnEntity(client, { entityType, entity, actor, action, kind, text }) {
+  if (CRM_ENTITY_TYPES.includes(entityType)) {
+    // an internal note on the lead's own timeline: it is bookkeeping, so it does
+    // not count as having spoken to the partner and does not move that clock
+    if (kind !== 'blocker') return;
+    await logCrmActivity(client, {
+      accountId: entity.accountId,
+      opportunityId: entityType === 'OPPORTUNITY' ? entity.row.id : null,
+      type: 'NOTE',
+      actorId: actor.id,
+      subject: action === 'thread_opened' ? `Blocker raised: ${text}`
+        : action === 'thread_resolved' ? `Blocker cleared: ${text}` : `Blocker: ${text}`,
+      outcome: 'NOTED',
+    });
+    return;
+  }
   if (entityType === 'TASK') {
     await logActivity(client, {
       taskId: entity.taskId,
@@ -101,6 +150,50 @@ const listQuery = z.object({
   entity_type: z.enum(ENTITY_TYPES),
   entity_id: z.coerce.number().int().positive(),
 });
+
+/**
+ * Every thread about one lead: the lead itself and each of its deals, in one
+ * list, so its blockers are seen together rather than one deal at a time.
+ */
+router.get(
+  '/lead/:accountId',
+  asyncHandler(async (req, res) => {
+    const accountId = Number(req.params.accountId);
+    const entity = await resolveEntity(req.currentUser, 'ACCOUNT', accountId);
+
+    const { rows } = await query(
+      `SELECT t.id FROM discussion_threads t
+         LEFT JOIN opportunities o ON t.entity_type = 'OPPORTUNITY' AND o.id = t.entity_id
+        WHERE (t.entity_type = 'ACCOUNT' AND t.entity_id = $1)
+           OR (t.entity_type = 'OPPORTUNITY' AND o.account_id = $1)
+        ORDER BY (t.status = 'open') DESC, t.updated_at DESC`,
+      [accountId],
+    );
+    const ids = rows.map((r) => r.id);
+    const participants = await listParticipants(ids);
+    const threads = await Promise.all(ids.map(async (id) => {
+      const thread = await getThread(id);
+      let about = null;
+      if (thread.entity_type === 'OPPORTUNITY') {
+        const { rows: opp } = await query('SELECT name FROM opportunities WHERE id = $1', [thread.entity_id]);
+        about = opp[0]?.name ?? null;
+      }
+      return {
+        ...thread,
+        about,
+        participants: participants.get(id) || [],
+        messages: await listMessages(id),
+      };
+    }));
+
+    res.json({
+      threads,
+      categories: BLOCKER_CATEGORIES,
+      can_manage: entity.canManage,
+      can_raise_review: canRaiseReview(req.currentUser),
+    });
+  }),
+);
 
 router.get(
   '/',
@@ -129,6 +222,9 @@ const createInput = z.object({
   title: z.string().max(200).optional(),
   body: z.string().min(1).max(5000),
   awaiting_user_id: z.number().int().positive().nullable().optional(),
+  // a blocker: what sort of obstacle, and who is being asked to help
+  category: z.enum(BLOCKER_CATEGORIES).nullable().optional(),
+  participant_user_ids: z.array(z.number().int().positive()).max(30).optional(),
 });
 
 router.post(
@@ -144,6 +240,16 @@ router.post(
     }
     if (data.entity_type === 'TASK' && !hasPermission(req.currentUser, 'task.comment')) {
       throw forbidden('You cannot comment on tasks');
+    }
+    if (data.kind === 'blocker' && !CRM_ENTITY_TYPES.includes(data.entity_type)) {
+      throw badRequest('A blocker is raised on a lead or one of its deals');
+    }
+    // raising a blocker says the lead is stuck, so it is for whoever works it
+    if (data.kind === 'blocker' && !entity.canManage) {
+      throw forbidden('Only whoever works this lead, or a manager, can raise a blocker on it');
+    }
+    if (CRM_ENTITY_TYPES.includes(data.entity_type) && !hasPermission(req.currentUser, 'crm.activity.log')) {
+      throw forbidden('You cannot write on leads');
     }
 
     // a review is aimed at whoever owns the thing unless someone else is named;
@@ -161,6 +267,8 @@ router.post(
         body: data.body,
         actor: req.currentUser,
         awaitingUserId: awaiting,
+        category: data.category ?? null,
+        participantIds: data.participant_user_ids ?? [],
       });
 
       await traceOnEntity(client, {
@@ -169,6 +277,7 @@ router.post(
         actor: req.currentUser,
         action: 'thread_opened',
         kind: data.kind,
+        text: data.title || data.body.slice(0, 120),
       });
 
       await notifyThread(client, {
@@ -178,6 +287,7 @@ router.post(
         entityLabel: entity.label,
         taskId: entity.taskId,
         objectiveId: entity.objectiveId,
+        accountId: entity.accountId ?? null,
       });
 
       return created;
@@ -199,6 +309,9 @@ router.post(
     if (thread.entity_type === 'TASK' && !hasPermission(req.currentUser, 'task.comment')) {
       throw forbidden('You cannot comment on tasks');
     }
+    if (CRM_ENTITY_TYPES.includes(thread.entity_type) && !hasPermission(req.currentUser, 'crm.activity.log')) {
+      throw forbidden('You cannot write on leads');
+    }
 
     const message = await withTransaction(async (client) => {
       const created = await addMessage(client, {
@@ -213,6 +326,7 @@ router.post(
         entityLabel: entity.label,
         taskId: entity.taskId,
         objectiveId: entity.objectiveId,
+        accountId: entity.accountId ?? null,
       });
       return created;
     });
@@ -247,7 +361,7 @@ router.post(
     if (thread.status === 'resolved') throw badRequest('That thread is already closed');
 
     const entity = await resolveEntity(req.currentUser, thread.entity_type, thread.entity_id);
-    if (!canResolveThread(req.currentUser, thread)) {
+    if (!canResolveThread(req.currentUser, thread, entity)) {
       throw forbidden('Only the person who opened this, or a manager, can close it');
     }
 
@@ -263,6 +377,7 @@ router.post(
         actor: req.currentUser,
         action: 'thread_resolved',
         kind: thread.kind,
+        text: conclusion,
       });
       await notifyThread(client, {
         thread,
@@ -271,6 +386,7 @@ router.post(
         entityLabel: entity.label,
         taskId: entity.taskId,
         objectiveId: entity.objectiveId,
+        accountId: entity.accountId ?? null,
       });
       return closed;
     });
@@ -279,13 +395,51 @@ router.post(
   }),
 );
 
+/** Brings more people into a blocker after it was raised. */
+router.post(
+  '/:id/participants',
+  asyncHandler(async (req, res) => {
+    const { user_ids: userIds } = z
+      .object({ user_ids: z.array(z.number().int().positive()).min(1).max(30) })
+      .parse(req.body);
+    const thread = await getThread(Number(req.params.id));
+    if (!thread) throw notFound('Thread not found');
+    const entity = await resolveEntity(req.currentUser, thread.entity_type, thread.entity_id);
+    if (!canResolveThread(req.currentUser, thread, entity)) {
+      throw forbidden('Only the person who raised this, or whoever works the lead, can bring people in');
+    }
+
+    await withTransaction(async (client) => {
+      const { rows: before } = await client.query(
+        'SELECT user_id FROM discussion_thread_participants WHERE thread_id = $1', [thread.id],
+      );
+      const already = new Set(before.map((r) => r.user_id));
+      await addParticipants(client, { threadId: thread.id, userIds, actor: req.currentUser });
+      // only the newcomers are told; everyone else already knows
+      for (const userId of userIds) {
+        if (already.has(userId) || userId === req.currentUser.id) continue;
+        await notify(client, {
+          userId,
+          type: thread.kind === 'blocker' ? 'crm_blocker' : 'comment',
+          title: `${req.currentUser.full_name} asked for your help on ${entity.label}`,
+          body: (thread.title || '').slice(0, 140) || null,
+          accountId: entity.accountId ?? null,
+        });
+      }
+    });
+
+    const participants = await listParticipants([thread.id]);
+    res.json({ participants: participants.get(thread.id) || [] });
+  }),
+);
+
 router.post(
   '/:id/reopen',
   asyncHandler(async (req, res) => {
     const thread = await getThread(Number(req.params.id));
     if (!thread) throw notFound('Thread not found');
-    await resolveEntity(req.currentUser, thread.entity_type, thread.entity_id);
-    if (!canResolveThread(req.currentUser, thread)) {
+    const entity = await resolveEntity(req.currentUser, thread.entity_type, thread.entity_id);
+    if (!canResolveThread(req.currentUser, thread, entity)) {
       throw forbidden('Only the person who opened this, or a manager, can reopen it');
     }
 

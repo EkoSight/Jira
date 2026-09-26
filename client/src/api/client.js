@@ -125,6 +125,9 @@ export const api = {
   replyToThread: (id, body) => request('POST', `/threads/${id}/messages`, { body }),
   resolveThread: (id, conclusion) => request('POST', `/threads/${id}/resolve`, { conclusion }),
   reopenThread: (id) => request('POST', `/threads/${id}/reopen`),
+  leadThreads: (accountId) => request('GET', `/threads/lead/${accountId}`),
+  addThreadParticipants: (id, userIds) =>
+    request('POST', `/threads/${id}/participants`, { user_ids: userIds }),
 
   goalsDashboard: (params) => request('GET', `/objectives/dashboard${qs(params)}`),
   goalInsights: (params) => request('GET', `/objectives/insights${qs(params)}`),
@@ -236,8 +239,13 @@ export const api = {
   account: (id) => request('GET', `/accounts/${id}`),
   createAccount: (data) => request('POST', '/accounts', data),
   updateAccount: (id, data) => request('PATCH', `/accounts/${id}`, data),
-  moveAccountStage: (id, stageId) => request('POST', `/accounts/${id}/stage`, { stage_id: stageId }),
-  convertAccount: (id, type) => request('POST', `/accounts/${id}/convert`, { type }),
+  // extra carries a loss reason, or the agreed amount when moved to Won
+  moveAccountStage: (id, stageId, extra = {}) =>
+    request('POST', `/accounts/${id}/stage`, { stage_id: stageId, ...extra }),
+  // extra names the deal that was signed, so the month counts it as won
+  convertAccount: (id, type, extra = {}) =>
+    request('POST', `/accounts/${id}/convert`, { type, ...extra }),
+  crmStates: (params) => request('GET', `/accounts/views/states${qs(params)}`),
   archiveAccount: (id) => request('DELETE', `/accounts/${id}`),
   accountActivities: (id) => request('GET', `/accounts/${id}/activities`),
   logAccountActivity: (id, data) => request('POST', `/accounts/${id}/activities`, data),

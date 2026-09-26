@@ -209,3 +209,47 @@ against production.
 - **Collected revenue is typed in.** Connecting it to an accounting system was out
   of scope, and the dashboard says where the number comes from rather than
   implying a feed.
+
+---
+
+## 8. Pipeline suggestions (follow-up round)
+
+**Lead location.** Every lead has a State (a pick list, so spellings cannot split
+a state in two) and an Office address, on the new-lead form and on Edit. Migration
+014 fills State on existing leads only from a state a person already recorded — the
+head-office location, or all locations agreeing. Nothing is parsed out of a
+free-text address; anything else stays blank and is listed as "no state recorded".
+
+**Expected value.** "Expected revenue" on a lead is now written to its main deal's
+estimate. Before, it went to a mirror column that the next edit to the deal
+overwrote. Board cards and column totals show what *all* a lead's open deals are
+worth by the forecast rules (unpaid pilots, CSR and MoUs count for nothing). A lead
+with no value shows an "Add expected value" button, and the header counts them and
+can filter the board to just those.
+
+**Monthly conversions.** The root cause of Won staying at zero: moving a lead on
+the board, or clicking "Won → Customer", changed the lead but never the deal the
+dashboard reads. Every path now moves the deal through one shared function.
+"Mark as customer" asks which deal they signed (defaulting to the main one) and
+what was agreed. The dashboard lists the deals won and the leads that became
+customers in the selected month. Leads converted before this change still appear
+under "Became customers" by their conversion date; no deal was retroactively
+marked won.
+
+**State-wise view.** "States & map" groups every lead by its recorded State with
+counts of active, needs follow-up and lower-potential leads, filters by state,
+activity and potential, and lists who to follow up with first. The rules (30 days
+without contact = needs follow-up; under ₹5 lakh = lower potential; no value =
+"not known", never "low") ship with the data, are shown in the page, and are
+editable in settings under `crm.followUp`.
+
+**Blockers.** A lead owner can raise a blocker on a lead or one of its deals — a
+category, a headline, what is happening, and who to alert. It uses the existing
+discussion threads (no second comment system). The people named are notified
+now and on every reply, can be added later, and the blocker closes only with a
+written conclusion. It shows on the lead, on the board card, in the list, and
+becomes a nudge if nobody replies for 3 days. Raising one is an internal note:
+it does not count as having spoken to the partner, and the partner is never told.
+
+Tests: 266 pass (231 server, 35 client), including a migration test for the
+State backfill and a new `pipeline.test.js`.

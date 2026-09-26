@@ -7,15 +7,61 @@ import AccountDialog from '../components/AccountDialog.jsx';
 import CrmNudges from '../components/CrmNudges.jsx';
 import CrmDashboard from '../components/CrmDashboard.jsx';
 import { ListView, MapView, TreeView } from '../components/CrmViews.jsx';
-import { crmSignalMeta, formatMoney, freshnessLabel } from '../lib/crm.js';
+import { SettleDialog } from '../components/LeadMoveDialogs.jsx';
+import { INDIAN_STATES, formatMoney, freshnessLabel } from '../lib/crm.js';
 
-function AccountCard({ account, onOpen, onDragStart, onDragEnd, stages, onMove }) {
+/** Typing the expected revenue straight onto a card that has none. */
+function QuickValue({ account, onSaved }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  if (!open) {
+    return (
+      <button type="button" className="value-missing"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        title="No expected revenue on this lead's open deals, so it adds nothing to the pipeline total">
+        <Icon name="plus" size={10} /> Add expected value
+      </button>
+    );
+  }
+
+  const save = async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (value === '' || Number(value) < 0) return;
+    setSaving(true);
+    try {
+      await api.updateAccount(account.id, { value: Number(value) });
+      toast.success('Expected value saved on the deal');
+      onSaved();
+    } catch (err) {
+      toast.error(err);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form className="quick-value" onSubmit={save} onClick={(e) => e.stopPropagation()}>
+      <span className="small muted">₹</span>
+      <input className="input" type="number" min="0" autoFocus value={value}
+        onChange={(e) => setValue(e.target.value)} placeholder="500000"
+        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') setOpen(false); }} />
+      <button type="submit" className="btn btn-sm btn-primary" disabled={saving || value === ''}>Save</button>
+    </form>
+  );
+}
+
+function AccountCard({ account, onOpen, onDragStart, onDragEnd, stages, onMove, onChanged, canEdit }) {
   const fresh = freshnessLabel(account.days_since_activity);
-  const money = formatMoney(account.value, account.currency);
+  // what its open deals are worth by the forecast's rules — every open deal,
+  // not only the headline one, and never a non-commercial pilot
+  const money = formatMoney(account.eligible_value, account.currency);
   return (
     <div>
       <div
-        className={`task-card account-card${account.days_since_stage_change >= 7 ? ' is-stalled' : ''}`}
+        className={`task-card account-card${account.days_since_stage_change >= 7 ? ' is-stalled' : ''}${account.open_blockers ? ' is-blocked' : ''}`}
         role="button"
         tabIndex={0}
         draggable
@@ -26,12 +72,33 @@ function AccountCard({ account, onOpen, onDragStart, onDragEnd, stages, onMove }
       >
         <div className="task-card-title">{account.name}</div>
         <div className="task-card-meta">
-          {money && <Badge tone="brand">{money}</Badge>}
+          {money && (
+            <Badge tone="brand" title={account.open_deals > 1 ? `${account.open_deals} open deals` : 'Expected from the open deal'}>
+              {money}
+            </Badge>
+          )}
+          {!money && account.deals_without_value > 0 && canEdit && (
+            <QuickValue account={account} onSaved={onChanged} />
+          )}
+          {!money && account.deals_without_value > 0 && !canEdit && (
+            <Badge tone="neutral">no value yet</Badge>
+          )}
+          {!money && !account.deals_without_value && account.non_commercial_deals > 0 && (
+            <Badge tone="neutral" title="Unpaid pilots, CSR projects and partnerships add nothing to the pipeline value">
+              not commercial
+            </Badge>
+          )}
+          {account.open_blockers > 0 && (
+            <Badge tone="critical" title="Something is stopping this lead — open it to see and discuss">
+              <Icon name="alert" size={10} /> {account.open_blockers === 1 ? 'blocker' : `${account.open_blockers} blockers`}
+            </Badge>
+          )}
           {account.open_task_count > 0 && (
             <Badge tone="neutral" title="Open tasks"><Icon name="list" size={10} /> {account.open_task_count}</Badge>
           )}
           <Badge tone={fresh.tone}>{fresh.text}</Badge>
         </div>
+        {account.state && <div className="small muted truncate">{account.state}</div>}
         {account.next_step && <div className="small muted truncate">Next: {account.next_step}</div>}
         <div className="row-between">
           {account.owner_name ? (
@@ -77,6 +144,9 @@ export default function Pipeline() {
   const [mine, setMine] = useState(false);
   const [segments, setSegments] = useState([]);
   const [search, setSearch] = useState('');
+  const [stateFilter, setStateFilter] = useState('');
+  const [onlyNoValue, setOnlyNoValue] = useState(false);
+  const [settling, setSettling] = useState(null);
   // board, list, map, tree and dashboard are five ways of reading one dataset
   const [view, setView] = useState('board');
 
@@ -85,8 +155,9 @@ export default function Pipeline() {
       owner_id: ownerFilter || undefined,
       department_id: departmentFilter || undefined,
       mine: mine ? 'true' : undefined,
+      state: stateFilter || undefined,
     }),
-    [ownerFilter, departmentFilter, mine],
+    [ownerFilter, departmentFilter, mine, stateFilter],
   );
 
   const load = useCallback(() => {
@@ -103,6 +174,12 @@ export default function Pipeline() {
 
   const move = async (account, stageId) => {
     if (account.stage_id === stageId) return;
+    // won and lost ask their question first: why it was lost, what was agreed
+    const target = board.stages.find((s) => s.id === stageId);
+    if (target && target.kind !== 'open') {
+      setSettling({ account, stage: target });
+      return;
+    }
     const previous = board;
     // optimistic: pull the card out of its column into the new one
     setBoard((current) => ({
@@ -129,16 +206,30 @@ export default function Pipeline() {
 
   const openStages = board.stages.filter((s) => s.kind === 'open');
   const closedStages = board.stages.filter((s) => s.kind !== 'open');
-  const totalValue = openStages.reduce((sum, s) => sum + s.value, 0);
+  const totalValue = board.eligible_value ?? 0;
+  // the "no value yet" filter narrows the board to the cards that need a number
+  const visible = (accounts) => (onlyNoValue
+    ? accounts.filter((a) => a.eligible_value === null && a.deals_without_value > 0)
+    : accounts);
 
   return (
     <div className="stack" style={{ gap: 14 }}>
       <div className="row-between wrap">
         <div>
           <h1>B2B Pipeline</h1>
-          <div className="small muted">
-            {board.total} open lead{board.total === 1 ? '' : 's'}
-            {formatMoney(totalValue) && ` · ${formatMoney(totalValue)} in play`}
+          <div className="small muted row wrap" style={{ gap: 6 }}>
+            <span>
+              {board.total} open lead{board.total === 1 ? '' : 's'}
+              {formatMoney(totalValue) && ` · ${formatMoney(totalValue)} expected from open deals`}
+            </span>
+            {board.leads_without_value > 0 && (
+              <button type="button"
+                className={`kind-chip${onlyNoValue ? ' is-active' : ''}`}
+                title="Leads whose open deals have no expected revenue. They add nothing to the total until they do."
+                onClick={() => { setOnlyNoValue((v) => !v); setView('board'); }}>
+                {board.leads_without_value} with no expected value{onlyNoValue ? ' — showing only these' : ''}
+              </button>
+            )}
           </div>
         </div>
         {can('crm.create') && (
@@ -168,6 +259,14 @@ export default function Pipeline() {
             <option key={d.id} value={d.id}>{d.name}</option>
           ))}
         </select>
+        {(view === 'board' || view === 'list') && (
+          <select className="select" value={stateFilter} onChange={(e) => setStateFilter(e.target.value)}
+            aria-label="Filter by state">
+            <option value="">Every state</option>
+            <option value="none">No state recorded</option>
+            {INDIAN_STATES.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        )}
         {(view === 'map' || view === 'dashboard') && segments.length > 0 && (
           <select className="select" value={segmentFilter}
             onChange={(e) => setSegmentFilter(e.target.value)}>
@@ -187,7 +286,7 @@ export default function Pipeline() {
         {[
           ['board', 'Board'],
           ['list', 'List'],
-          ['map', 'Map'],
+          ['map', 'States & map'],
           ['tree', 'Who leads what'],
           ['dashboard', 'Dashboard'],
         ].map(([key, label]) => (
@@ -209,7 +308,9 @@ export default function Pipeline() {
       {view === 'board' && <CrmNudges departmentId={departmentFilter} compact />}
 
       {view === 'list' && <ListView board={board} search={search} />}
-      {view === 'map' && <MapView departmentId={departmentFilter} segmentId={segmentFilter} />}
+      {view === 'map' && (
+        <MapView departmentId={departmentFilter} segmentId={segmentFilter} ownerId={ownerFilter} />
+      )}
       {view === 'tree' && <TreeView departmentId={departmentFilter} />}
       {view === 'dashboard' && (
         <CrmDashboard departmentId={departmentFilter} ownerId={ownerFilter}
@@ -241,15 +342,17 @@ export default function Pipeline() {
               <span className="badge-dot" style={{ background: stage.color }} />
               <span className="board-col-title">{stage.name}</span>
               <span className="board-col-count tnum">{stage.accounts.length}</span>
-              {formatMoney(stage.value) && <span className="small muted" style={{ marginLeft: 'auto' }}>{formatMoney(stage.value)}</span>}
+              {stage.eligible_value > 0 && <span className="small muted" style={{ marginLeft: 'auto' }}>{formatMoney(stage.eligible_value)}</span>}
             </header>
             <div className="board-col-body">
-              {stage.accounts.length === 0 && <div className="small muted center" style={{ padding: 14 }}>Empty</div>}
-              {stage.accounts.map((account) => (
+              {visible(stage.accounts).length === 0 && <div className="small muted center" style={{ padding: 14 }}>Empty</div>}
+              {visible(stage.accounts).map((account) => (
                 <AccountCard
                   key={account.id}
                   account={account}
                   stages={board.stages}
+                  canEdit={can('crm.activity.log')}
+                  onChanged={load}
                   onOpen={() => navigate(`/accounts/${account.id}`)}
                   onMove={(stageId) => move(account, stageId)}
                   onDragStart={() => setDragging(account)}
@@ -274,6 +377,11 @@ export default function Pipeline() {
           ))}
           <span className="small muted">won and lost deals stay on the account, off the active board</span>
         </div>
+      )}
+
+      {settling && (
+        <SettleDialog account={settling.account} stage={settling.stage}
+          onClose={() => setSettling(null)} onDone={load} />
       )}
 
       {creating && (

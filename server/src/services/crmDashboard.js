@@ -35,7 +35,8 @@ export const METRIC_DEFINITIONS = {
   open_opportunities: { label: 'Open opportunities', basis: 'now', detail: 'Deals not won, lost or paused, as things stand.' },
   eligible_pipeline: { label: 'Eligible pipeline', basis: 'now', detail: 'One value per open deal — signed, else proposed, else estimated. Unpaid pilots, CSR projects and MoUs contribute nothing.' },
   weighted_forecast: { label: 'Weighted forecast', basis: 'now', detail: 'Eligible value × probability. An estimate using a disclosed probability, not a prediction.' },
-  won_this_month: { label: 'Won', basis: 'month', detail: 'Deals whose won event happened inside the selected month.' },
+  won_this_month: { label: 'Won', basis: 'month', detail: 'Deals whose won event happened inside the selected month — moved to Won on the board or the deal, or named as the deal they signed when a lead was marked as a customer.' },
+  became_customers: { label: 'Became customers', basis: 'month', detail: 'Leads first marked as a customer or partner inside the selected month. Counted once, on the first conversion, even if one was converted without naming a deal.' },
   lost_this_month: { label: 'Lost', basis: 'month', detail: 'Deals whose lost event happened inside the selected month.' },
   value_won: { label: 'Value won', basis: 'month', detail: 'Agreed amounts on deals won in the month. Not revenue collected.' },
   value_collected: { label: 'Collected', basis: 'all', detail: 'Amounts recorded as actually received. Entered by hand, not from an accounting system.' },
@@ -119,6 +120,35 @@ export async function crmDashboard(filters = {}) {
          WHERE o.status = 'WON' AND o.closed_at >= $1 AND o.closed_at < $2 ${monthScoped}) AS value_won,
        (SELECT COALESCE(SUM(o.collected_value), 0) FROM opportunities o JOIN accounts a ON a.id = o.account_id
          WHERE o.collected_value IS NOT NULL ${monthScoped}) AS value_collected`,
+    monthParams,
+  );
+
+  // the deals themselves, so "won: 3" is three names and not a bare number
+  const { rows: wonRows } = await query(
+    `SELECT o.id, o.name, o.account_id, o.agreed_value, o.currency, o.closed_at,
+            o.engagement_model, o.agreement_type,
+            a.name AS account_name, u.full_name AS owner_name, u.avatar_color AS owner_color
+       FROM opportunities o
+       JOIN accounts a ON a.id = o.account_id
+       LEFT JOIN users u ON u.id = o.owner_user_id
+      WHERE o.status = 'WON' AND o.closed_at >= $1 AND o.closed_at < $2 ${monthScoped}
+      ORDER BY o.closed_at DESC`,
+    monthParams,
+  );
+
+  const convertScope = scope.length
+    ? `AND ${scope.map(shift).join(' AND ').replace(/o\.owner_user_id/g, 'a.owner_user_id')}`
+    : '';
+  const { rows: convertedRows } = await query(
+    `SELECT a.id, a.name, a.type, a.converted_at,
+            u.full_name AS owner_name, u.avatar_color AS owner_color,
+            (SELECT o.name FROM opportunities o
+              WHERE o.account_id = a.id AND o.status = 'WON'
+              ORDER BY o.closed_at DESC NULLS LAST LIMIT 1) AS won_deal
+       FROM accounts a
+       LEFT JOIN users u ON u.id = a.owner_user_id
+      WHERE a.converted_at >= $1 AND a.converted_at < $2 AND a.is_archived = FALSE ${convertScope}
+      ORDER BY a.converted_at DESC`,
     monthParams,
   );
 
@@ -207,6 +237,11 @@ export async function crmDashboard(filters = {}) {
     // what happened during the selected month
     activity: {
       won: monthRows[0].won,
+      won_list: wonRows.map((row) => ({
+        ...row, agreed_value: row.agreed_value === null ? null : Number(row.agreed_value),
+      })),
+      became_customers: convertedRows.length,
+      converted_list: convertedRows,
       lost: monthRows[0].lost,
       value_won: Number(monthRows[0].value_won) || 0,
       value_collected: Number(monthRows[0].value_collected) || 0,

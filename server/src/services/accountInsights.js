@@ -288,6 +288,39 @@ export async function analysePipeline({ departmentId = null } = {}) {
     });
   }
 
+  // ---- blockers raised and then left: the people asked have not answered
+  const quietDays = Number(settings.crm?.blockerQuietDays) || 3;
+  const { rows: blockers } = await query(
+    `SELECT t.id, t.title, t.entity_type, t.entity_id, t.opened_by, t.created_at,
+            COALESCE(o.account_id, t.entity_id) AS account_id,
+            a.name AS account_name, a.department_id, a.owner_user_id,
+            u.full_name AS owner_name, u.avatar_color AS owner_color,
+            (SELECT MAX(m.created_at) FROM discussion_messages m WHERE m.thread_id = t.id) AS last_message_at,
+            (SELECT COUNT(*)::int FROM discussion_messages m WHERE m.thread_id = t.id) AS messages
+       FROM discussion_threads t
+       LEFT JOIN opportunities o ON t.entity_type = 'OPPORTUNITY' AND o.id = t.entity_id
+       JOIN accounts a ON a.id = COALESCE(o.account_id, CASE WHEN t.entity_type = 'ACCOUNT' THEN t.entity_id END)
+       LEFT JOIN users u ON u.id = a.owner_user_id
+      WHERE t.kind = 'blocker' AND t.status = 'open' AND a.is_archived = FALSE
+        AND ($1::int IS NULL OR a.department_id = $1::int)`,
+    [departmentId],
+  );
+  for (const blocker of blockers) {
+    const last = new Date(blocker.last_message_at || blocker.created_at).getTime();
+    const silent = Math.floor((now - last) / DAY);
+    if (silent < quietDays) continue;
+    push({
+      entity_type: 'ACCOUNT', entity_id: blocker.account_id, account_id: blocker.account_id,
+      title: blocker.title || 'A blocker', subtitle: blocker.account_name,
+      owner_user_id: blocker.owner_user_id, owner_name: blocker.owner_name,
+      owner_color: blocker.owner_color, department_id: blocker.department_id,
+      kind: 'blocker_waiting', severity: silent >= quietDays * 2 ? 'critical' : 'warning',
+      detail: blocker.messages <= 1
+        ? `raised ${silent} days ago and nobody has replied`
+        : `no reply in ${silent} days`,
+    });
+  }
+
   signals.sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
 
   const byOwner = new Map();
@@ -313,6 +346,7 @@ export async function analysePipeline({ departmentId = null } = {}) {
       closing_with_blockers: count('closing_with_blockers'),
       meeting_outcome_missing: count('meeting_outcome_missing'),
       milestone_overdue: count('milestone_overdue'),
+      blocker_waiting: count('blocker_waiting'),
     },
     attention: signals,
     by_person: [...byOwner.values()].sort((a, b) => b.critical - a.critical || b.total - a.total),

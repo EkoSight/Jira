@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Field, Modal } from './ui.jsx';
+import { INDIAN_STATES } from '../lib/crm.js';
 
 /**
  * Adding or editing a lead. Only the name is required — a lead often starts as
@@ -28,6 +29,8 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
     next_step: account?.next_step || '',
     next_step_due: account?.next_step_due?.slice(0, 10) || '',
     description: account?.description || '',
+    state: account?.state || '',
+    hq_address: account?.hq_address || '',
   }));
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
@@ -48,8 +51,14 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
       next_step: form.next_step.trim() || null,
       next_step_due: form.next_step_due || null,
       description: form.description.trim() || null,
+      state: form.state || null,
+      hq_address: form.hq_address.trim() || null,
     };
     if (!editing && form.stage_id) payload.stage_id = Number(form.stage_id);
+    // The box shows the lead's headline value, which may be a proposed or signed
+    // amount. Saving it untouched must not copy that into the estimate, so the
+    // value is only sent when somebody actually changed it.
+    if (editing && String(form.value) === String(account.value ?? '')) delete payload.value;
 
     setSaving(true);
     try {
@@ -113,7 +122,12 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
               ))}
             </select>
           </Field>
-          <Field label="Deal value" hint="Roughly what it's worth — powers the pipeline total">
+          <Field
+            label="Expected revenue (₹)"
+            hint={editing
+              ? 'Your estimate for the main deal. A proposed or signed amount on the deal takes precedence.'
+              : 'What you expect this deal to bring in. Leave blank if you genuinely do not know yet — blank is not zero.'}
+          >
             <input className="input" type="number" min="0" value={form.value}
               onChange={(e) => set({ value: e.target.value })} placeholder="500000" />
           </Field>
@@ -128,6 +142,23 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
             </select>
           </Field>
         )}
+
+        <div className="grid-2">
+          <Field label="State" hint="Where they are based — it drives the state-wise view">
+            <select className="select" value={form.state} onChange={(e) => set({ state: e.target.value })}>
+              <option value="">Not recorded yet</option>
+              {/* an older value typed before the pick list existed is kept, not lost */}
+              {form.state && !INDIAN_STATES.includes(form.state) && (
+                <option value={form.state}>{form.state}</option>
+              )}
+              {INDIAN_STATES.map((name) => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </Field>
+          <Field label="Office address">
+            <input className="input" value={form.hq_address} onChange={(e) => set({ hq_address: e.target.value })}
+              placeholder="Plot 12, MIDC Ambad, Nashik" />
+          </Field>
+        </div>
 
         <div className="grid-2">
           <Field label="Contact name">

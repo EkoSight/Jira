@@ -180,10 +180,12 @@ export default function CrmNudges({ departmentId, compact = false }) {
       )}
 
       <div className="stack-sm">
-        {shown.slice(0, limit).map((signal) => {
+        {shown.slice(0, limit).map((signal, index) => {
           const meta = crmSignalMeta(signal.kind);
           return (
-            <div key={`${signal.entity_type}-${signal.entity_id}-${signal.kind}`} className="nudge-row">
+            // one delivery can have two overdue milestones, so the entity and
+            // kind alone do not identify a row
+            <div key={`${signal.entity_type}-${signal.entity_id}-${signal.kind}-${index}`} className="nudge-row">
               <span className={`sig-dot sig-${signal.severity}`} aria-hidden="true" />
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="row wrap" style={{ gap: 6 }}>

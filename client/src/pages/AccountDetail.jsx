@@ -12,6 +12,8 @@ import CrmMeetings from '../components/CrmMeetings.jsx';
 import CrmDelivery from '../components/CrmDelivery.jsx';
 import CrmResources from '../components/CrmResources.jsx';
 import AccountDossier from '../components/AccountDossier.jsx';
+import CrmBlockers from '../components/CrmBlockers.jsx';
+import { ConvertDialog, SettleDialog } from '../components/LeadMoveDialogs.jsx';
 import { ACCOUNT_TYPE_META, QUICK_ACTIVITIES, activityMeta, formatMoney, freshnessLabel } from '../lib/crm.js';
 import { formatDate, relativeTime, dueLabel, STAGE_LABEL } from '../lib/format.js';
 
@@ -61,6 +63,9 @@ export default function AccountDetail() {
   const [addingTask, setAddingTask] = useState(false);
   const [tab, setTab] = useState('overview');
   const [openTask, setOpenTask] = useState(null);
+  const [converting, setConverting] = useState(null);
+  const [settling, setSettling] = useState(null);
+  const [raiseSignal, setRaiseSignal] = useState(0);
 
   const load = () => {
     api.account(id).then(setData).catch((err) => {
@@ -88,6 +93,12 @@ export default function AccountDetail() {
   const isLead = account.type === 'LEAD';
 
   const moveStage = async (stageId) => {
+    const target = stages.find((s) => s.id === Number(stageId));
+    // won and lost each ask their one question; open stages just move
+    if (target && target.kind !== 'open') {
+      setSettling(target);
+      return;
+    }
     try {
       await api.moveAccountStage(account.id, Number(stageId));
       load();
@@ -96,15 +107,7 @@ export default function AccountDetail() {
     }
   };
 
-  const convert = async (type) => {
-    try {
-      await api.convertAccount(account.id, type);
-      toast.success(type === 'CUSTOMER' ? 'Now a customer' : 'Now a partner');
-      load();
-    } catch (err) {
-      toast.error(err);
-    }
-  };
+  const convert = (type) => setConverting(type);
 
   return (
     <div className="stack" style={{ gap: 16 }}>
@@ -127,6 +130,10 @@ export default function AccountDetail() {
             <div className="small muted row wrap" style={{ gap: 6, marginTop: 4 }}>
               {money && <span>{money}</span>}
               {account.department_name && <><span>·</span><span>{account.department_name}</span></>}
+              <span>·</span>
+              {account.state
+                ? <span>{account.state}</span>
+                : <span className="muted" title="Set it with Edit — it drives the state-wise view">no state recorded</span>}
               {account.source && <><span>·</span><span>from {account.source}</span></>}
               <span>·</span>
               <span>last worked <Badge tone={fresh.tone}>{fresh.text}</Badge></span>
@@ -144,6 +151,11 @@ export default function AccountDetail() {
             {canEdit && isLead && (
               <button type="button" className="btn btn-sm btn-primary" onClick={() => convert('CUSTOMER')}>
                 Won → Customer
+              </button>
+            )}
+            {canEdit && can('crm.activity.log') && (
+              <button type="button" className="btn btn-sm" onClick={() => setRaiseSignal((n) => n + 1)}>
+                <Icon name="alert" size={13} /> Raise a blocker
               </button>
             )}
             {canEdit && account.type === 'CUSTOMER' && (
@@ -218,6 +230,12 @@ export default function AccountDetail() {
             {account.website && <a href={account.website} target="_blank" rel="noreferrer" className="btn-link">{account.website}</a>}
           </div>
         )}
+        {account.hq_address && (
+          <div className="small muted row" style={{ gap: 6 }}>
+            <Icon name="target" size={13} />
+            <span>Office: {account.hq_address}{account.state ? `, ${account.state}` : ''}</span>
+          </div>
+        )}
         {account.description && <p style={{ fontSize: 13.5 }}>{account.description}</p>}
       </section>
 
@@ -236,6 +254,9 @@ export default function AccountDetail() {
           </div>
         </section>
       )}
+
+      <CrmBlockers account={account} opportunities={opportunities} compact
+        raiseSignal={raiseSignal} onChanged={load} />
 
       <div className="tabs tabs-scroll" role="tablist">
         {[
@@ -420,6 +441,14 @@ export default function AccountDetail() {
         />
       )}
       {openTask && <TaskDialog taskId={openTask} onClose={() => setOpenTask(null)} onSaved={load} />}
+      {converting && (
+        <ConvertDialog account={account} type={converting}
+          onClose={() => setConverting(null)} onDone={load} />
+      )}
+      {settling && (
+        <SettleDialog account={account} stage={settling}
+          onClose={() => setSettling(null)} onDone={load} />
+      )}
     </div>
   );
 }

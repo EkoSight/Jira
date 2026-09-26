@@ -68,6 +68,17 @@ export const THREAD_KINDS = [
     placeholder: 'What is proving difficult, and how are you approaching it?',
   },
   {
+    value: 'blocker',
+    label: 'Blocker',
+    verb: 'Raise the blocker',
+    hint: 'Something is stopping this lead converting, and you want help deciding what to do',
+    asking: true,
+    severity: 'warning',
+    // raised on a lead or a deal, from its own screen — never on a task
+    crmOnly: true,
+    placeholder: 'What is stopping them saying yes, and what have you tried?',
+  },
+  {
     value: 'discussion',
     label: 'Discussion',
     verb: 'Start a discussion',
@@ -84,7 +95,22 @@ export const threadKind = (value) => KIND_META[value] || KIND_META.discussion;
 
 /** The kinds this person is allowed to open. */
 export const kindsFor = (canRaiseReview) =>
-  THREAD_KINDS.filter((kind) => !kind.managerOnly || canRaiseReview);
+  THREAD_KINDS.filter((kind) => (!kind.managerOnly || canRaiseReview) && !kind.crmOnly);
+
+/** What sort of thing is in a lead's way. Mirrors the server's list. */
+export const BLOCKER_CATEGORIES = [
+  { value: 'BUDGET', label: 'Budget', hint: 'No money this cycle, or it is committed elsewhere' },
+  { value: 'APPROVAL', label: 'Approval', hint: 'Somebody above our contact has to say yes' },
+  { value: 'PRICING', label: 'Pricing', hint: 'The price or terms do not work for them' },
+  { value: 'PROOF', label: 'Proof', hint: 'They want evidence, a trial or references first' },
+  { value: 'TECHNICAL', label: 'Technical', hint: 'A product or integration gap' },
+  { value: 'TIMING', label: 'Timing', hint: 'Season, audit, elections — not now' },
+  { value: 'COMPETITION', label: 'Competition', hint: 'They are leaning to someone else' },
+  { value: 'CONTACT', label: 'Access', hint: 'We cannot reach the person who decides' },
+  { value: 'OTHER', label: 'Something else', hint: '' },
+];
+export const blockerCategory = (value) =>
+  BLOCKER_CATEGORIES.find((c) => c.value === value) || null;
 
 /** Open threads where somebody is waiting on somebody else. */
 export const openAsks = (threads = []) =>

@@ -12,6 +12,7 @@ import {
   refreshPrimaryOpportunity, syncAccountMirror, topBlocker,
 } from '../services/opportunities.js';
 import { logActivity } from '../services/crm.js';
+import { loadStageMove, moveOpportunityStage } from '../services/dealMoves.js';
 
 const router = Router();
 
@@ -318,68 +319,10 @@ router.post(
     const id = Number(req.params.id);
     const existing = await mustEdit(req.currentUser, id);
 
-    const { rows: stageRows } = await query(
-      `SELECT s.*, (SELECT name FROM account_stages WHERE id = $2) AS from_name,
-              (SELECT position FROM account_stages WHERE id = $2) AS from_position
-         FROM account_stages s WHERE s.id = $1`,
-      [data.stage_id, existing.stage_id],
-    );
-    const stage = stageRows[0];
-    if (!stage) throw badRequest('Stage not found');
-
-    // A loss or a pause needs a reason: "why did we not win this" is the only
-    // thing a closed deal can still teach anyone.
-    if (stage.kind === 'lost' && !data.outcome_reason?.trim()) {
-      throw badRequest('Say why this was lost — a closed deal with no reason teaches nobody anything');
-    }
-
-    const status = stage.kind === 'won' ? 'WON' : stage.kind === 'lost' ? 'LOST' : 'ACTIVE';
-    const isReversal = stage.position < (stage.from_position ?? 0);
-
-    await withTransaction(async (client) => {
-      await client.query(
-        `UPDATE opportunities
-            SET stage_id = $1, status = $2, stage_changed_at = now(),
-                outcome_reason = COALESCE($3, outcome_reason),
-                revisit_on = COALESCE($4::date, revisit_on),
-                agreement_type = COALESCE($5, agreement_type),
-                agreement_date = COALESCE($6::date, agreement_date),
-                agreement_link = COALESCE($7, agreement_link),
-                agreed_value = COALESCE($8::numeric, agreed_value),
-                financial_status = COALESCE($9, financial_status),
-                closed_at = CASE WHEN $10 IN ('won','lost') THEN now() ELSE NULL END,
-                updated_at = now()
-          WHERE id = $11`,
-        [
-          data.stage_id, status,
-          data.outcome_reason ?? null, data.revisit_on ?? null,
-          data.agreement_type ?? null, data.agreement_date ?? null, data.agreement_link ?? null,
-          data.agreed_value ?? null, data.financial_status ?? null,
-          stage.kind, id,
-        ],
-      );
-
-      await recordHistory(client, {
-        opportunityId: id,
-        field: 'stage',
-        from: stage.from_name,
-        to: stage.name,
-        isReversal,
-        reason: data.reason ?? data.outcome_reason ?? null,
-        actorId: req.currentUser.id,
-      });
-
-      await logActivity(client, {
-        accountId: existing.account_id,
-        opportunityId: id,
-        type: 'STAGE_CHANGE',
-        actorId: req.currentUser.id,
-        subject: `${existing.name}: moved to ${stage.name}`,
-        meta: { from: stage.from_name, to: stage.name, reversal: isReversal },
-      });
-
-      await syncAccountMirror(client, existing.account_id);
-    });
+    const stage = await loadStageMove(data.stage_id, existing.stage_id);
+    await withTransaction((client) => moveOpportunityStage(client, {
+      opportunity: existing, stage, data, actor: req.currentUser,
+    }));
 
     res.json({ opportunity: await getOpportunity(id) });
   }),

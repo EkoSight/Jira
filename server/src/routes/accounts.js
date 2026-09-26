@@ -21,8 +21,11 @@ import { analyseAccounts } from '../services/accountInsights.js';
 import { runAccountScan } from '../jobs/accountScanner.js';
 
 import {
-  listContacts, opportunitiesFor, possibleDuplicateContacts, recordOwnershipChange,
+  eligibleValue, listContacts, opportunitiesFor, possibleDuplicateContacts, recordOwnershipChange,
+  syncAccountMirror,
 } from '../services/opportunities.js';
+import { loadStageMove, moveOpportunityStage, wonStage } from '../services/dealMoves.js';
+import { describeRules, followUpRules, leadFigures } from '../services/leadFigures.js';
 import { ensureFolders } from '../services/resources.js';
 import { crmDashboard, managerSummaries, mapView, ownershipTree } from '../services/crmDashboard.js';
 import { analysePipeline } from '../services/accountInsights.js';
@@ -57,6 +60,7 @@ const accountInput = z.object({
   banner_url: z.string().max(500).nullable().optional(),
   linkedin_url: z.string().max(500).nullable().optional(),
   hq_address: z.string().max(1000).nullable().optional(),
+  state: z.string().max(80).nullable().optional(),
   operating_regions: z.array(z.string().max(80)).optional(),
   crops: z.array(z.string().max(80)).optional(),
   tags: z.array(z.string().max(40)).optional(),
@@ -89,15 +93,34 @@ const contactInput = z.object({
 router.get(
   '/pipeline',
   asyncHandler(async (req, res) => {
-    res.json(
-      await pipeline({
-        ownerId: req.query.owner_id,
-        departmentId: req.query.department_id,
-        type: req.query.type || 'LEAD',
-        involving: req.query.mine === 'true' ? req.currentUser.id : undefined,
-        search: req.query.search,
-      }),
-    );
+    const board = await pipeline({
+      ownerId: req.query.owner_id,
+      departmentId: req.query.department_id,
+      type: req.query.type || 'LEAD',
+      involving: req.query.mine === 'true' ? req.currentUser.id : undefined,
+      search: req.query.search,
+      state: req.query.state,
+    });
+
+    // Every card carries what its open deals are worth by the forecast's own
+    // rules — all its deals, not only the main one — and whether any has no
+    // value yet, so the total at the top is one people can act on.
+    const ids = board.stages.flatMap((stage) => stage.accounts.map((a) => a.id));
+    const figures = await leadFigures(ids);
+    let eligible = 0;
+    let withoutValue = 0;
+    for (const stage of board.stages) {
+      stage.accounts = stage.accounts.map((a) => ({ ...a, ...(figures.get(a.id) || {}) }));
+      stage.eligible_value = stage.accounts.reduce((sum, a) => sum + (a.eligible_value ?? 0), 0);
+      stage.without_value = stage.accounts.filter((a) => a.deals_without_value > 0).length;
+      if (stage.kind === 'open') {
+        eligible += stage.eligible_value;
+        withoutValue += stage.without_value;
+      }
+    }
+    board.eligible_value = eligible;
+    board.leads_without_value = withoutValue;
+    res.json(board);
   }),
 );
 
@@ -359,9 +382,9 @@ router.post(
         `INSERT INTO accounts
            (name, type, stage_id, owner_user_id, follower_user_id, department_id, value, currency,
             source, website, contact_name, contact_email, contact_phone, description,
-            next_step, next_step_due, created_by, last_activity_at)
+            next_step, next_step_due, created_by, last_activity_at, state, hq_address)
          VALUES ($1,COALESCE($2,'LEAD'),$3,COALESCE($4::int,$17),$5,COALESCE($6::int,$18),$7::numeric,COALESCE($8,'INR'),
-                 $9,$10,$11,$12,$13,$14,$15,$16,$17,now())
+                 $9,$10,$11,$12,$13,$14,$15,$16,$17,now(),NULLIF(TRIM($19),''),NULLIF(TRIM($20),''))
          RETURNING *`,
         [
           data.name.trim(),
@@ -382,6 +405,8 @@ router.post(
           data.next_step_due ?? null,
           req.currentUser.id,
           req.currentUser.department_id,
+          data.state ?? null,
+          data.hq_address ?? null,
         ],
       );
       const created = rows[0];
@@ -446,7 +471,7 @@ const TRACKED = [
   'source', 'website', 'contact_name', 'contact_email', 'contact_phone', 'description',
   'next_step', 'next_step_due', 'status',
   // the organization dossier
-  'segment_id', 'logo_url', 'banner_url', 'linkedin_url', 'hq_address',
+  'segment_id', 'logo_url', 'banner_url', 'linkedin_url', 'hq_address', 'state',
   'operating_regions', 'crops', 'tags', 'relationship_summary', 'why_it_matters',
   'relationship_potential',
 ];
@@ -471,10 +496,25 @@ router.patch(
     }
     if (!fields.length) throw badRequest('Nothing to update');
     params.push(id);
-    await query(
-      `UPDATE accounts SET ${fields.join(', ')}, updated_at = now() WHERE id = $${params.length}`,
-      params,
-    );
+
+    await withTransaction(async (client) => {
+      await client.query(
+        `UPDATE accounts SET ${fields.join(', ')}, updated_at = now() WHERE id = $${params.length}`,
+        params,
+      );
+
+      // "Expected revenue" on the lead is the estimate on its main deal. It used
+      // to be written only to the lead's mirror column, which the next change to
+      // the deal overwrote — so the number somebody typed quietly disappeared.
+      // It now goes where the pipeline reads it, and the mirror follows.
+      if (data.value !== undefined && existing.primary_opportunity_id) {
+        await client.query(
+          'UPDATE opportunities SET estimated_value = $1::numeric, updated_at = now() WHERE id = $2',
+          [data.value, existing.primary_opportunity_id],
+        );
+        await syncAccountMirror(client, id);
+      }
+    });
 
     // handing a lead to someone else tells them
     if (data.owner_user_id !== undefined && data.owner_user_id !== existing.owner_user_id) {
@@ -496,7 +536,14 @@ router.post(
   '/:id/stage',
   requirePermission('crm.activity.log'),
   asyncHandler(async (req, res) => {
-    const { stage_id: stageId } = z.object({ stage_id: z.number().int().positive() }).parse(req.body);
+    const { stage_id: stageId, reason, agreed_value: agreedValue } = z
+      .object({
+        stage_id: z.number().int().positive(),
+        // a loss needs a reason wherever it is recorded, the board included
+        reason: z.string().max(2000).optional(),
+        agreed_value: z.number().min(0).nullable().optional(),
+      })
+      .parse(req.body);
     const id = Number(req.params.id);
 
     const { rows: existingRows } = await query('SELECT * FROM accounts WHERE id = $1', [id]);
@@ -511,22 +558,42 @@ router.post(
     const stage = stageRows[0];
     if (!stage) throw badRequest('Stage not found');
 
-    // reaching a won/lost stage settles the deal's status; an open stage revives it
-    const status = stage.kind === 'won' ? 'WON' : stage.kind === 'lost' ? 'LOST' : 'ACTIVE';
+    // Moving a lead moves its main deal. This used to change only the lead's
+    // mirror columns, so a lead dragged to Won never counted as won anywhere that
+    // reads deals, and the next edit to the deal quietly moved it back.
+    const { rows: primaryRows } = await query(
+      'SELECT * FROM opportunities WHERE id = $1', [existing.primary_opportunity_id],
+    );
+    const primary = primaryRows[0];
 
-    await withTransaction(async (client) => {
-      await client.query(
-        `UPDATE accounts SET stage_id = $1, status = $2, stage_changed_at = now(), updated_at = now() WHERE id = $3`,
-        [stageId, status, id],
-      );
-      await logActivity(client, {
-        accountId: id,
-        type: 'STAGE_CHANGE',
-        actorId: req.currentUser.id,
-        subject: `Moved to ${stage.name}`,
-        meta: { from: stage.from_name, to: stage.name },
+    if (primary) {
+      const move = await loadStageMove(stageId, primary.stage_id);
+      await withTransaction((client) => moveOpportunityStage(client, {
+        opportunity: primary,
+        stage: move,
+        data: {
+          outcome_reason: reason ?? undefined,
+          agreed_value: agreedValue ?? undefined,
+        },
+        actor: req.currentUser,
+      }));
+    } else {
+      // a lead with no deal at all — only possible for data older than deals
+      const status = stage.kind === 'won' ? 'WON' : stage.kind === 'lost' ? 'LOST' : 'ACTIVE';
+      await withTransaction(async (client) => {
+        await client.query(
+          `UPDATE accounts SET stage_id = $1, status = $2, stage_changed_at = now(), updated_at = now() WHERE id = $3`,
+          [stageId, status, id],
+        );
+        await logActivity(client, {
+          accountId: id,
+          type: 'STAGE_CHANGE',
+          actorId: req.currentUser.id,
+          subject: `Moved to ${stage.name}`,
+          meta: { from: stage.from_name, to: stage.name },
+        });
       });
-    });
+    }
 
     res.json({ account: await getAccount(id) });
   }),
@@ -538,7 +605,19 @@ router.post(
   '/:id/convert',
   requirePermission('crm.activity.log'),
   asyncHandler(async (req, res) => {
-    const { type } = z.object({ type: z.enum(['CUSTOMER', 'PARTNER']) }).parse(req.body);
+    const data = z
+      .object({
+        type: z.enum(['CUSTOMER', 'PARTNER']),
+        // The deal that was actually signed. Becoming a customer means some deal
+        // was won; naming it is what makes the dashboard's "won" count it. Null
+        // says, on purpose, that no single deal in TaskFlow is the one.
+        opportunity_id: z.number().int().positive().nullable().optional(),
+        agreed_value: z.number().min(0).nullable().optional(),
+        agreement_date: z.string().min(8).nullable().optional(),
+        agreement_type: z.string().max(120).nullable().optional(),
+      })
+      .parse(req.body);
+    const { type } = data;
     const id = Number(req.params.id);
 
     const { rows: existingRows } = await query('SELECT * FROM accounts WHERE id = $1', [id]);
@@ -546,7 +625,36 @@ router.post(
     if (!existing) throw notFound('Account not found');
     if (!canEditAccount(req.currentUser, existing)) throw forbidden('You cannot convert this account');
 
+    let won = null;
+    if (data.opportunity_id) {
+      const { rows } = await query(
+        'SELECT * FROM opportunities WHERE id = $1 AND account_id = $2 AND is_archived = FALSE',
+        [data.opportunity_id, id],
+      );
+      won = rows[0];
+      if (!won) throw badRequest('That deal does not belong to this organization');
+    }
+
+    const wonStageId = won && won.status !== 'WON' ? await wonStage() : null;
+    if (won && won.status !== 'WON' && !wonStageId) {
+      throw badRequest('There is no Won stage to move the deal into — ask an admin to add one');
+    }
+
     await withTransaction(async (client) => {
+      if (wonStageId) {
+        const move = await loadStageMove(wonStageId, won.stage_id);
+        await moveOpportunityStage(client, {
+          opportunity: won,
+          stage: move,
+          data: {
+            agreed_value: data.agreed_value ?? undefined,
+            agreement_date: data.agreement_date ?? undefined,
+            agreement_type: data.agreement_type ?? undefined,
+          },
+          actor: req.currentUser,
+        });
+      }
+
       await client.query(
         `UPDATE accounts
             SET type = $1,
@@ -557,10 +665,12 @@ router.post(
       );
       await logActivity(client, {
         accountId: id,
+        opportunityId: won?.id ?? null,
         type: 'CONVERTED',
         actorId: req.currentUser.id,
         subject: type === 'CUSTOMER' ? 'Became a customer' : 'Became a partner',
-        meta: { from: existing.type, to: type },
+        body: won ? `Signed: ${won.name}` : null,
+        meta: { from: existing.type, to: type, opportunity_id: won?.id ?? null },
       });
     });
 
@@ -977,6 +1087,83 @@ router.get(
       departmentId: req.query.department_id ? Number(req.query.department_id) : null,
       segmentId: req.query.segment_id ? Number(req.query.segment_id) : null,
     }));
+  }),
+);
+
+/**
+ * Every lead, sorted by state and by whether somebody is working it.
+ *
+ * The state comes from the state recorded on the lead — not from a map pin — so
+ * a lead with no coordinates is still in its state's list. A lead with no state
+ * recorded is its own group, listed in full rather than left out. Each lead is
+ * classified by rules that ship with the response, so "inactive" and "lower
+ * potential" are definitions anyone can read, not judgements.
+ */
+router.get(
+  '/views/states',
+  asyncHandler(async (req, res) => {
+    const rules = await followUpRules();
+    const params = [];
+    const where = ['a.is_archived = FALSE'];
+    const push = (value) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+    if (req.query.department_id) where.push(`a.department_id = ${push(Number(req.query.department_id))}`);
+    if (req.query.segment_id) where.push(`a.segment_id = ${push(Number(req.query.segment_id))}`);
+    if (req.query.owner_id) where.push(`a.owner_user_id = ${push(Number(req.query.owner_id))}`);
+
+    const { rows } = await query(
+      `SELECT a.id, a.name, a.type, NULLIF(TRIM(a.state), '') AS state, a.hq_address,
+              a.next_step, a.next_step_due, a.owner_user_id, a.last_external_at,
+              seg.name AS segment_name, seg.color AS segment_color,
+              u.full_name AS owner_name, u.avatar_color AS owner_color,
+              st.name AS stage_name, st.color AS stage_color,
+              COALESCE((
+                SELECT json_agg(json_build_object(
+                  'id', l.id, 'label', l.label, 'city', l.city, 'state', l.state,
+                  'latitude', l.latitude, 'longitude', l.longitude, 'precision', l.precision))
+                  FROM account_locations l
+                 WHERE l.account_id = a.id AND l.latitude IS NOT NULL AND l.longitude IS NOT NULL
+              ), '[]'::json) AS pins
+         FROM accounts a
+         LEFT JOIN crm_segments seg ON seg.id = a.segment_id
+         LEFT JOIN users u ON u.id = a.owner_user_id
+         LEFT JOIN account_stages st ON st.id = a.stage_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY a.name`,
+      params,
+    );
+
+    const figures = await leadFigures(rows.map((r) => r.id), { rules });
+    const leads = rows.map((row) => ({ ...row, ...(figures.get(row.id) || {}) }));
+
+    // one group per state as people typed it, merged regardless of case
+    const groups = new Map();
+    for (const lead of leads) {
+      const key = lead.state ? lead.state.toLowerCase() : '';
+      const group = groups.get(key) || {
+        state: lead.state || null,
+        total: 0,
+        activity: { active: 0, inactive: 0, paused: 0, closed: 0 },
+        potential: { high: 0, medium: 0, low: 0, unknown: 0 },
+        eligible_value: 0,
+      };
+      group.total += 1;
+      group.activity[lead.activity] += 1;
+      group.potential[lead.potential] += 1;
+      group.eligible_value += lead.eligible_value ?? 0;
+      groups.set(key, group);
+    }
+
+    res.json({
+      rules,
+      definitions: describeRules(rules),
+      states: [...groups.values()].sort((a, b) =>
+        (a.state === null) - (b.state === null) || b.total - a.total
+        || String(a.state).localeCompare(String(b.state))),
+      leads,
+    });
   }),
 );
 

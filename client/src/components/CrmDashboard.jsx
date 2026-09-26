@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
@@ -105,6 +105,13 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
   const [data, setData] = useState(null);
   const [people, setPeople] = useState(null);
   const [drill, setDrill] = useState(null);
+  const wonRef = useRef(null);
+  const drillRef = useRef(null);
+
+  // a drill-down opens at the foot of the page; take the reader to it
+  useEffect(() => {
+    if (drill) drillRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [drill]);
 
   useEffect(() => {
     setData(null);
@@ -202,7 +209,12 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
         </div>
         <div className="metric-grid">
           <Metric id="won_this_month" definitions={definitions} value={activity.won}
-            sub={formatMoney(activity.value_won) || 'no agreed amounts recorded'} />
+            sub={formatMoney(activity.value_won) || 'no agreed amounts recorded'}
+            tone={activity.won > 0 ? 'good' : undefined}
+            onClick={() => wonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
+          <Metric id="became_customers" definitions={definitions} value={activity.became_customers ?? 0}
+            sub={(activity.became_customers ?? 0) > 0 ? 'leads marked as customer or partner' : 'none this month'}
+            onClick={() => wonRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} />
           <Metric id="lost_this_month" definitions={definitions} value={activity.lost} />
           <Metric id="value_won" definitions={definitions}
             value={formatMoney(activity.value_won) || '—'}
@@ -224,6 +236,69 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
           <Metric id="proposals_shared" definitions={definitions} value={activity.proposals_shared}
             sub="recorded as sent by a person" />
         </div>
+      </section>
+
+      <section className="card card-pad stack" ref={wonRef}>
+        <div>
+          <h3>Won in {monthLabel(data.month)}</h3>
+          <div className="small muted">
+            Every deal won this month — whether it was moved to Won or signed when its lead was marked as a
+            customer — and every lead that became a customer.
+          </div>
+        </div>
+        {(activity.won_list || []).length === 0 && (activity.converted_list || []).length === 0 ? (
+          <p className="small muted">Nothing won or converted in {monthLabel(data.month)} yet.</p>
+        ) : (
+          <div className="won-grid">
+            <div className="stack-sm">
+              <div className="stat-label">Deals won ({(activity.won_list || []).length})</div>
+              {(activity.won_list || []).length === 0 ? (
+                <p className="small muted">None.</p>
+              ) : (
+                <ul className="plain-list">
+                  {activity.won_list.map((row) => (
+                    <li key={row.id} className="row" style={{ gap: 8 }}>
+                      <span className="grow" style={{ minWidth: 0 }}>
+                        <Link to={`/accounts/${row.account_id}`} className="btn-link">{row.account_name}</Link>
+                        <div className="small muted truncate">
+                          {row.name} · {formatDate(row.closed_at)}
+                          {row.agreement_type && ` · ${row.agreement_type}`}
+                        </div>
+                      </span>
+                      <span className="small tnum">
+                        {row.agreed_value === null
+                          ? <span className="muted">amount not recorded</span>
+                          : exactMoney(row.agreed_value, row.currency)}
+                      </span>
+                      {row.owner_name && <Avatar name={row.owner_name} color={row.owner_color} size={20} />}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div className="stack-sm">
+              <div className="stat-label">Became customers ({(activity.converted_list || []).length})</div>
+              {(activity.converted_list || []).length === 0 ? (
+                <p className="small muted">None.</p>
+              ) : (
+                <ul className="plain-list">
+                  {activity.converted_list.map((row) => (
+                    <li key={row.id} className="row" style={{ gap: 8 }}>
+                      <span className="grow" style={{ minWidth: 0 }}>
+                        <Link to={`/accounts/${row.id}`} className="btn-link">{row.name}</Link>
+                        <div className="small muted truncate">
+                          {row.type === 'PARTNER' ? 'partner' : 'customer'} since {formatDate(row.converted_at)}
+                          {row.won_deal ? ` · signed ${row.won_deal}` : ' · no deal marked won'}
+                        </div>
+                      </span>
+                      {row.owner_name && <Avatar name={row.owner_name} color={row.owner_color} size={20} />}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="card card-pad stack">
@@ -293,7 +368,7 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
       )}
 
       {drill && (
-        <section className="card card-pad stack">
+        <section className="card card-pad stack" ref={drillRef}>
           <div className="row-between">
             <h3>{drill.title}</h3>
             <button type="button" className="btn btn-sm" onClick={() => setDrill(null)}>Close</button>
