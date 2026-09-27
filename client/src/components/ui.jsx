@@ -37,7 +37,28 @@ export function AuthedImage({ src, alt, className, style, fallback = null }) {
   }, [src, internal]);
 
   if (!src || failed || !url) return fallback;
-  return <img className={className} style={style} src={url} alt={alt} />;
+  // a pasted link can stop working (logo CDNs expire them); fall back rather
+  // than show a broken-image icon
+  return <img className={className} style={style} src={url} alt={alt} onError={() => setFailed(true)} />;
+}
+
+/**
+ * An organization's logo, or its initials on a tile when it has none.
+ * The tile is square where a person's avatar is round, so a company and a person
+ * are never mistaken for each other in the same list.
+ */
+export function CompanyLogo({ src, name = '', size = 28 }) {
+  const tile = (
+    <span className="company-logo is-initials" style={{ width: size, height: size, fontSize: Math.max(9, size * 0.36) }}
+      aria-hidden="true">
+      {initials(name)}
+    </span>
+  );
+  if (!src) return tile;
+  return (
+    <AuthedImage src={src} alt="" className="company-logo"
+      style={{ width: size, height: size }} fallback={tile} />
+  );
 }
 
 export function Avatar({ name, color = '#3b82f6', size = 26, title }) {

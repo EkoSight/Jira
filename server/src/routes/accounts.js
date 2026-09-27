@@ -16,6 +16,7 @@ import {
   listActivities,
   logActivity,
   canEditAccount,
+  logosFor,
 } from '../services/crm.js';
 import { analyseAccounts } from '../services/accountInsights.js';
 import { runAccountScan } from '../jobs/accountScanner.js';
@@ -1136,7 +1137,10 @@ router.get(
     );
 
     const figures = await leadFigures(rows.map((r) => r.id), { rules });
-    const leads = rows.map((row) => ({ ...row, ...(figures.get(row.id) || {}) }));
+    const logos = await logosFor(rows.map((r) => r.id));
+    const leads = rows.map((row) => ({
+      ...row, ...(figures.get(row.id) || {}), logo_src: logos.get(row.id) ?? null,
+    }));
 
     // one group per state as people typed it, merged regardless of case
     const groups = new Map();

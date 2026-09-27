@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
+import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import AccountDialog from '../components/AccountDialog.jsx';
 import CrmNudges from '../components/CrmNudges.jsx';
 import CrmDashboard from '../components/CrmDashboard.jsx';
@@ -70,7 +70,10 @@ function AccountCard({ account, onOpen, onDragStart, onDragEnd, stages, onMove, 
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <div className="task-card-title">{account.name}</div>
+        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <CompanyLogo src={account.logo_src} name={account.name} size={26} />
+          <div className="task-card-title" style={{ minWidth: 0 }}>{account.name}</div>
+        </div>
         <div className="task-card-meta">
           {money && (
             <Badge tone="brand" title={account.open_deals > 1 ? `${account.open_deals} open deals` : 'Expected from the open deal'}>
@@ -220,7 +223,9 @@ export default function Pipeline() {
           <div className="small muted row wrap" style={{ gap: 6 }}>
             <span>
               {board.total} open lead{board.total === 1 ? '' : 's'}
-              {formatMoney(totalValue) && ` · ${formatMoney(totalValue)} expected from open deals`}
+              {totalValue > 0
+                ? ` · ${formatMoney(totalValue)} expected from open deals`
+                : ' · no expected values recorded yet'}
             </span>
             {board.leads_without_value > 0 && (
               <button type="button"

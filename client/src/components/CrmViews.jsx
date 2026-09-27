@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Icon, Spinner } from './ui.jsx';
+import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner } from './ui.jsx';
 import { FOLLOW_UP_META, POTENTIAL_META, formatMoney, freshnessLabel } from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
 
@@ -82,10 +82,15 @@ export function ListView({ board, search }) {
             return (
               <tr key={account.id}>
                 <td>
-                  <Link to={`/accounts/${account.id}`} className="btn-link">{account.name}</Link>
-                  {account.segment_name && (
-                    <div className="small muted">{account.segment_name}</div>
-                  )}
+                  <span className="row" style={{ gap: 9, alignItems: 'center' }}>
+                    <CompanyLogo src={account.logo_src} name={account.name} size={30} />
+                    <span style={{ minWidth: 0 }}>
+                      <Link to={`/accounts/${account.id}`} className="btn-link">{account.name}</Link>
+                      {account.segment_name && (
+                        <div className="small muted">{account.segment_name}</div>
+                      )}
+                    </span>
+                  </span>
                 </td>
                 <td><Badge dot={account.stage_color}>{account.stage_name}</Badge></td>
                 <td className="small">{account.state || <span className="muted">not recorded</span>}</td>
@@ -399,6 +404,7 @@ export function MapView({ departmentId, segmentId, ownerId }) {
             {shown.map((lead) => (
               <li key={lead.id} className={`follow-row follow-${lead.activity}`}>
                 <span className="follow-dot" style={{ background: FOLLOW_UP_META[lead.activity]?.color }} />
+                <CompanyLogo src={lead.logo_src} name={lead.name} size={30} />
                 <div className="grow" style={{ minWidth: 0 }}>
                   <div className="row wrap" style={{ gap: 6 }}>
                     <Link to={`/accounts/${lead.id}`} className="nudge-title">{lead.name}</Link>

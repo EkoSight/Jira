@@ -45,6 +45,29 @@ export const ACCOUNT_SELECT = `
 const daysSince = (value, now = Date.now()) =>
   value ? Math.floor((now - new Date(value).getTime()) / DAY) : null;
 
+/**
+ * Where to fetch an organization's logo: an upload wins over a pasted link, and
+ * the timestamp busts the cache when it is replaced. Null when there is neither.
+ */
+export function logoSrc(accountId, uploadedAt, url) {
+  if (uploadedAt) return `/accounts/${accountId}/image/logo?v=${new Date(uploadedAt).getTime()}`;
+  return url || null;
+}
+
+/** Logos for many organizations in one query — for lists that are not account rows. */
+export async function logosFor(accountIds) {
+  const ids = [...new Set(accountIds.filter(Boolean))];
+  if (!ids.length) return new Map();
+  const { rows } = await query(
+    `SELECT a.id, a.logo_url,
+            (SELECT i.created_at FROM account_images i
+              WHERE i.account_id = a.id AND i.kind = 'LOGO') AS uploaded_at
+       FROM accounts a WHERE a.id = ANY($1::int[])`,
+    [ids],
+  );
+  return new Map(rows.map((r) => [r.id, logoSrc(r.id, r.uploaded_at, r.logo_url)]));
+}
+
 /** Adds the derived momentum facts a raw account row needs. */
 export function decorateAccount(row, now = Date.now()) {
   return {
@@ -55,9 +78,7 @@ export function decorateAccount(row, now = Date.now()) {
     next_step_overdue: row.next_step_due ? new Date(row.next_step_due).getTime() < now : false,
     // where the UI should actually fetch the image from: an upload wins over a
     // pasted link, and the timestamp busts the cache when it is replaced
-    logo_src: row.logo_uploaded_at
-      ? `/accounts/${row.id}/image/logo?v=${new Date(row.logo_uploaded_at).getTime()}`
-      : row.logo_url || null,
+    logo_src: logoSrc(row.id, row.logo_uploaded_at, row.logo_url),
     banner_src: row.banner_uploaded_at
       ? `/accounts/${row.id}/image/banner?v=${new Date(row.banner_uploaded_at).getTime()}`
       : row.banner_url || null,

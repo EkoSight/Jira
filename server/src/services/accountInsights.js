@@ -1,6 +1,6 @@
 import { query } from '../db/pool.js';
 import { getSettings } from './settings.js';
-import { listAccounts } from './crm.js';
+import { listAccounts, logosFor } from './crm.js';
 
 /**
  * The CRM attention engine — the same idea as the Goals one, pointed at deals.
@@ -322,6 +322,10 @@ export async function analysePipeline({ departmentId = null } = {}) {
   }
 
   signals.sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
+
+  // each line carries its organization's logo, so a long list can be scanned by eye
+  const logos = await logosFor(signals.map((sig) => sig.account_id));
+  for (const signal of signals) signal.account_logo = logos.get(signal.account_id) ?? null;
 
   const byOwner = new Map();
   for (const signal of signals) {

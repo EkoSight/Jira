@@ -2826,3 +2826,51 @@ th.cal-person {
 @media (max-width: 640px) {
   .cal-person { min-width: 120px; max-width: 130px; }
 }
+
+/* ------------------------------------------------------------------
+   Company logos, and a nudge list that scrolls instead of truncating
+   ------------------------------------------------------------------ */
+
+.company-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  object-fit: contain;
+}
+/* no logo yet: the initials on a square tile, never confused with a round avatar */
+.company-logo.is-initials {
+  background: var(--surface-3);
+  color: var(--ink-2);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.nudge-scroll {
+  max-height: 440px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+  /* a soft edge says there is more below */
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent);
+  padding-bottom: 24px;
+}
+.nudge-scroll:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.nudge-row { align-items: center; }
+
+@media (max-width: 640px) {
+  .nudge-scroll { max-height: 360px; }
+}
+
+@media (max-width: 640px) {
+  /* the text gets the full width beside the logo; who owns it and "Not now"
+     drop to a line of their own underneath instead of squeezing it */
+  .nudge-row { flex-wrap: wrap; align-items: flex-start; }
+  .nudge-row > .grow { flex: 1 1 calc(100% - 64px); }
+  .nudge-row > .avatar { margin-left: 48px; }
+  .nudge-row > .btn { margin-left: auto; }
+}

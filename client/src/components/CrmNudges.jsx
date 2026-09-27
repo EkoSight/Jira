@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, CompanyLogo, Field, Icon, Modal, Spinner } from './ui.jsx';
 import { crmSignalMeta } from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
 
@@ -113,7 +113,6 @@ export default function CrmNudges({ departmentId, compact = false }) {
   const shown = kindFilter
     ? data.attention.filter((s) => s.kind === kindFilter)
     : data.attention;
-  const limit = compact ? 6 : shown.length;
 
   if (data.summary.total === 0 && snoozes.length === 0) {
     return (
@@ -143,6 +142,7 @@ export default function CrmNudges({ departmentId, compact = false }) {
             {data.summary.total === 0
               ? 'Nothing outstanding right now.'
               : `${data.summary.total} thing${data.summary.total === 1 ? '' : 's'} drifting.`}
+            {compact && shown.length > 5 && ' Scroll the list to see them all.'}
             {snoozes.length > 0 && ` ${snoozes.length} put down for now.`}
           </div>
         </div>
@@ -179,13 +179,20 @@ export default function CrmNudges({ departmentId, compact = false }) {
         </div>
       )}
 
-      <div className="stack-sm">
-        {shown.slice(0, limit).map((signal, index) => {
+      {/* On the board the list sits above the columns, so it scrolls inside a
+          fixed height rather than pushing the board off the screen. Every item
+          is in it — nothing is cut off behind an "and N more". */}
+      <div className={`stack-sm${compact ? ' nudge-scroll' : ''}`}
+        tabIndex={compact ? 0 : undefined}
+        aria-label={compact ? `${shown.length} nudges, scrollable` : undefined}>
+        {shown.map((signal, index) => {
           const meta = crmSignalMeta(signal.kind);
           return (
             // one delivery can have two overdue milestones, so the entity and
             // kind alone do not identify a row
             <div key={`${signal.entity_type}-${signal.entity_id}-${signal.kind}-${index}`} className="nudge-row">
+              <CompanyLogo src={signal.account_logo}
+                name={(signal.subtitle || signal.title || '').split(' · ')[0]} size={30} />
               <span className={`sig-dot sig-${signal.severity}`} aria-hidden="true" />
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="row wrap" style={{ gap: 6 }}>
@@ -219,9 +226,7 @@ export default function CrmNudges({ departmentId, compact = false }) {
             </div>
           );
         })}
-        {compact && shown.length > limit && (
-          <div className="small muted">and {shown.length - limit} more</div>
-        )}
+
       </div>
 
       {!compact && data.by_person.length > 1 && (

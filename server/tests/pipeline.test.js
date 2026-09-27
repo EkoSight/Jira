@@ -473,3 +473,21 @@ test('a blocker nobody answers becomes a nudge', async (t) => {
   assert.equal(nudge.account_id, ids.gujarat);
   assert.match(nudge.detail, /nobody has replied/);
 });
+
+test('every nudge carries its organization\'s logo, or says it has none', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  await call('PATCH', `/accounts/${ids.karnataka}`, {
+    token: tokens.manager, body: { logo_url: 'https://example.org/logo.png' },
+  });
+  const nudges = await call('GET', '/accounts/nudges', { token: tokens.manager });
+  const withLogo = nudges.body.attention.find((n) => n.account_id === ids.karnataka);
+  assert.ok(withLogo, 'the lead nobody has spoken to is nudged');
+  assert.equal(withLogo.account_logo, 'https://example.org/logo.png');
+  for (const nudge of nudges.body.attention) {
+    assert.ok('account_logo' in nudge, 'the field is always present, null when there is no logo');
+  }
+
+  const states = await call('GET', '/accounts/views/states', { token: tokens.manager });
+  assert.equal(states.body.leads.find((l) => l.id === ids.karnataka).logo_src, 'https://example.org/logo.png');
+});
