@@ -13,6 +13,7 @@ import {
 import CompleteTaskDialog from './CompleteTaskDialog.jsx';
 import DiscussionPanel from './DiscussionPanel.jsx';
 import CompletionRecord from './CompletionRecord.jsx';
+import TaskOverview from './TaskOverview.jsx';
 import { AvailabilityWarning, useAwayOn } from './Availability.jsx';
 import { STATUS_META as AWAY_META } from '../lib/availability.js';
 import { threadHeadline } from '../lib/threads.js';
@@ -341,7 +342,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(() => blankTask(defaults));
   const [checklistDraft, setChecklistDraft] = useState('');
-  const [tab, setTab] = useState('details');
+  // an existing card opens on its overview; the form is only for creating, or
+  // for deliberately editing the task's details
+  const [tab, setTab] = useState(taskId ? 'overview' : 'details');
   // a finished task is read, not edited: its record is what opens first
   const isDone = detail?.task?.stage === 'done';
   const [summary, setSummary] = useState(null);
@@ -426,7 +429,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       .then((data) => !cancelled && setSummary(data))
       .catch((err) => !cancelled && toast.error(err));
     // only move them onto the record when they have not already chosen a tab
-    setTab((current) => (current === 'details' ? 'record' : current));
+    setTab((current) => (current === 'overview' ? 'record' : current));
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, isDone]);
@@ -516,8 +519,10 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
         setPendingTags([]);
         setPendingGoals([]);
         onSaved?.(created);
-        // keep the dialog open on the new card so sub tasks and files are to hand
+        // keep the dialog open on the new card so sub tasks and files are to hand —
+        // now as the task it has become, not the form that made it
         setActiveId(created.id);
+        setTab('overview');
       } else {
         // marking done through the status dropdown must still capture an outcome:
         // persist any other edits now (keeping the current status), then hand off
@@ -544,12 +549,35 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
           toast.success(handOverOnly ? 'Task handed over' : 'Saved');
           setDetail((current) => ({ ...current, task: updated }));
           onSaved?.(updated);
+          reload();
+          setTab('overview');
         }
       }
     } catch (err) {
       toast.error(err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  /**
+   * Moving the task on from its overview. Done still goes through the completion
+   * prompt, so an outcome is always captured however the task is closed.
+   */
+  const changeStatus = async (statusId) => {
+    const target = statuses.find((s) => s.id === statusId);
+    if (!target || statusId === detail?.task?.status_id) return;
+    if (target.stage === 'done') {
+      setCompleting({ statusId });
+      return;
+    }
+    try {
+      await api.moveTask(activeId, { status_id: statusId });
+      toast.success(`Moved to ${target.name}`);
+      reload();
+      onSaved?.();
+    } catch (err) {
+      toast.error(err);
     }
   };
 
@@ -618,12 +646,12 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   // The record is a read, so it does not carry the controls for changing a task.
   // Offering Delete and Save beside an account of what already happened invites
   // an edit nobody came here to make.
-  const footer = tab === 'record' ? (
+  const footer = !isNew && tab !== 'details' ? (
     <>
       <span className="grow" />
-      {canEdit && (
+      {(canEdit || handOverOnly) && (
         <button type="button" className="btn" onClick={() => setTab('details')}>
-          <Icon name="edit" size={13} /> Edit the task
+          <Icon name="edit" size={13} /> {handOverOnly ? 'Hand over' : 'Edit details'}
         </button>
       )}
       <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
@@ -641,8 +669,8 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
         <ConfirmButton label="Archive" confirmLabel="Tap again to archive" onConfirm={archive} />
       )}
       <span className="grow" />
-      <button type="button" className="btn" onClick={onClose}>
-        Close
+      <button type="button" className="btn" onClick={() => (isNew ? onClose() : setTab('overview'))}>
+        {isNew ? 'Close' : 'Cancel'}
       </button>
       {(canEdit || handOverOnly) && (
         <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
@@ -651,6 +679,111 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       )}
     </>
   );
+
+  // Subtasks, the checklist, files, people and goals are how a task is WORKED —
+  // they belong on the view people open, not behind the edit form
+  // Subtasks, the checklist, files, people and goals are how a task is WORKED —
+  // they belong on the view people open, not behind the edit form. The ones
+  // with something in them show in full; the empty ones fold into one row of
+  // "add" buttons, so a new card is not a wall of empty boxes.
+  const [openedSections, setOpenedSections] = useState({});
+  // opening a subtask reuses this dialog; its sections start folded again
+  useEffect(() => { setOpenedSections({}); }, [activeId]);
+  const goalsShown = settings?.okr?.enabled !== false && can('okr.view');
+  const sections = !isNew && detail ? [
+    { key: 'subtasks', label: 'Sub task', count: detail.subtasks?.length || 0, node: (
+      <Subtasks
+          task={detail.task}
+          subtasks={detail.subtasks}
+          canEdit={canEdit}
+          onOpen={(id) => onOpenTask?.(id)}
+          onChanged={reload}
+        />
+    ) },
+    { key: 'checklist', label: 'Checklist step', count: detail.checklist?.length || 0, node: (
+      <div className="card card-pad stack-sm">
+          <div className="row-between">
+            <h3>Checklist</h3>
+            <span className="small muted tnum">
+              {detail.checklist.filter((c) => c.is_done).length}/{detail.checklist.length}
+            </span>
+          </div>
+          {detail.checklist.map((item) => (
+            <label key={item.id} className={`checklist-item ${item.is_done ? 'done' : ''}`}>
+              <input type="checkbox" checked={item.is_done} onChange={() => toggleChecklistItem(item)} />
+              <span className="grow">{item.title}</span>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={async () => {
+                  await api.deleteChecklistItem(activeId, item.id);
+                  setDetail((c) => ({ ...c, checklist: c.checklist.filter((i) => i.id !== item.id) }));
+                }}
+                aria-label="Remove item"
+              >
+                <Icon name="close" size={13} />
+              </button>
+            </label>
+          ))}
+          <div className="row">
+            <input
+              className="input"
+              placeholder="Add a step…"
+              value={checklistDraft}
+              onChange={(e) => setChecklistDraft(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && addChecklistItem()}
+            />
+            <button type="button" className="btn" onClick={addChecklistItem}>
+              Add
+            </button>
+          </div>
+        </div>
+    ) },
+    { key: 'attachments', label: 'Link or file', count: detail.attachments?.length || 0, node: (
+      <Attachments
+          taskId={activeId}
+          attachments={detail.attachments}
+          canEdit={canEdit}
+          onChange={(attachments) => setDetail((c) => ({ ...c, attachments }))}
+        />
+    ) },
+    { key: 'people', label: 'Person to tag', count: detail.collaborators?.length || 0, node: (
+      <Collaborators
+          taskId={activeId}
+          collaborators={detail.collaborators}
+          canEdit={canEdit}
+          onChange={(collaborators) => setDetail((c) => ({ ...c, collaborators }))}
+        />
+    ) },
+    ...(goalsShown ? [{ key: 'goals', label: 'Goal it supports', count: detail.key_results?.length || 0, node: (
+      'okr.view') && (
+        <Alignment
+          taskId={activeId}
+          keyResults={detail.key_results || []}
+          canLink={can('okr.link.task')}
+          onChanged={reload}
+        />
+    ) }] : []),
+  ] : [];
+
+  const workSections = !isNew && detail ? (
+    <>
+      {sections.filter((sec) => sec.count > 0 || openedSections[sec.key]).map((sec) => (
+        <div key={sec.key}>{sec.node}</div>
+      ))}
+      {sections.some((sec) => sec.count === 0 && !openedSections[sec.key]) && canEdit && (
+        <div className="task-add-row">
+          <span className="small muted">Add to this task:</span>
+          {sections.filter((sec) => sec.count === 0 && !openedSections[sec.key]).map((sec) => (
+            <button key={sec.key} type="button" className="btn btn-sm btn-ghost"
+              onClick={() => setOpenedSections((c) => ({ ...c, [sec.key]: true }))}>
+              <Icon name="plus" size={12} /> {sec.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </>
+  ) : null;
 
   return (
     <>
@@ -664,26 +797,37 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
           {!isNew && (
             <div className="tabs tabs-scroll">
               {[
-                ...(isDone ? ['record'] : []),
-                'details',
-                `discussion${openThreads ? ` (${openThreads})` : ''}`,
-                'history',
-              ].map(
-                (label) => {
-                  const key = label.split(' ')[0];
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      className={`tab ${tab === key ? 'active' : ''}`}
-                      onClick={() => setTab(key)}
-                    >
-                      {label}
-                    </button>
-                  );
-                },
-              )}
+                ...(isDone ? [['record', 'Record']] : []),
+                ['overview', 'Task'],
+                ['discussion', `Discussion${openThreads ? ` (${openThreads})` : ''}`],
+                ['history', 'History'],
+                ...(canEdit || handOverOnly ? [['details', handOverOnly ? 'Hand over' : 'Edit details']] : []),
+              ].map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  className={`tab ${tab === key ? 'active' : ''}${key === 'details' ? ' tab-edit' : ''}`}
+                  onClick={() => setTab(key)}
+                >
+                  {key === 'details' && <Icon name="edit" size={12} />} {label}
+                </button>
+              ))}
             </div>
+          )}
+
+          {tab === 'overview' && !isNew && (
+            <TaskOverview
+              detail={detail}
+              canEdit={canEdit}
+              canMove={Boolean(canEdit)}
+              headline={headline}
+              onStatus={changeStatus}
+              onEdit={() => setTab('details')}
+              onOpenDiscussion={() => setTab('discussion')}
+              onPostUpdate={() => setTab('discussion')}
+            >
+              {workSections}
+            </TaskOverview>
           )}
 
           {tab === 'record' && (
@@ -692,7 +836,12 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
           {tab === 'details' && (
             <div className="stack">
-              {headline && (
+              {!isNew && (
+                <div className="small muted">
+                  Changing the task itself. To move it on, tick off a step or post an update, use the Task tab.
+                </div>
+              )}
+              {isNew && headline && (
                 <div className={`ask-banner ask-${headline.severity}`}>
                   <Icon name="alert" size={15} />
                   <div className="grow">
@@ -929,83 +1078,6 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
               {isNew && (
                 <div className="small muted">
                   Sub tasks, comments and the checklist open up as soon as the card is created.
-                </div>
-              )}
-
-              {!isNew && (
-                <Subtasks
-                  task={detail.task}
-                  subtasks={detail.subtasks}
-                  canEdit={canEdit}
-                  onOpen={(id) => onOpenTask?.(id)}
-                  onChanged={reload}
-                />
-              )}
-
-              {!isNew && settings?.okr?.enabled !== false && can('okr.view') && (
-                <Alignment
-                  taskId={activeId}
-                  keyResults={detail.key_results || []}
-                  canLink={can('okr.link.task')}
-                  onChanged={reload}
-                />
-              )}
-
-              {!isNew && (
-                <Attachments
-                  taskId={activeId}
-                  attachments={detail.attachments}
-                  canEdit={canEdit}
-                  onChange={(attachments) => setDetail((c) => ({ ...c, attachments }))}
-                />
-              )}
-
-              {!isNew && (
-                <Collaborators
-                  taskId={activeId}
-                  collaborators={detail.collaborators}
-                  canEdit={canEdit}
-                  onChange={(collaborators) => setDetail((c) => ({ ...c, collaborators }))}
-                />
-              )}
-
-              {!isNew && (
-                <div className="card card-pad stack-sm">
-                  <div className="row-between">
-                    <h3>Checklist</h3>
-                    <span className="small muted tnum">
-                      {detail.checklist.filter((c) => c.is_done).length}/{detail.checklist.length}
-                    </span>
-                  </div>
-                  {detail.checklist.map((item) => (
-                    <label key={item.id} className={`checklist-item ${item.is_done ? 'done' : ''}`}>
-                      <input type="checkbox" checked={item.is_done} onChange={() => toggleChecklistItem(item)} />
-                      <span className="grow">{item.title}</span>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        onClick={async () => {
-                          await api.deleteChecklistItem(activeId, item.id);
-                          setDetail((c) => ({ ...c, checklist: c.checklist.filter((i) => i.id !== item.id) }));
-                        }}
-                        aria-label="Remove item"
-                      >
-                        <Icon name="close" size={13} />
-                      </button>
-                    </label>
-                  ))}
-                  <div className="row">
-                    <input
-                      className="input"
-                      placeholder="Add a step…"
-                      value={checklistDraft}
-                      onChange={(e) => setChecklistDraft(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && addChecklistItem()}
-                    />
-                    <button type="button" className="btn" onClick={addChecklistItem}>
-                      Add
-                    </button>
-                  </div>
                 </div>
               )}
 
