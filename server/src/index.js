@@ -2,6 +2,7 @@ import { createApp } from './app.js';
 import { config } from './config.js';
 import { runMigrations } from './db/migrate.js';
 import { startDeadlineScanner, stopDeadlineScanner } from './jobs/deadlineScanner.js';
+import { startChatWorker, stopChatWorker } from './jobs/chatWorker.js';
 import { closePool } from './db/pool.js';
 import { reportStartupFailure } from './lib/dbErrors.js';
 
@@ -16,11 +17,15 @@ async function main() {
     console.log(`[taskflow] API listening on http://localhost:${config.port}${config.apiPrefix}`);
   });
 
-  if (config.jobs.enabled) startDeadlineScanner();
+  if (config.jobs.enabled) {
+    startDeadlineScanner();
+    startChatWorker();
+  }
 
   const shutdown = async (signal) => {
     console.log(`[taskflow] ${signal} received, shutting down`);
     stopDeadlineScanner();
+    stopChatWorker();
     server.close(async () => {
       await closePool();
       process.exit(0);

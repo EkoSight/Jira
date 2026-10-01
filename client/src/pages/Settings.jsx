@@ -5,6 +5,7 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import { PRIORITIES } from '../lib/format.js';
 import AttendanceSettings from '../components/AttendanceSettings.jsx';
+import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 
 const STAGES = [
   ['backlog', 'Backlog — captured, not started'],
@@ -665,6 +666,7 @@ const TABS = [
   ['rules', 'Black mark rules'],
   ['thresholds', 'Thresholds'],
   ['attendance', 'Attendance & pay', 'attendance.policy'],
+  ['chat', 'Google Chat', 'settings.manage'],
   ['account', 'My account'],
 ];
 
@@ -702,6 +704,8 @@ function AccountTab() {
           ))}
         </div>
       </div>
+
+      <ChatPreferencesCard />
 
       <div className="card">
         <div className="card-head"><h2>Change password</h2></div>
@@ -750,6 +754,7 @@ export default function Settings() {
       {tab === 'rules' && <RulesTab />}
       {tab === 'thresholds' && <ThresholdsTab onChanged={refresh} />}
       {tab === 'attendance' && <AttendanceSettings />}
+      {tab === 'chat' && <GoogleChatSettings />}
       {tab === 'account' && <AccountTab />}
     </div>
   );

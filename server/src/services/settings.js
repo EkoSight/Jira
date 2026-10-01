@@ -132,6 +132,20 @@ export const DEFAULT_SETTINGS = {
     // a blocker nobody has replied to in this long is nudged
     blockerQuietDays: 3,
   },
+  googleChat: {
+    // off until an admin has sent a test message and switched it on
+    enabled: false,
+    // India time, on working days
+    morningSummaryTime: '08:45',
+    teamSummaryTime: '09:15',
+    // which TaskFlow notifications are also sent as a Chat message
+    alertTypes: [
+      'assigned', 'due_soon', 'deadline_missed', 'overdue_escalation', 'task_reopened',
+      'tagged', 'comment', 'follower', 'blackmark', 'availability',
+      'leave_request', 'leave_decision', 'attendance_correction', 'attendance_review',
+      'attendance_reminder', 'attendance_checkout_reminder',
+    ],
+  },
 };
 
 const isPlainObject = (v) => v && typeof v === 'object' && !Array.isArray(v);

@@ -25,6 +25,7 @@ import attendanceRoutes from './routes/attendance.js';
 import leaveRoutes from './routes/leave.js';
 import payrollRoutes from './routes/payroll.js';
 import { requireAttendance } from './services/attendance.js';
+import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
 import { requirePermission } from './middleware/auth.js';
@@ -41,6 +42,8 @@ export function createTaskFlowRouter() {
 
   router.get('/health', (req, res) => res.json({ ok: true, service: 'taskflow' }));
   router.use('/auth', authRoutes);
+  // Google Chat calls this itself, with a token Google signs — not a TaskFlow login
+  router.use('/integrations/google-chat/events', chatEventsRouter);
 
   // everything below needs a signed-in caller
   router.use(authenticate, touchActivity);
@@ -65,6 +68,8 @@ export function createTaskFlowRouter() {
   router.use('/attendance', attendanceRoutes);
   router.use('/leave', leaveRoutes);
   router.use('/payroll', payrollRoutes);
+  // your own Google Chat link and alerts; the admin's view of the set-up
+  router.use('/chat', chatRoutes);
 
   // Discussion and review threads. One mount for tasks, key results and goals,
   // because the conversation is the same shape wherever the work sits — and each

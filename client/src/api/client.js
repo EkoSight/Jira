@@ -329,6 +329,14 @@ export const api = {
   addSalaryBasis: (userId, body) => request('POST', `/payroll/salary/${userId}`, body),
   payrollExportUrl: (month) => `${BASE}/payroll/${month}/export.csv`,
 
+  // Google Chat
+  chatMe: () => request('GET', '/chat/me'),
+  chatPreferences: (body) => request('PUT', '/chat/me/preferences', body),
+  chatTest: () => request('POST', '/chat/me/test'),
+  chatAdmin: () => request('GET', '/chat/admin'),
+  chatUpdateSpace: (id, body) => request('PATCH', `/chat/admin/spaces/${id}`, body),
+  chatRetry: () => request('POST', '/chat/admin/retry'),
+
   crmStates: (params) => request('GET', `/accounts/views/states${qs(params)}`),
   archiveAccount: (id) => request('DELETE', `/accounts/${id}`),
   accountActivities: (id) => request('GET', `/accounts/${id}/activities`),

@@ -76,6 +76,16 @@ export default function Layout({ children }) {
 
   const [soundOn, setSoundOn] = useState(soundEnabled());
   const [openTaskId, setOpenTaskId] = useState(null);
+
+  // links from Google Chat (and anywhere else) open a task with ?task=ID
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const id = Number(params.get('task'));
+    if (!id) return;
+    setOpenTaskId(id);
+    params.delete('task');
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params}` : '' }, { replace: true });
+  }, [location.search]);
   const primed = useRef(false);
 
   const loadNotifications = useCallback(

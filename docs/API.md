@@ -253,6 +253,25 @@ decisions and salary amounts until reopened.
 CSV text cells starting with `= + - @`, tab or carriage return are prefixed with
 `'` so spreadsheets show them as text.
 
+## Google Chat
+
+| Method | Route | Permission |
+|---|---|---|
+| POST | `/integrations/google-chat/events` | **Google only** — no TaskFlow login; every request must carry a bearer token Google signed for this endpoint (401 otherwise) |
+| GET | `/chat/me` | signed in — `{ configured, linked, preferences: { instant, morning_summary } }` |
+| PUT | `/chat/me/preferences` | signed in — `{ instant?, morning_summary? }` |
+| POST | `/chat/me/test` | signed in — sends a test message to your own Chat |
+| GET | `/chat/admin` | `settings.manage` — service account email (never the key), endpoint URL, spaces, who is connected, last 7 days, failures |
+| PATCH | `/chat/admin/spaces/:id` | `settings.manage` — `{ department_id, team_summary }` |
+| POST | `/chat/admin/retry` | `settings.manage` — retries failed messages from the last two days |
+
+Settings key `googleChat`: `{ enabled, morningSummaryTime, teamSummaryTime, alertTypes }`.
+Off until an admin enables it. New notifications of the chosen types become direct
+messages to people who have added the app. The first run starts from the newest
+notification, so history is never replayed. Messages go through `chat_outbox` and
+are retried after 1, 5, 30 and 120 minutes. A space Google reports as gone stops
+being used. Leave reasons, coordinates and pay are never sent.
+
 ---
 
 ## Structure

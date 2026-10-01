@@ -73,6 +73,16 @@ UPLOAD_MAX_MB=10
 
 ENABLE_SCANNER=true
 SCANNER_INTERVAL_MINUTES=15
+
+# links in Google Chat messages point here
+APP_PUBLIC_URL=https://taskflow.ekosight.com
+
+# Google Chat (optional) — three fields from the service account key, see
+# docs/GOOGLE_CHAT.md. The private key goes on ONE line, in double quotes,
+# with \n for each line break.
+GOOGLE_CHAT_CLIENT_EMAIL=taskflow-chat@<project>.iam.gserviceaccount.com
+GOOGLE_CHAT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+GOOGLE_CHAT_PROJECT_ID=<project>
 ```
 
 ### 2. Attachments

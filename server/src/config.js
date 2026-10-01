@@ -49,6 +49,22 @@ export const config = {
     maxSizeMb: int(process.env.UPLOAD_MAX_MB, 10),
   },
 
+  // the address people open TaskFlow at — used for links in Chat messages
+  publicUrl: (process.env.APP_PUBLIC_URL || 'https://taskflow.ekosight.com').replace(/\/+$/, ''),
+
+  // Google Chat. The service account comes from three variables taken from the
+  // downloaded key; the key file itself is not needed on the server.
+  googleChat: {
+    clientEmail: process.env.GOOGLE_CHAT_CLIENT_EMAIL || '',
+    // .env files hold the key on one line with \n for each line break
+    privateKey: (process.env.GOOGLE_CHAT_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    projectId: process.env.GOOGLE_CHAT_PROJECT_ID || '',
+    // only for the "project number" authentication audience
+    projectNumber: process.env.GOOGLE_CHAT_PROJECT_NUMBER || '',
+    // only if the endpoint URL in Google Cloud differs from the default
+    audience: process.env.GOOGLE_CHAT_AUDIENCE || '',
+  },
+
   jobs: {
     // background deadline / black-mark scanner
     enabled: bool(process.env.ENABLE_SCANNER, true),

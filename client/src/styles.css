@@ -3166,3 +3166,20 @@ th.cal-person {
   .att-gate { margin: 8px auto; }
   .att-row-actions { white-space: normal; }
 }
+
+/* ------------------------------------------------------------------
+   Google Chat settings
+   ------------------------------------------------------------------ */
+.chat-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 3px; }
+.chat-types { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px 14px; }
+.chat-people { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-person {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12.5px;
+}
+.chat-code { font-size: 12px; word-break: break-all; }
