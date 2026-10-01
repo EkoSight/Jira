@@ -17,6 +17,9 @@ import Goals from './pages/Goals.jsx';
 import ObjectiveDetail from './pages/ObjectiveDetail.jsx';
 import Pipeline from './pages/Pipeline.jsx';
 import AccountDetail from './pages/AccountDetail.jsx';
+import Attendance from './pages/Attendance.jsx';
+import Payroll from './pages/Payroll.jsx';
+import { AttendanceProvider } from './state/attendance.jsx';
 
 function Protected({ permission, children }) {
   const { can } = useAuth();
@@ -90,6 +93,15 @@ function Shell() {
             </Protected>
           }
         />
+        <Route path="/attendance" element={<Attendance />} />
+        <Route
+          path="/payroll"
+          element={
+            <Protected permission="payroll.view">
+              <Payroll />
+            </Protected>
+          }
+        />
         <Route path="/recognition" element={<Recognition />} />
         <Route path="/performance" element={<Performance />} />
         <Route path="/performance/:userId" element={<Performance />} />
@@ -115,7 +127,9 @@ function Gate() {
   if (user.must_change_password) return <ForcePasswordChange />;
   return (
     <RefDataProvider>
-      <Shell />
+      <AttendanceProvider>
+        <Shell />
+      </AttendanceProvider>
     </RefDataProvider>
   );
 }

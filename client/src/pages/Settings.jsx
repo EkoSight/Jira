@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import { PRIORITIES } from '../lib/format.js';
+import AttendanceSettings from '../components/AttendanceSettings.jsx';
 
 const STAGES = [
   ['backlog', 'Backlog — captured, not started'],
@@ -662,6 +664,7 @@ const TABS = [
   ['statuses', 'Statuses & stages'],
   ['rules', 'Black mark rules'],
   ['thresholds', 'Thresholds'],
+  ['attendance', 'Attendance & pay', 'attendance.policy'],
   ['account', 'My account'],
 ];
 
@@ -722,7 +725,10 @@ function AccountTab() {
 
 export default function Settings() {
   const { refresh } = useRefData();
-  const [tab, setTab] = useState('departments');
+  const { can } = useAuth();
+  const [params] = useSearchParams();
+  const tabs = TABS.filter(([, , permission]) => !permission || can(permission));
+  const [tab, setTab] = useState(() => (tabs.some(([k]) => k === params.get('tab')) ? params.get('tab') : 'departments'));
 
   return (
     <div className="stack" style={{ gap: 14 }}>
@@ -732,7 +738,7 @@ export default function Settings() {
       </div>
 
       <div className="tabs">
-        {TABS.map(([key, label]) => (
+        {tabs.map(([key, label]) => (
           <button key={key} type="button" className={`tab ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
             {label}
           </button>
@@ -743,6 +749,7 @@ export default function Settings() {
       {tab === 'statuses' && <StatusesTab onChanged={refresh} />}
       {tab === 'rules' && <RulesTab />}
       {tab === 'thresholds' && <ThresholdsTab onChanged={refresh} />}
+      {tab === 'attendance' && <AttendanceSettings />}
       {tab === 'account' && <AccountTab />}
     </div>
   );

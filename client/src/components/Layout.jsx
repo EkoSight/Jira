@@ -4,6 +4,8 @@ import { api } from '../api/client.js';
 import { useAuth, useOnlineStatus, useRefData, useTheme } from '../state/AppState.jsx';
 import { Avatar, Icon, Modal } from './ui.jsx';
 import TaskDialog from './TaskDialog.jsx';
+import { AttendanceGate, SignOutReminder } from './Attendance.jsx';
+import { useAttendance } from '../state/attendance.jsx';
 import {
   announce,
   primeNotificationBaseline,
@@ -18,6 +20,7 @@ const NAV = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
+  { to: '/attendance', label: 'Attendance', icon: 'clock' },
   { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },
   { to: '/pipeline', label: 'B2B Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
   { to: '/notes', label: 'My notes', icon: 'note', permission: 'note.use' },
@@ -25,9 +28,20 @@ const NAV = [
   { to: '/recognition', label: 'Recognition', icon: 'trophy' },
   { to: '/performance', label: 'Performance', icon: 'dashboard' },
   { to: '/black-marks', label: 'Black marks', icon: 'flag', permission: 'blackmark.view' },
+  { to: '/payroll', label: 'Payroll', icon: 'wallet', permission: 'payroll.view' },
   { to: '/feature-requests', label: 'Ideas & requests', icon: 'bulb', permission: 'feature.request' },
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ];
+
+// where an attendance or leave notification takes you
+const ATTENDANCE_TYPES = {
+  leave_request: '/attendance?tab=approvals',
+  attendance_correction: '/attendance?tab=approvals',
+  leave_decision: '/attendance?tab=leave',
+  attendance_review: '/attendance?tab=month',
+  attendance_reminder: '/attendance',
+  attendance_checkout_reminder: '/attendance',
+};
 
 // picked by route rather than position, so adding a nav item never silently
 // reshuffles the phone tab bar
@@ -43,6 +57,13 @@ export default function Layout({ children }) {
   const location = useLocation();
 
   const [creating, setCreating] = useState(false);
+  const { blocked, openSession } = useAttendance();
+  const [signingOut, setSigningOut] = useState(false);
+  // signing out never ends the work day; with attendance open, say so first
+  const handleSignOut = () => (openSession ? setSigningOut(true) : signOut());
+  // the check-in screen stands in for work pages only; attendance, leave and
+  // account settings stay reachable so nobody is ever locked out of them
+  const gated = blocked && !['/attendance', '/settings'].some((p) => location.pathname.startsWith(p));
   const [notifications, setNotifications] = useState({ notifications: [], unread: 0 });
   const [showNotifications, setShowNotifications] = useState(false);
 
@@ -75,6 +96,7 @@ export default function Layout({ children }) {
               if (notification.task_id) setOpenTaskId(notification.task_id);
               else if (notification.objective_id) navigate(`/goals/${notification.objective_id}`);
               else if (notification.account_id) navigate(`/accounts/${notification.account_id}`);
+              else if (ATTENDANCE_TYPES[notification.type]) navigate(ATTENDANCE_TYPES[notification.type]);
             },
           });
         })
@@ -118,7 +140,7 @@ export default function Layout({ children }) {
             </NavLink>
           ))}
 
-          {can('task.create') && (
+          {can('task.create') && !gated && (
             <button type="button" className="btn btn-primary btn-block" style={{ marginTop: 14 }} onClick={() => setCreating(true)}>
               <Icon name="plus" /> New task
             </button>
@@ -132,7 +154,7 @@ export default function Layout({ children }) {
               <div className="small" style={{ fontWeight: 600 }}>{user.full_name}</div>
               <div className="small muted" style={{ textTransform: 'capitalize' }}>{user.role}</div>
             </div>
-            <button type="button" className="btn btn-ghost btn-icon" onClick={signOut} title="Sign out">
+            <button type="button" className="btn btn-ghost btn-icon" onClick={handleSignOut} title="Sign out">
               <Icon name="logout" />
             </button>
           </div>
@@ -199,7 +221,7 @@ export default function Layout({ children }) {
             )}
           </button>
 
-          {can('task.create') && (
+          {can('task.create') && !gated && (
             <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>
               <Icon name="plus" size={14} />
               <span className="new-task-label">New</span>
@@ -210,7 +232,7 @@ export default function Layout({ children }) {
         {!online && <div className="offline-banner">Offline — showing the last data loaded. Changes cannot be saved.</div>}
 
         <main className="page">
-          <div className="page-narrow">{children}</div>
+          <div className="page-narrow">{gated ? <AttendanceGate /> : children}</div>
         </main>
       </div>
 
@@ -272,7 +294,7 @@ export default function Layout({ children }) {
                   borderBottomColor: 'var(--border)',
                   width: '100%',
                   textAlign: 'left',
-                  cursor: n.task_id || n.objective_id || n.account_id ? 'pointer' : 'default',
+                  cursor: n.task_id || n.objective_id || n.account_id || ATTENDANCE_TYPES[n.type] ? 'pointer' : 'default',
                 }}
                 onClick={() => {
                   if (n.task_id) {
@@ -284,6 +306,9 @@ export default function Layout({ children }) {
                   } else if (n.account_id) {
                     setShowNotifications(false);
                     navigate(`/accounts/${n.account_id}`);
+                  } else if (ATTENDANCE_TYPES[n.type]) {
+                    setShowNotifications(false);
+                    navigate(ATTENDANCE_TYPES[n.type]);
                   }
                 }}
               >
@@ -296,6 +321,7 @@ export default function Layout({ children }) {
                     : n.type === 'feature_request' || n.type === 'feature_update' ? 'bulb'
                     : n.type === 'okr_digest' || n.type === 'okr_department' || n.type === 'okr_check_in' ? 'target'
                     : n.type === 'crm_digest' || n.type === 'crm_activity' || n.type === 'crm_assigned' ? 'pipeline'
+                    : ATTENDANCE_TYPES[n.type] ? 'clock'
                     : 'bell'
                   }
                 />
@@ -311,6 +337,10 @@ export default function Layout({ children }) {
             ))
           )}
         </Modal>
+      )}
+
+      {signingOut && openSession && (
+        <SignOutReminder session={openSession} onClose={() => setSigningOut(false)} onSignOut={() => { setSigningOut(false); signOut(); }} />
       )}
 
       {openTaskId && (

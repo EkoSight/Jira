@@ -43,6 +43,10 @@ async function request(method, path, body, options = {}) {
 
   if (!response.ok) {
     if (response.status === 401) onUnauthorized();
+    // the server wants today's check-in first: let the shell show the check-in screen
+    if (data.details?.code === 'ATTENDANCE_REQUIRED' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('taskflow:attendance-required'));
+    }
     throw new ApiError(data.error || `Request failed (${response.status})`, response.status, data.details);
   }
 
@@ -78,6 +82,26 @@ export async function fetchBlobUrl(url) {
   const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
   if (!response.ok) throw new ApiError('Could not load the attachment', response.status);
   return URL.createObjectURL(await response.blob());
+}
+
+/** Downloads a protected file (a CSV export) under the given name. */
+export async function downloadFile(url, filename) {
+  const token = tokenStore.get();
+  const response = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!response.ok) {
+    const text = await response.text();
+    let message = `Download failed (${response.status})`;
+    try { message = JSON.parse(text).error || message; } catch { /* not JSON */ }
+    throw new ApiError(message, response.status);
+  }
+  const href = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
 }
 
 const qs = (params = {}) => {
@@ -254,6 +278,56 @@ export const api = {
   addAvailability: (data) => request('POST', '/availability', data),
   updateAvailability: (id, data) => request('PATCH', `/availability/${id}`, data),
   cancelAvailability: (id) => request('DELETE', `/availability/${id}`),
+
+  // attendance — Check In / Start Work, Check Out / End Work
+  attendanceToday: () => request('GET', '/attendance/today'),
+  checkIn: (body) => request('POST', '/attendance/check-in', body),
+  checkOut: (body) => request('POST', '/attendance/check-out', body),
+  myAttendance: (month) => request('GET', `/attendance/me${qs({ month })}`),
+  personAttendance: (userId, month) => request('GET', `/attendance/people/${userId}${qs({ month })}`),
+  sessionLocation: (id) => request('GET', `/attendance/sessions/${id}/location`),
+  teamToday: (params) => request('GET', `/attendance/team/today${qs(params)}`),
+  teamMonth: (params) => request('GET', `/attendance/team/month${qs(params)}`),
+  reviewQueue: (month) => request('GET', `/attendance/review-queue${qs({ month })}`),
+  corrections: (params) => request('GET', `/attendance/corrections${qs(params)}`),
+  requestCorrection: (body) => request('POST', '/attendance/corrections', body),
+  decideCorrection: (id, body) => request('POST', `/attendance/corrections/${id}/decide`, body),
+  cancelCorrection: (id) => request('POST', `/attendance/corrections/${id}/cancel`),
+  reviewDay: (body) => request('POST', '/attendance/reviews/day', body),
+  reviewExtra: (body) => request('POST', '/attendance/reviews/extra', body),
+  attendancePolicy: () => request('GET', '/attendance/policy'),
+  createPolicyVersion: (body) => request('POST', '/attendance/policy', body),
+  updatePolicy: (id, config, note) => request('PATCH', `/attendance/policy/${id}`, { config, note }),
+  acceptPolicy: (id) => request('POST', `/attendance/policy/${id}/accept`),
+  holidays: (year) => request('GET', `/attendance/holidays${qs({ year })}`),
+  addHoliday: (body) => request('POST', '/attendance/holidays', body),
+  removeHoliday: (id) => request('DELETE', `/attendance/holidays/${id}`),
+  workProfiles: () => request('GET', '/attendance/profiles'),
+  saveWorkProfile: (userId, body) => request('PUT', `/attendance/profiles/${userId}`, body),
+  teamAccess: () => request('GET', '/attendance/team-access'),
+  setTeamAccess: (managerId, departmentIds) => request('PUT', `/attendance/team-access/${managerId}`, { department_ids: departmentIds }),
+  attendanceAudit: (params) => request('GET', `/attendance/audit${qs(params)}`),
+  attendanceExportUrl: (params) => `${BASE}/attendance/export.csv${qs(params)}`,
+
+  // leave requests
+  leaveMeta: () => request('GET', '/leave/meta'),
+  myLeave: () => request('GET', '/leave/mine'),
+  leaveBalance: (params) => request('GET', `/leave/balance${qs(params)}`),
+  leavePreview: (params) => request('GET', `/leave/preview${qs(params)}`),
+  teamLeave: (params) => request('GET', `/leave/team${qs(params)}`),
+  requestLeave: (body) => request('POST', '/leave', body),
+  submitLeave: (id) => request('POST', `/leave/${id}/submit`),
+  decideLeave: (id, body) => request('POST', `/leave/${id}/decide`, body),
+  cancelLeave: (id, reason) => request('POST', `/leave/${id}/cancel`, { reason }),
+
+  // payroll — a monthly estimate, behind its own permission
+  payrollMonth: (month) => request('GET', `/payroll/${month}`),
+  payrollPerson: (month, userId) => request('GET', `/payroll/${month}/people/${userId}`),
+  payrollAction: (month, userId, action, reason) => request('POST', `/payroll/${month}/people/${userId}/${action}`, { reason }),
+  payrollBulk: (month, body) => request('POST', `/payroll/${month}/bulk`, body),
+  salaryBasis: (userId) => request('GET', `/payroll/salary/${userId}`),
+  addSalaryBasis: (userId, body) => request('POST', `/payroll/salary/${userId}`, body),
+  payrollExportUrl: (month) => `${BASE}/payroll/${month}/export.csv`,
 
   crmStates: (params) => request('GET', `/accounts/views/states${qs(params)}`),
   archiveAccount: (id) => request('DELETE', `/accounts/${id}`),

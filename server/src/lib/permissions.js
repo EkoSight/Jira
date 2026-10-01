@@ -54,6 +54,22 @@ export const PERMISSIONS = {
   'crm.manage.any': 'Edit any account, not only their own',
   'crm.activity.log': 'Log activities and move a deal along',
   'crm.stages.manage': 'Create and edit pipeline stages',
+
+  // Everyone records and sees their own attendance; these are about other people.
+  // A manager sees only the departments granted to them and their direct reports.
+  'attendance.team': 'See attendance for the teams they are authorised for',
+  'attendance.all': 'See attendance for everyone',
+  'attendance.location': 'See the check-in location of people they can see',
+  'attendance.approve': 'Decide attendance corrections and unrecorded days',
+  'attendance.extra.review': 'Decide whether time after office hours may offset a shortfall',
+  'attendance.policy': 'Set working hours, holidays, employee schedules and attendance policy',
+  'leave.approve': 'Approve or reject leave requests',
+  // Money is separate from attendance oversight
+  'payroll.view': 'See monthly salary estimates',
+  'payroll.manage': 'Prepare payroll months: submit, send back and export',
+  'payroll.approve': 'Approve and lock payroll months',
+  'payroll.reopen': 'Reopen a locked payroll month',
+  'payroll.salary.edit': 'Record and change salary amounts',
 };
 
 export const PERMISSION_KEYS = Object.keys(PERMISSIONS);
@@ -92,6 +108,11 @@ export const ROLE_PERMISSIONS = {
     'crm.manage.any',
     'crm.activity.log',
     'crm.stages.manage',
+    'attendance.team',
+    'attendance.location',
+    'attendance.approve',
+    'attendance.extra.review',
+    'leave.approve',
   ],
 
   member: [

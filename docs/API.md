@@ -148,6 +148,111 @@ is away on the deadline or for part of the run-up to it. It never blocks the
 save. Creating leave returns `tasks_due_during`, and whoever assigned those tasks
 is notified once.
 
+## Attendance
+
+Check In / Start Work and Check Out / End Work. Separate from signing in: login,
+refresh, a second device or logout never creates, closes or moves a record.
+Times are the **server's** clock, stored in UTC; work dates are calendar dates in
+the policy timezone (default `Asia/Kolkata`). Durations are integer seconds.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/attendance/privacy` | signed in — the location notice text |
+| GET | `/attendance/today` | own — policy summary, gate, session, open/overnight session, today's computed day, missing check-outs |
+| POST | `/attendance/check-in` | own — `{ request_id, location: { latitude, longitude, accuracy, timestamp } }` |
+| POST | `/attendance/check-out` | own — same body; completes the open session, even after midnight before the cutoff |
+| GET | `/attendance/me?month=YYYY-MM` | own — day-by-day ledger, totals, allocations, sessions with coordinates |
+| GET | `/attendance/people/:id?month=` | that person's authorised viewer |
+| GET | `/attendance/sessions/:id/location` | own, or `attendance.location` + authorised for the person (logged as `LOCATION_VIEWED`) |
+| GET | `/attendance/team/today?date=&department_id=` | `attendance.team` or `attendance.all`, scoped |
+| GET | `/attendance/team/month?month=` | as above |
+| GET | `/attendance/export.csv?from=&to=&user_id=&department_id=&include_location=1` | own; team/all scoped; coordinates only with `attendance.location` |
+| GET/POST | `/attendance/corrections` (`?scope=team&status=PENDING`) | own requests; `attendance.approve` for the team queue |
+| POST | `/attendance/corrections/:id/decide` | `attendance.approve`, authorised, never one's own — `{ decision: APPROVED|REJECTED, note }` |
+| POST | `/attendance/corrections/:id/cancel` | the requester, while pending |
+| POST | `/attendance/reviews/day` | `attendance.approve` — `{ user_id, work_date, decision: UNAPPROVED_ABSENCE|CLEAR, note }` |
+| POST | `/attendance/reviews/extra` | `attendance.extra.review` — one item or `{ items: [...] }` |
+| GET | `/attendance/review-queue?month=` | `attendance.approve` or `attendance.extra.review` |
+| GET | `/attendance/policy` | signed in (payroll part only for `attendance.policy`) |
+| POST / PATCH | `/attendance/policy`, `/attendance/policy/:id` | `attendance.policy` — new version from a date / edit an unused version (clears acceptance) |
+| POST | `/attendance/policy/:id/accept` | `attendance.policy` |
+| GET/POST/DELETE | `/attendance/holidays` | read: signed in; change: `attendance.policy` |
+| GET / PUT | `/attendance/profiles`, `/attendance/profiles/:userId` | `attendance.policy` (read also `attendance.all`, `payroll.view`) |
+| GET / PUT | `/attendance/team-access`, `/attendance/team-access/:managerId` | `attendance.policy` |
+| GET | `/attendance/audit?user_id=&entity_type=` | `attendance.all`, `payroll.view` or `attendance.policy` |
+
+**Idempotency.** Every check-in/out carries a `request_id`. The same id returns
+the first result unchanged (`replayed: true`); another device finds the open
+session (`already: true`). The database allows one session per person per work
+date and one open session per person, so simultaneous requests cannot create two.
+
+**Location.** Latitude/longitude ranges are validated, accuracy must be positive,
+and a reading older than `locationMaxAgeSeconds` (or more than 5 minutes ahead of
+the server) is refused with `LOCATION_STALE`. A reading less accurate than
+`lowAccuracyMeters` is accepted and flagged `LOW_ACCURACY`. No location is ever
+invented; there is no geofence and no address lookup.
+
+**Missing check-out.** An open session becomes `MISSING_CHECKOUT` once the next
+day's cutoff (default 04:00) passes. No time is guessed — a correction supplies it.
+
+**The check-in requirement.** Off until the policy has a `startDate`. After it,
+on a scheduled working day, a person who must record attendance and has no
+session and no approved full-day leave gets `403 { details: { code:
+"ATTENDANCE_REQUIRED" } }` on any write to `/tasks`, `/threads`, `/objectives`,
+`/key-results`, `/accounts`, `/opportunities`, `/meetings`, `/engagements` and
+`/resources`. Reads stay open, and `/attendance`, `/leave`, `/auth` and settings
+are never blocked.
+
+## Leave requests
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/leave/meta` | signed in — categories, notice hours, allowance mode, email note |
+| GET | `/leave/mine` | own |
+| GET | `/leave/balance?month=&user_id=` | own, or authorised viewer |
+| GET | `/leave/preview?start=&end=&day_part=` | own — scheduled working days the range uses |
+| GET | `/leave/team?status=pending` | `leave.approve`, `attendance.team` or `attendance.all`, scoped |
+| POST | `/leave` | own; `leave.approve` to record for a team member — `{ category, start_date, end_date, day_part, reason, is_emergency, emergency_explanation, notified_user_id, email_reference, claimed_notified_at, draft }` |
+| POST | `/leave/:id/submit` | the requester, from `DRAFT` |
+| POST | `/leave/:id/decide` | `leave.approve`, authorised, never one's own — `{ decision: APPROVED_PAID|APPROVED_UNPAID|REJECTED, note }` |
+| POST | `/leave/:id/cancel` | the requester before it starts; an approver with a reason |
+
+Notice is measured from when TaskFlow received the request; less than
+`leave.noticeHours` (48) makes it `NOTICE_EXCEPTION`, and emergencies go to
+`EMERGENCY_REVIEW`. A claimed earlier email is shown to the reviewer as a claim
+and never backdates the record. Approving as paid draws on each month's
+allowance day by day (half-day steps); anything beyond it is unpaid and the
+response says so. Approval adds an entry to the shared team calendar
+(`/availability`); cancelling removes it. TaskFlow sends no email
+(`email.sent: false`).
+
+## Payroll estimate
+
+All routes need `payroll.view`. An estimate for payroll — TaskFlow pays nobody
+and calculates no tax, PF or ESI.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/payroll/:month` | everyone's month: stage, setup gaps, blockers, totals, money |
+| GET | `/payroll/:month/people/:userId` | one person: every day, allocations, segments, versions |
+| POST | `/payroll/:month/people/:userId/submit` · `/return` | `payroll.manage` |
+| POST | `/payroll/:month/people/:userId/approve` · `/lock` | `payroll.approve`, never one's own pay |
+| POST | `/payroll/:month/people/:userId/reopen` | `payroll.reopen`, with a reason; the locked version is kept as `SUPERSEDED` |
+| POST | `/payroll/:month/bulk` | as the action — `{ action, user_ids, reason }` |
+| GET | `/payroll/:month/export.csv` | `payroll.manage` — locked snapshots only; no coordinates, no leave reasons |
+| GET / POST | `/payroll/salary/:userId` | read `payroll.view`; add `payroll.salary.edit` (effective-dated, never overwritten) |
+
+A month can be submitted only when it is `READY`: the policy versions it used
+are accepted, breaks and the salary method are confirmed, the start date is set
+and the month began on or after it, the joining date and salary are recorded,
+the month has ended, and no day is unresolved. Approve and lock re-run the
+calculation and refuse (`CHANGED_SINCE_SUBMIT`) if anything changed after
+submission. Approved or locked months refuse new corrections, reviews, leave
+decisions and salary amounts until reopened.
+
+CSV text cells starting with `= + - @`, tab or carriage return are prefixed with
+`'` so spreadsheets show them as text.
+
 ---
 
 ## Structure

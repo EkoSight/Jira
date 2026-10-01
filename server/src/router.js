@@ -21,6 +21,10 @@ import meetingRoutes from './routes/meetings.js';
 import engagementRoutes from './routes/engagements.js';
 import resourceRoutes from './routes/resources.js';
 import availabilityRoutes from './routes/availability.js';
+import attendanceRoutes from './routes/attendance.js';
+import leaveRoutes from './routes/leave.js';
+import payrollRoutes from './routes/payroll.js';
+import { requireAttendance } from './services/attendance.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
 import { requirePermission } from './middleware/auth.js';
@@ -44,7 +48,7 @@ export function createTaskFlowRouter() {
   router.use('/users', userRoutes);
   router.use('/departments', departmentRoutes);
   router.use('/statuses', statusRoutes);
-  router.use('/tasks', taskRoutes);
+  router.use('/tasks', requireAttendance, taskRoutes);
   router.use('/blackmarks', blackmarkRoutes);
   router.use('/reports', reportRoutes);
   router.use('/settings', settingsRoutes);
@@ -55,23 +59,30 @@ export function createTaskFlowRouter() {
   // who is away and when — open to everyone signed in, so work is planned around it
   router.use('/availability', availabilityRoutes);
 
+  // Attendance, leave and payroll. Attendance and leave are never behind the
+  // check-in requirement — someone who cannot check in can always reach their
+  // own record, ask for a correction or leave, and sign out.
+  router.use('/attendance', attendanceRoutes);
+  router.use('/leave', leaveRoutes);
+  router.use('/payroll', payrollRoutes);
+
   // Discussion and review threads. One mount for tasks, key results and goals,
   // because the conversation is the same shape wherever the work sits — and each
   // request asks that entity's own access rule before it answers.
-  router.use('/threads', threadRoutes);
+  router.use('/threads', requireAttendance, threadRoutes);
 
   // Goals / OKR. Mounted alongside the rest rather than woven through it, so the
   // routes above are byte-for-byte the ones that shipped before this module.
-  router.use('/objectives', requireOkrEnabled, requirePermission('okr.view'), objectiveRoutes);
-  router.use('/key-results', requireOkrEnabled, requirePermission('okr.view'), keyResultRoutes);
+  router.use('/objectives', requireAttendance, requireOkrEnabled, requirePermission('okr.view'), objectiveRoutes);
+  router.use('/key-results', requireAttendance, requireOkrEnabled, requirePermission('okr.view'), keyResultRoutes);
 
   // CRM / pipeline, mounted the same way — off cleanly when disabled
-  router.use('/accounts', requireCrmEnabled, requirePermission('crm.view'), accountRoutes);
+  router.use('/accounts', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), accountRoutes);
   // deals live alongside the organizations that hold them, behind the same gate
-  router.use('/opportunities', requireCrmEnabled, requirePermission('crm.view'), opportunityRoutes);
-  router.use('/meetings', requireCrmEnabled, requirePermission('crm.view'), meetingRoutes);
-  router.use('/engagements', requireCrmEnabled, requirePermission('crm.view'), engagementRoutes);
-  router.use('/resources', requireCrmEnabled, requirePermission('crm.view'), resourceRoutes);
+  router.use('/opportunities', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), opportunityRoutes);
+  router.use('/meetings', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), meetingRoutes);
+  router.use('/engagements', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), engagementRoutes);
+  router.use('/resources', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), resourceRoutes);
 
   return router;
 }

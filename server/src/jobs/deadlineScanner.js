@@ -3,6 +3,7 @@ import { query } from '../db/pool.js';
 import { runBlackMarkScan } from '../services/blackmarks.js';
 import { runOkrScan } from './okrScanner.js';
 import { runAccountScan } from './accountScanner.js';
+import { runAttendanceScan } from './attendanceScanner.js';
 import { getSettings } from '../services/settings.js';
 
 let timer = null;
@@ -61,6 +62,15 @@ export async function runScanOnce() {
     }
   } catch (err) {
     console.error('[taskflow] CRM scan failed:', err.message);
+  }
+
+  try {
+    const attendance = await runAttendanceScan();
+    if (attendance.notified?.length) {
+      console.log(`[taskflow] attendance scan reminded ${attendance.notified.length} person(s)`);
+    }
+  } catch (err) {
+    console.error('[taskflow] attendance scan failed:', err.message);
   }
 
   return result;

@@ -6,6 +6,7 @@ import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import { BarList, LoadMeter, Ring, TrendChart, STATUS_COLOR } from '../components/charts.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import { AwayBadge, AwayCard } from '../components/Availability.jsx';
+import { TodayAttendanceCard } from '../components/Attendance.jsx';
 import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -95,6 +96,8 @@ export default function Dashboard() {
           </button>
         </div>
       </div>
+
+      <TodayAttendanceCard />
 
       <div className="stat-grid">
         <Stat label="Open" value={summary.open} note="Backlog and to do" onClick={() => goToBoard({ stage: 'todo' })} />
