@@ -95,6 +95,9 @@ router.get(
     );
     res.json({
       configured: cfg.configured,
+      usable: cfg.usable,
+      // what is wrong with the key, in words — never the key itself
+      key_problem: cfg.keyProblem,
       // which service account, so an admin can check it matches Google Cloud; never the key
       client_email: cfg.clientEmail || null,
       project_id: cfg.projectId || null,

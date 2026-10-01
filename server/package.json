@@ -13,6 +13,7 @@
     "migrate": "node src/db/migrate.js",
     "seed": "node src/db/seed.js",
     "doctor": "node src/db/doctor.js",
+    "chat:check": "node src/db/chatCheck.js",
     "test": "node --env-file=.env.test --test --test-concurrency=1 \"tests/**/*.test.js\""
   },
   "dependencies": {

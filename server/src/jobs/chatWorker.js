@@ -10,7 +10,9 @@ let timer = null;
 let running = false;
 
 export function startChatWorker({ intervalSeconds = 60 } = {}) {
-  if (timer || !chatConfig().configured) return null;
+  const cfg = chatConfig();
+  if (timer || !cfg.configured) return null;
+  if (!cfg.usable) console.error(`[taskflow] Google Chat: ${cfg.keyProblem}`);
   const tick = async () => {
     if (running) return;
     running = true;

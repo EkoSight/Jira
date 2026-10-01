@@ -58,6 +58,34 @@ shred -u taskflow-chat.json
 Restart TaskFlow. The log line `Google Chat worker running as …` confirms it read
 the credentials.
 
+### If the key cannot be read
+
+On the server, in the `server` folder:
+
+```bash
+npm run chat:check
+```
+
+It reports the key's length and line count (never its contents), names what is
+wrong with it, and tries a real sign-in to Google. TaskFlow already repairs the
+usual paste problems: single quotes, a trailing comma, `\\n`, real line breaks,
+and backslashes stripped by systemd. Two things it cannot repair:
+
+- **A key pasted over several lines without quotes.** Only the first line
+  survives. Use the `node -e` command above.
+- **A service manager with its own copy of the variable** (for example, systemd
+  `Environment=` or `EnvironmentFile=`, or pm2). That copy takes precedence over
+  `server/.env`; `chat:check` says so when the two differ.
+
+If quoting keeps going wrong, store the key base64-encoded instead. Nothing in it
+needs escaping:
+
+```bash
+node -e 'console.log("GOOGLE_CHAT_PRIVATE_KEY_BASE64=" + Buffer.from(require("./taskflow-chat.json").private_key).toString("base64"))' >> server/.env
+```
+
+Remove the old `GOOGLE_CHAT_PRIVATE_KEY` line when you use this.
+
 **The private key is a password.** Never commit it or send it in chat or email.
 If it leaks, delete the key in **Google Cloud → IAM & Admin → Service accounts**
 and create a new one.

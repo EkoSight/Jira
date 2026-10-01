@@ -17,6 +17,7 @@
  *                          whose audience is the project number.
  */
 
+import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 
@@ -29,19 +30,88 @@ const CERTS = {
   chat: `https://www.googleapis.com/service_accounts/v1/metadata/x509/${CHAT_ISSUER}`,
 };
 
+// ---------------------------------------------------------------- the private key
+
+const BEGIN = '-----BEGIN PRIVATE KEY-----';
+const END = '-----END PRIVATE KEY-----';
+const parses = (pem) => { try { crypto.createPrivateKey(pem); return true; } catch { return false; } };
+const wrap = (body) => `${BEGIN}\n${body.match(/.{1,64}/g).join('\n')}\n${END}\n`;
+
+/**
+ * Turns whatever ended up in GOOGLE_CHAT_PRIVATE_KEY into a usable key, or
+ * says what is wrong with it. Pasting a key into an .env file goes wrong in a
+ * handful of predictable ways — real line breaks cut it off, \n written as \\n,
+ * a trailing comma or quotes copied from the JSON, a service manager that drops
+ * backslashes — so each is undone here rather than asking people to retry.
+ * Also accepts the key base64-encoded. Never returns or logs the key text.
+ */
+export function readPrivateKey(raw) {
+  let text = String(raw ?? '').trim();
+  if (!text) return { key: null, problem: 'GOOGLE_CHAT_PRIVATE_KEY is empty or missing' };
+
+  // the whole key base64-encoded, to sidestep quoting altogether
+  if (!text.includes('PRIVATE KEY') && /^[A-Za-z0-9+/=\s]+$/.test(text)) {
+    const decoded = Buffer.from(text.replace(/\s+/g, ''), 'base64').toString('utf8');
+    if (decoded.includes('PRIVATE KEY')) text = decoded.trim();
+  }
+
+  // copied straight from the JSON line: "private_key": "…",
+  text = text.replace(/^"?private_key"?\s*:\s*/, '').replace(/,\s*$/, '');
+  for (let i = 0; i < 3 && /^(["'`]).*\1$/s.test(text); i += 1) text = text.slice(1, -1).trim();
+
+  if (!text.includes(BEGIN)) {
+    if (text.includes('BEGIN RSA PRIVATE KEY') || text.includes('BEGIN ENCRYPTED')) {
+      return { key: null, problem: 'This is not the key from the Google service account JSON — use the "private_key" value from that file' };
+    }
+    return { key: null, problem: 'GOOGLE_CHAT_PRIVATE_KEY does not start with -----BEGIN PRIVATE KEY-----' };
+  }
+  if (!text.includes(END)) {
+    return {
+      key: null,
+      problem: 'GOOGLE_CHAT_PRIVATE_KEY is cut off before -----END PRIVATE KEY-----. Usually the key was pasted over several lines without double quotes; put it on one line in double quotes, or use the command in docs/GOOGLE_CHAT.md',
+    };
+  }
+
+  const inner = text.slice(text.indexOf(BEGIN) + BEGIN.length, text.indexOf(END));
+  const body = inner.replace(/\\\\n|\\n|\\r|\s+/g, '');
+  if (!body) return { key: null, problem: 'GOOGLE_CHAT_PRIVATE_KEY has nothing between its BEGIN and END lines' };
+
+  const candidates = [wrap(body)];
+  // a service manager that strips backslashes leaves an "n" at every line break
+  if (body.startsWith('n')) {
+    // n, 64 characters, n, 64 characters … last line, n
+    const lines = body.slice(1).replace(/n$/, '');
+    candidates.push(wrap(lines.split('').filter((_, i) => (i + 1) % 65 !== 0).join('')));
+  }
+  for (const pem of candidates) if (parses(pem)) return { key: pem, problem: null };
+
+  if (/[^A-Za-z0-9+/=]/.test(body)) {
+    return { key: null, problem: 'GOOGLE_CHAT_PRIVATE_KEY contains characters that are not part of a key — check for extra quotes, spaces or text pasted with it' };
+  }
+  return { key: null, problem: 'GOOGLE_CHAT_PRIVATE_KEY is the right shape but incomplete or altered — copy it again from the JSON file with the command in docs/GOOGLE_CHAT.md' };
+}
+
 // ---------------------------------------------------------------- configuration
 
 let override = null;
 /** Tests replace the environment's credentials; production never calls this. */
 export const setChatConfig = (value) => { override = value; tokenCache = null; };
 
+let keyCache = { raw: null, result: null };
+
 export function chatConfig() {
   const base = override || config.googleChat;
   const endpointPath = `${config.apiPrefix}/integrations/google-chat/events`;
+  if (keyCache.raw !== base.privateKey) keyCache = { raw: base.privateKey, result: readPrivateKey(base.privateKey) };
+  const { key, problem } = keyCache.result;
   return {
     ...base,
+    privateKey: key,
+    keyProblem: base.privateKey ? problem : null,
     endpointUrl: base.audience || `${config.publicUrl}${endpointPath}`,
-    configured: Boolean(base.clientEmail && base.privateKey && base.privateKey.includes('PRIVATE KEY')),
+    // present at all: shown as "set up" with the problem spelled out
+    configured: Boolean(base.clientEmail && base.privateKey),
+    usable: Boolean(base.clientEmail && key),
   };
 }
 
@@ -52,6 +122,7 @@ let tokenCache = null;
 async function accessToken(fetchImpl = fetch) {
   const cfg = chatConfig();
   if (!cfg.configured) throw new ChatError('Google Chat credentials are not configured on the server', { permanent: true });
+  if (!cfg.usable) throw new ChatError(cfg.keyProblem || 'GOOGLE_CHAT_CLIENT_EMAIL is missing', { permanent: true });
   if (tokenCache && tokenCache.expiresAt - 60_000 > Date.now()) return tokenCache.token;
 
   const now = Math.floor(Date.now() / 1000);
@@ -62,8 +133,8 @@ async function accessToken(fetchImpl = fetch) {
       cfg.privateKey,
       { algorithm: 'RS256' },
     );
-  } catch {
-    throw new ChatError('GOOGLE_CHAT_PRIVATE_KEY could not be read — check it was copied whole, on one line, in double quotes', { permanent: true });
+  } catch (err) {
+    throw new ChatError(`The private key could not sign a request: ${err.message}`, { permanent: true });
   }
   const response = await fetchImpl(TOKEN_URL, {
     method: 'POST',
@@ -104,6 +175,13 @@ async function googleTransport(spaceName, message) {
     throw new ChatError(`Google Chat: ${reason}`, { status: response.status, permanent: permanent && response.status !== 401, spaceGone });
   }
   return { name: data.name };
+}
+
+/** Signs in to Google once, to prove the credentials work. Sends no message. */
+export async function checkSignIn() {
+  tokenCache = null;
+  await accessToken();
+  return true;
 }
 
 let transport = googleTransport;

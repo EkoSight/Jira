@@ -109,10 +109,19 @@ export default function GoogleChatSettings() {
             <h2>Google Chat</h2>
             <div className="small muted">Alerts as direct messages, and a daily team summary in department spaces.</div>
           </div>
-          {data.configured
-            ? <Badge tone="good">Credentials found on the server</Badge>
-            : <Badge tone="serious">Not set up on the server</Badge>}
+          {!data.configured ? <Badge tone="serious">Not set up on the server</Badge>
+            : data.usable ? <Badge tone="good">Credentials found on the server</Badge>
+              : <Badge tone="serious">Key cannot be read</Badge>}
         </div>
+        {data.configured && !data.usable && (
+          <div className="callout small" style={{ borderLeftColor: 'var(--critical)', background: 'var(--critical-wash)' }}>
+            <Icon name="alert" />
+            <span>
+              {data.key_problem}. On the server, run <code>npm run chat:check</code> in the <code>server</code> folder for details,
+              fix <code>server/.env</code>, then restart TaskFlow.
+            </span>
+          </div>
+        )}
         {data.configured ? (
           <dl className="att-dl">
             <dt>Sending as</dt><dd className="truncate">{data.client_email}</dd>

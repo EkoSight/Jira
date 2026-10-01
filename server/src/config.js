@@ -56,8 +56,8 @@ export const config = {
   // downloaded key; the key file itself is not needed on the server.
   googleChat: {
     clientEmail: process.env.GOOGLE_CHAT_CLIENT_EMAIL || '',
-    // .env files hold the key on one line with \n for each line break
-    privateKey: (process.env.GOOGLE_CHAT_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
+    // read and repaired in lib/googleChat.js; GOOGLE_CHAT_PRIVATE_KEY_BASE64 avoids quoting entirely
+    privateKey: process.env.GOOGLE_CHAT_PRIVATE_KEY || process.env.GOOGLE_CHAT_PRIVATE_KEY_BASE64 || '',
     projectId: process.env.GOOGLE_CHAT_PROJECT_ID || '',
     // only for the "project number" authentication audience
     projectNumber: process.env.GOOGLE_CHAT_PROJECT_NUMBER || '',
