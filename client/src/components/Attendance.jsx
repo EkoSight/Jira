@@ -7,7 +7,7 @@ import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx
 import {
   BLOCKER_LABEL, CORRECTION_KINDS, CORRECTION_LABEL, CORRECTION_STATUS, DAY_PART, FLAG_LABEL, LEAVE_CATEGORIES,
   LEAVE_STATUS, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayMeta, dayName, hhmm, mapsLink, newRequestId,
-  readLocation, todayIn, words,
+  accuracyWords, readLocation, todayIn, words,
 } from '../lib/attendance.js';
 
 /**
@@ -46,6 +46,7 @@ function useAttendanceAction(kind, { onDone }) {
   const { today, reload } = useAttendance();
   const [phase, setPhase] = useState('idle'); // idle | locating | sending | problem
   const [problem, setProblem] = useState(null);
+  const [locationNote, setLocationNote] = useState(null);
   const requestId = useRef(null);
 
   const run = async () => {
@@ -55,6 +56,9 @@ function useAttendanceAction(kind, { onDone }) {
     let location;
     try {
       location = await readLocation({ timeoutSeconds: today?.policy?.location_timeout_seconds || 15 });
+      setLocationNote(location.accuracy > (today?.policy?.low_accuracy_meters || 200)
+        ? `Location recorded ${accuracyWords(location.accuracy)}. That is fine — a rough fix is marked for review, never refused.`
+        : null);
     } catch (err) {
       setProblem({ code: err.code, text: LOCATION_PROBLEM[err.code] || LOCATION_PROBLEM.UNAVAILABLE });
       setPhase('problem');
@@ -90,7 +94,7 @@ function useAttendanceAction(kind, { onDone }) {
     }
   };
 
-  return { run, phase, problem, busy: phase === 'locating' || phase === 'sending', clear: () => { setPhase('idle'); setProblem(null); } };
+  return { run, phase, problem, locationNote, busy: phase === 'locating' || phase === 'sending', clear: () => { setPhase('idle'); setProblem(null); } };
 }
 
 function ActionProblem({ problem, onRetry, onCorrection }) {
@@ -194,7 +198,14 @@ export function TodayAttendanceCard({ variant = 'card' }) {
       <div className="att-card-foot">
         <ActionProblem problem={action.problem} onRetry={action.run} onCorrection={() => setCorrection({ work_date: open?.work_date || today.today, kind: open ? 'MISSED_CHECK_OUT' : 'TECHNICAL' })} />
         {action.phase === 'locating' && (
-          <div className="small muted">Your browser may ask to share your location. This can take up to {today.policy.location_timeout_seconds} seconds.</div>
+          <div className="small muted">
+            Your browser may ask to share your location — allow it. Indoors this can take up to {today.policy.location_timeout_seconds + 10} seconds;
+            a rough fix is accepted.
+          </div>
+        )}
+        {action.locationNote && action.phase === 'idle' && <div className="small muted">{action.locationNote}</div>}
+        {(open || done) && (open || done).check_in_accuracy_m !== null && (open || done).check_in_accuracy_m !== undefined && (
+          <div className="small muted">Check-in location {accuracyWords(Number((open || done).check_in_accuracy_m))}{done?.check_out_accuracy_m !== null && done?.check_out_accuracy_m !== undefined ? ` · check-out ${accuracyWords(Number(done.check_out_accuracy_m))}` : ''}</div>
         )}
         {today.missing_checkouts?.map((m) => (
           <div key={m.id} className="callout is-quiet att-missing">

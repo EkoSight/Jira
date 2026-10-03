@@ -86,8 +86,14 @@ export const FLAG_LABEL = {
   WORKED_DURING_PAID_LEAVE: 'Worked during paid leave',
   MISSING_CHECKOUT: 'Missing check-out',
   WORKED_ON_NON_WORKING_DAY: 'Worked on a day off',
-  LOW_ACCURACY: 'Low location accuracy (in)',
-  LOW_ACCURACY_OUT: 'Low location accuracy (out)',
+  LOW_ACCURACY: 'Rough location (in)',
+  LOW_ACCURACY_OUT: 'Rough location (out)',
+  ACCURACY_UNKNOWN: 'Location accuracy unknown (in)',
+  ACCURACY_UNKNOWN_OUT: 'Location accuracy unknown (out)',
+  STALE_READING: 'Older location reading (in)',
+  STALE_READING_OUT: 'Older location reading (out)',
+  NETWORK_LOCATION: 'Wi-Fi/network location (in)',
+  NETWORK_LOCATION_OUT: 'Wi-Fi/network location (out)',
 };
 
 export const BLOCKER_LABEL = {
@@ -161,43 +167,130 @@ export function newRequestId() {
 /** Why a location could not be read, in plain words, with what to do next. */
 export const LOCATION_PROBLEM = {
   UNSUPPORTED: 'This browser cannot share a location. Use a phone or a recent version of Chrome, Edge, Safari or Firefox — or ask for a correction.',
-  DENIED: 'Location permission is turned off for TaskFlow. Allow location for this site in your browser settings, then try again. If you cannot, ask for a correction.',
-  UNAVAILABLE: 'Your device could not find its location. Move near a window or turn on location services, then try again.',
-  TIMEOUT: 'Finding your location took too long. Try again — it is often quicker the second time.',
+  DENIED: 'Location permission is turned off for TaskFlow. Allow location for this site in your browser or phone settings, then try again. If you cannot, ask for a correction.',
+  UNAVAILABLE: 'Your device could not work out where it is. Turn on Wi-Fi (it helps indoors even without connecting) and location services, then try again.',
+  TIMEOUT: 'No location fix in time — common deep inside a building. Turn on Wi-Fi, move nearer a window or door, and try again; the second attempt is usually faster.',
   INSECURE: 'Location only works on a secure (https) connection.',
   NO_ANSWER: 'Your browser has not shared a location yet. Look for a location permission prompt near the address bar, allow it, then try again.',
 };
 
+/** How good a fix is, in words people recognise. */
+export function accuracyWords(metres) {
+  if (metres === null || metres === undefined) return '';
+  if (metres === 0) return 'accuracy unknown';
+  if (metres <= 50) return `±${Math.round(metres)} m`;
+  if (metres <= 500) return `±${Math.round(metres)} m — rough, as expected indoors`;
+  return `±${Math.round(metres / 100) / 10} km — approximate (Wi-Fi or network)`;
+}
+
+const toReading = (position, method, now) => {
+  // the reading's age, measured on the device so clock drift does not matter.
+  // Some older iPhones report the time from a different epoch; then it is unknown.
+  const age = now - position.timestamp;
+  return {
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+    accuracy: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : 0,
+    timestamp: position.timestamp,
+    age_ms: Number.isFinite(age) && age >= -60_000 && age <= 600_000 ? Math.round(age) : null,
+    method,
+  };
+};
+
+const errorCode = (error) => (error?.code === 1 ? 'DENIED' : error?.code === 3 ? 'TIMEOUT' : 'UNAVAILABLE');
+
 /**
- * Reads the current position once — high accuracy, never a cached reading.
- * Resolves { latitude, longitude, accuracy, timestamp } or rejects with
- * { code } from LOCATION_PROBLEM. Nothing is ever invented as a fallback.
+ * Reads the device's position for a check-in, built for weak signal.
+ *
+ *  1. Watch high-accuracy (GPS) readings for up to `timeoutSeconds`. The first
+ *     fix within `goodAccuracy` metres is taken at once. A rougher fix is given
+ *     `settleSeconds` to improve (GPS indoors often sharpens over a few
+ *     seconds), then the best so far is used, however rough.
+ *  2. If GPS gave nothing, ask for a network fix (Wi-Fi / cell) for
+ *     `fallbackSeconds` — what works indoors and on laptops.
+ *  3. Only when both fail does it reject with { code } from LOCATION_PROBLEM.
+ *
+ * Nothing is ever invented. Every reading carries the accuracy the device
+ * reported and the age it measured, so a rough indoor fix is recorded as such.
  */
 export function readLocation({
   timeoutSeconds = 15,
+  fallbackSeconds = 10,
+  goodAccuracy = 50,
+  settleSeconds = 6,
   // the browser's own timeout only starts once permission is given; an
   // unanswered permission prompt would otherwise wait for ever
-  watchdogSeconds = timeoutSeconds + 25,
+  watchdogSeconds = timeoutSeconds + fallbackSeconds + 25,
   geolocation = typeof navigator !== 'undefined' ? navigator.geolocation : null,
   secure = typeof window === 'undefined' || window.isSecureContext !== false,
+  now = () => Date.now(),
 } = {}) {
   return new Promise((resolveOuter, rejectOuter) => {
     if (!secure) { rejectOuter({ code: 'INSECURE' }); return; }
     if (!geolocation) { rejectOuter({ code: 'UNSUPPORTED' }); return; }
+
     let settled = false;
-    const timer = setTimeout(() => { if (!settled) { settled = true; rejectOuter({ code: 'NO_ANSWER' }); } }, watchdogSeconds * 1000);
-    const resolve = (v) => { if (!settled) { settled = true; clearTimeout(timer); resolveOuter(v); } };
-    const reject = (e) => { if (!settled) { settled = true; clearTimeout(timer); rejectOuter(e); } };
-    geolocation.getCurrentPosition(
-      (position) => resolve({
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        accuracy: position.coords.accuracy,
-        timestamp: position.timestamp,
-      }),
-      (error) => reject({ code: error?.code === 1 ? 'DENIED' : error?.code === 3 ? 'TIMEOUT' : 'UNAVAILABLE' }),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutSeconds * 1000 },
-    );
+    let watchId = null;
+    let best = null;
+    const timers = [];
+    const stopWatching = () => {
+      if (watchId !== null && typeof geolocation.clearWatch === 'function') geolocation.clearWatch(watchId);
+      watchId = null;
+    };
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      timers.forEach(clearTimeout);
+      stopWatching();
+      fn(value);
+    };
+    const resolve = (v) => finish(resolveOuter, v);
+    const reject = (e) => finish(rejectOuter, e);
+    timers.push(setTimeout(() => reject({ code: 'NO_ANSWER' }), watchdogSeconds * 1000));
+
+    // ---- phase 2: a network fix, when GPS gave nothing
+    let fallbackStarted = false;
+    const fallback = (reasonIfNothing) => {
+      if (settled || fallbackStarted) return;
+      fallbackStarted = true;
+      stopWatching();
+      if (best) { resolve(best); return; }
+      geolocation.getCurrentPosition(
+        (position) => resolve(toReading(position, 'NETWORK', now())),
+        (error) => reject({ code: error?.code === 1 ? 'DENIED' : reasonIfNothing || errorCode(error) }),
+        { enableHighAccuracy: false, maximumAge: 60_000, timeout: fallbackSeconds * 1000 },
+      );
+    };
+
+    // ---- phase 1: GPS
+    let settle = null;
+    const take = (position) => {
+      const reading = toReading(position, 'GPS', now());
+      const improved = !best || (reading.accuracy > 0 && reading.accuracy < best.accuracy);
+      if (improved) best = reading;
+      if (reading.accuracy > 0 && reading.accuracy <= goodAccuracy) { resolve(best); return; }
+      // a rough fix: wait a little for a sharper one, restarting whenever it improves
+      if (improved) {
+        clearTimeout(settle);
+        settle = setTimeout(() => resolve(best), settleSeconds * 1000);
+        timers.push(settle);
+      }
+    };
+    const onError = (error) => {
+      if (error?.code === 1) { reject({ code: 'DENIED' }); return; }
+      fallback(errorCode(error));
+    };
+    const options = { enableHighAccuracy: true, maximumAge: 0, timeout: timeoutSeconds * 1000 };
+    timers.push(setTimeout(() => (best ? resolve(best) : fallback('TIMEOUT')), timeoutSeconds * 1000));
+    if (typeof geolocation.watchPosition === 'function') {
+      try {
+        watchId = geolocation.watchPosition(take, onError, options);
+      } catch {
+        geolocation.getCurrentPosition(take, onError, options);
+      }
+    } else {
+      geolocation.getCurrentPosition(take, onError, options);
+    }
   });
 }
 

@@ -236,9 +236,14 @@ export async function sessionOn(userId, date) {
 // ---------------------------------------------------------------- location
 
 /**
- * Validates a browser location reading. The device timestamp is metadata — it
- * is checked for staleness and kept, but the attendance time is always the
- * server's.
+ * Validates a browser location reading.
+ *
+ * Coordinates and accuracy must be real numbers in range. Freshness is judged
+ * by `age_ms`, which the device measured against its own clock the moment the
+ * reading arrived — so a phone whose clock is minutes out is not punished for
+ * it. Doubtful readings (old, very imprecise, accuracy unknown) are accepted
+ * and flagged for a reviewer: an attendance record with a weak indoor fix is
+ * worth far more than no record at all. Nothing here invents a location.
  */
 export function validateLocation(location, config, now = Date.now()) {
   if (!location || typeof location !== 'object') {
@@ -247,24 +252,32 @@ export function validateLocation(location, config, now = Date.now()) {
   const lat = Number(location.latitude);
   const lng = Number(location.longitude);
   const accuracy = Number(location.accuracy);
-  const at = Number(location.timestamp);
   if (!Number.isFinite(lat) || lat < -90 || lat > 90) throw badRequest('That latitude is not valid', { code: 'LOCATION_INVALID' });
   if (!Number.isFinite(lng) || lng < -180 || lng > 180) throw badRequest('That longitude is not valid', { code: 'LOCATION_INVALID' });
-  if (!Number.isFinite(accuracy) || accuracy <= 0 || accuracy > 1_000_000) {
+  if (lat === 0 && lng === 0) throw badRequest('That location reading is empty', { code: 'LOCATION_INVALID' });
+  if (!Number.isFinite(accuracy) || accuracy < 0 || accuracy > 10_000_000) {
     throw badRequest('The location reading has no usable accuracy', { code: 'LOCATION_INVALID' });
   }
-  if (!Number.isFinite(at)) throw badRequest('The location reading has no time', { code: 'LOCATION_INVALID' });
-  const maxAge = (Number(config.locationMaxAgeSeconds) || 120) * 1000;
-  if (now - at > maxAge) {
-    throw badRequest('That location reading is out of date — try again to take a fresh one', { code: 'LOCATION_STALE' });
-  }
-  // a device clock far ahead of the server's is not trusted as a reading time
-  if (at - now > 5 * 60 * 1000) {
-    throw badRequest('Your device clock is ahead of the server — check its date and time, then try again', { code: 'LOCATION_STALE' });
-  }
+
   const flags = [];
-  if (accuracy > (Number(config.lowAccuracyMeters) || 200)) flags.push('LOW_ACCURACY');
-  return { lat: Math.round(lat * 1e6) / 1e6, lng: Math.round(lng * 1e6) / 1e6, accuracy: Math.round(accuracy * 100) / 100, at: new Date(at), flags };
+  // the reading's age as the device measured it; absent or implausible means unknown
+  const age = Number(location.age_ms);
+  const ageKnown = Number.isFinite(age) && age >= -60_000 && age <= 24 * 3600_000;
+  const maxAge = (Number(config.locationMaxAgeSeconds) || 120) * 1000;
+  if (ageKnown && age > maxAge) flags.push('STALE_READING');
+  if (accuracy === 0) flags.push('ACCURACY_UNKNOWN');
+  else if (accuracy > (Number(config.lowAccuracyMeters) || 200)) flags.push('LOW_ACCURACY');
+  // how the fix was obtained, when the device said: GPS, network (Wi-Fi/cell) or a second attempt
+  if (location.method === 'NETWORK') flags.push('NETWORK_LOCATION');
+
+  return {
+    lat: Math.round(lat * 1e6) / 1e6,
+    lng: Math.round(lng * 1e6) / 1e6,
+    accuracy: Math.round(accuracy * 100) / 100,
+    // when the reading was taken, on the server's clock
+    at: new Date(now - (ageKnown ? Math.max(0, age) : 0)),
+    flags,
+  };
 }
 
 const requestIdOf = (value) => {

@@ -186,11 +186,22 @@ the first result unchanged (`replayed: true`); another device finds the open
 session (`already: true`). The database allows one session per person per work
 date and one open session per person, so simultaneous requests cannot create two.
 
-**Location.** Latitude/longitude ranges are validated, accuracy must be positive,
-and a reading older than `locationMaxAgeSeconds` (or more than 5 minutes ahead of
-the server) is refused with `LOCATION_STALE`. A reading less accurate than
-`lowAccuracyMeters` is accepted and flagged `LOW_ACCURACY`. No location is ever
-invented; there is no geofence and no address lookup.
+**Location.** The body carries `{ latitude, longitude, accuracy, timestamp,
+age_ms, method }`. Ranges are validated and an all-zero point is refused;
+everything else is accepted and, where doubtful, flagged for a reviewer rather
+than turned away: `LOW_ACCURACY` (worse than `lowAccuracyMeters`),
+`ACCURACY_UNKNOWN`, `STALE_READING` (the device-measured `age_ms` is over
+`locationMaxAgeSeconds`) and `NETWORK_LOCATION` (a Wi-Fi/cell fix after GPS gave
+nothing). Freshness is judged by `age_ms`, measured on the device against its own
+clock, so a phone whose clock is wrong is not refused; the device `timestamp` is
+never compared with the server clock. `check_in_location_at` is the server time
+less that age. No location is ever invented; there is no geofence and no address
+lookup.
+
+The client reads the position progressively: it watches high-accuracy (GPS)
+readings for `locationTimeoutSeconds`, takes the first fix within 50 m at once,
+otherwise uses the best fix seen by the deadline, and only if GPS produced nothing
+asks for a network fix for a further 10 s.
 
 **Missing check-out.** An open session becomes `MISSING_CHECKOUT` once the next
 day's cutoff (default 04:00) passes. No time is guessed — a correction supplies it.

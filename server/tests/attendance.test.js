@@ -46,7 +46,7 @@ const skip = (t) => {
 
 let seq = 0;
 const rid = () => `req-${Date.now()}-${(seq += 1)}-abcdef`;
-const here = (over = {}) => ({ latitude: 28.6139, longitude: 77.209, accuracy: 25, timestamp: Date.now(), ...over });
+const here = (over = {}) => ({ latitude: 28.6139, longitude: 77.209, accuracy: 25, timestamp: Date.now(), age_ms: 800, ...over });
 const today = () => dateIn(TZ);
 const at = (date, time) => `${date}T${time}:00+05:30`;
 const firstOfPrevMonth = () => {
@@ -136,10 +136,9 @@ test('check-in needs a real, fresh location reading — none is invented', async
     [undefined, 'LOCATION_REQUIRED'],
     [here({ latitude: 95 }), 'LOCATION_INVALID'],
     [here({ longitude: -181 }), 'LOCATION_INVALID'],
-    [here({ accuracy: 0 }), 'LOCATION_INVALID'],
+    [here({ accuracy: -5 }), 'LOCATION_INVALID'],
     [here({ accuracy: 'about here' }), 'LOCATION_INVALID'],
-    [here({ timestamp: Date.now() - 10 * 60 * 1000 }), 'LOCATION_STALE'],
-    [here({ timestamp: Date.now() + 10 * 60 * 1000 }), 'LOCATION_STALE'],
+    [here({ latitude: 0, longitude: 0 }), 'LOCATION_INVALID'],
   ];
   for (const [location, code] of tries) {
     const res = await call('POST', '/attendance/check-in', { token: tokens.vartika, body: { request_id: rid(), location } });
@@ -154,21 +153,44 @@ test('check-in needs a real, fresh location reading — none is invented', async
 
 // ---------------------------------------------------------------- check in / out
 
+test('a phone whose clock is wrong can still check in; a rough indoor fix is recorded and flagged, not refused', async (t) => {
+  if (skip(t)) return;
+  const cases = [
+    // clock 20 minutes slow, reading fresh (age measured on the device)
+    [here({ timestamp: Date.now() - 20 * 60 * 1000, age_ms: 1200 }), []],
+    // clock a day fast
+    [here({ timestamp: Date.now() + 86_400_000, age_ms: 500 }), []],
+    // an old iPhone reporting time from another epoch: age unknown
+    [here({ timestamp: 700_000_000_000, age_ms: null }), []],
+    // deep inside the building: rough Wi-Fi fix, as the device said
+    [here({ accuracy: 1800, method: 'NETWORK' }), ['LOW_ACCURACY', 'NETWORK_LOCATION']],
+    // a reading the device says is old, and one with no accuracy figure
+    [here({ age_ms: 15 * 60 * 1000 }), ['STALE_READING']],
+    [here({ accuracy: 0 }), ['ACCURACY_UNKNOWN']],
+  ];
+  for (const [location, flags] of cases) {
+    const res = await call('POST', '/attendance/check-in', { token: tokens.sam, body: { request_id: rid(), location } });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.deepEqual(res.body.session.review_flags, flags, JSON.stringify(location));
+    await query('DELETE FROM attendance_sessions WHERE user_id = $1', [ids.sam]);
+  }
+});
+
 test('check-in uses the server clock; a retry or a second device never makes a second record', async (t) => {
   if (skip(t)) return;
   const requestId = rid();
-  const deviceTime = Date.now() - 30_000;
   const first = await call('POST', '/attendance/check-in', {
     token: tokens.vartika,
-    // a client that claims an earlier time is ignored
-    body: { request_id: requestId, location: here({ timestamp: deviceTime }), check_in_at: '2020-01-01T03:30:00Z' },
+    // a client that claims an earlier time is ignored; the reading's device-measured age is kept
+    body: { request_id: requestId, location: here({ timestamp: Date.now() - 999_999, age_ms: 30_000 }), check_in_at: '2020-01-01T03:30:00Z' },
   });
   assert.equal(first.status, 201, JSON.stringify(first.body));
   const session = first.body.session;
   assert.equal(session.status, 'OPEN');
   assert.equal(session.work_date, today());
   assert.ok(Math.abs(new Date(session.check_in_at) - Date.now()) < 10_000, 'the server time is recorded, not the client claim');
-  assert.equal(new Date(session.check_in_location_at).getTime(), deviceTime, 'the device time is kept as metadata');
+  const readingAge = new Date(session.check_in_at) - new Date(session.check_in_location_at);
+  assert.ok(readingAge >= 29_000 && readingAge <= 31_000, `the reading is placed ${readingAge} ms before the check-in, from the age the device measured`);
   assert.equal(session.check_in_source, 'DEVICE_LOCATION');
   assert.equal(Number(session.check_in_lat), 28.6139);
 

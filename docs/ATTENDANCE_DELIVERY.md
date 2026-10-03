@@ -32,14 +32,22 @@ devices. A check-out after midnight but before the cutoff (04:00) completes the
 original day. After the cutoff the session becomes *Missing check-out* and the
 time is never guessed.
 
-**Location handling.** Ranges are validated and stale or future-dated readings
-are refused. Low-accuracy readings are accepted and flagged for review. There is
-no geofence and no address lookup, and nothing is sent to any third party. *Open
-in Google Maps* is a link the viewer chooses to click. If the location cannot be
-read, the person gets the reason, *Try again*, and *Ask for a correction*.
-Nothing is substituted. The check-in card always shows the agreed notice:
-“Task Flow records your current location when you check in and check out for
-attendance. It does not continuously track your location.”
+**Location handling.** Built for weak signal inside the office. The phone
+watches GPS for up to 15 seconds (configurable) and takes the first fix within
+50 m at once; otherwise it uses the best fix it got by the deadline, however
+rough; and if GPS produced nothing it asks for a Wi-Fi/network fix, which is what
+works indoors and on laptops. Only when both fail does it stop, with the reason,
+*Try again* and *Ask for a correction*. Nothing is substituted. A rough,
+network-based or old reading is **recorded and flagged for review, never
+refused**, and the person is told the accuracy that was recorded. Freshness is
+measured on the device's own clock, so a phone whose clock is minutes out can
+still check in (an earlier version compared the phone's clock with the
+server's and refused anyone whose clock was slow; that was the "location reading
+is out of date" error, fixed on 3 October 2026). There is no geofence and no
+address lookup, and nothing is sent to any third party. *Open in Google Maps* is
+a link the viewer chooses to click. The check-in card always shows the agreed
+notice: "Task Flow records your current location when you check in and check out
+for attendance. It does not continuously track your location."
 
 **The check-in requirement**, once started, is enforced on the server. Writes to
 tasks, discussions, goals, key results and the B2B pipeline return
