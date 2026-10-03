@@ -106,6 +106,86 @@ and create a new one.
 People are matched by email. Their Google Workspace email must be the email on
 their TaskFlow profile.
 
+## 4. Install it for everyone (and everyone who joins later)
+
+Instead of asking each person to add TaskFlow, an administrator can install it
+for the whole organisation. Google then opens a TaskFlow chat for every person.
+TaskFlow finds those chats and connects them, so nobody has to do anything.
+
+### 4a. Publish TaskFlow privately to your organisation
+
+Admin install only works for apps in the Google Workspace Marketplace. A
+*private* listing is visible only inside ekosight.com and needs no Google review.
+
+1. In Google Cloud, open the same project as the Chat app. Go to **APIs &
+   Services → Library**, find **Google Workspace Marketplace SDK**, and enable it.
+2. Make sure **APIs & Services → OAuth consent screen** exists, with user type
+   **Internal**.
+3. Open **Google Workspace Marketplace SDK → App configuration**:
+   - **App visibility:** Private. This is permanent and cannot be changed later.
+   - **Installation settings:** Individual + Admin install (the only option for Chat apps).
+   - **App integration:** tick **Chat app**. It uses the Chat app you already configured.
+   - **OAuth scopes:** add `https://www.googleapis.com/auth/chat.bot` if asked.
+   - Developer name, website and email: EkoSight's.
+   - Save.
+4. Open **Store listing**:
+   - Fill in the name (TaskFlow), a short and a long description, and a category.
+   - Add icons: TaskFlow's are at `client/public/icons/`. Resize `icon-512.png`
+     to the sizes asked for (128 × 128 and 32 × 32).
+   - Add a screenshot of TaskFlow and the support links (your own website is fine).
+   - Click **Publish**. Private apps are available immediately.
+
+### 4b. Install it for everyone
+
+1. In the Google Admin console (admin.google.com), go to **Apps → Google Workspace
+   Marketplace apps → Apps list**.
+2. Choose **Add app → Search for apps**. Open the **Internal apps** section and
+   choose TaskFlow.
+3. Click **Admin install**, choose **Everyone at your organization**, and finish.
+
+Google opens a TaskFlow chat for each person. Users cannot uninstall an app an
+administrator installed, but they can mute it, and they can still choose what
+they get from TaskFlow under **My account**. Admin installs are made per
+organisational unit, so people added to that unit later get the app as well.
+Google's documentation does not say how soon a new person's chat appears.
+TaskFlow checks every hour, so either way the person is connected at the next
+check after their chat exists.
+
+### 4c. Let TaskFlow match the chats to people (recommended)
+
+An admin-installed chat starts empty, so Google does not tell TaskFlow whose it
+is. TaskFlow can look it up when it can read the user directory (read-only):
+
+1. In Google Cloud, open **IAM & Admin → Service accounts → taskflow-chat**, and
+   copy its **Unique ID** (a long number, also called the client ID).
+2. In the Admin console, go to **Security → Access and data control → API controls
+   → Manage domain-wide delegation → Add new**:
+   - **Client ID:** the number from step 1.
+   - **OAuth scopes:** `https://www.googleapis.com/auth/admin.directory.user.readonly`
+   - Authorise. This grants read-only access to the user list and nothing else.
+3. In Google Cloud, enable the **Admin SDK API** for the project
+   (**APIs & Services → Library**).
+4. Add one line to `server/.env`, naming any super administrator the lookup
+   reads as. Then restart TaskFlow.
+   ```
+   GOOGLE_CHAT_DIRECTORY_ADMIN=you@ekosight.com
+   ```
+5. In TaskFlow, go to **Settings → Google Chat → Install for everyone → Connect
+   everyone now**.
+
+TaskFlow then, at start-up and every hour:
+
+- looks up each TaskFlow user's Google id by email (once per person);
+- finds TaskFlow's chat with them;
+- connects it, and sends a one-time welcome.
+
+New TaskFlow users are connected automatically at the next hourly check, as long
+as their TaskFlow email matches their Workspace email. The card lists anyone not
+yet installed, and any TaskFlow user without a Workspace account.
+
+**Without step 4c**, TaskFlow says hello once in each chat it cannot place,
+asking the person to reply. Their first reply connects them.
+
 ## In Chat
 
 In a direct message to TaskFlow, people can send:

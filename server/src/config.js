@@ -63,6 +63,9 @@ export const config = {
     projectNumber: process.env.GOOGLE_CHAT_PROJECT_NUMBER || '',
     // only if the endpoint URL in Google Cloud differs from the default
     audience: process.env.GOOGLE_CHAT_AUDIENCE || '',
+    // an administrator the service account reads the user directory as, so
+    // admin-installed chats can be matched to people (see docs/GOOGLE_CHAT.md)
+    directoryAdmin: process.env.GOOGLE_CHAT_DIRECTORY_ADMIN || '',
   },
 
   jobs: {

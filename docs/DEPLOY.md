@@ -83,6 +83,9 @@ APP_PUBLIC_URL=https://taskflow.ekosight.com
 GOOGLE_CHAT_CLIENT_EMAIL=taskflow-chat@<project>.iam.gserviceaccount.com
 GOOGLE_CHAT_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
 GOOGLE_CHAT_PROJECT_ID=<project>
+# optional: an administrator to read the user directory as, so a Chat app
+# installed for everyone connects people automatically (docs/GOOGLE_CHAT.md §4c)
+GOOGLE_CHAT_DIRECTORY_ADMIN=<admin>@ekosight.com
 ```
 
 ### 2. Attachments

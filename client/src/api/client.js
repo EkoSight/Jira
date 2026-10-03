@@ -336,6 +336,7 @@ export const api = {
   chatAdmin: () => request('GET', '/chat/admin'),
   chatUpdateSpace: (id, body) => request('PATCH', `/chat/admin/spaces/${id}`, body),
   chatRetry: () => request('POST', '/chat/admin/retry'),
+  chatSync: () => request('POST', '/chat/admin/sync'),
 
   crmStates: (params) => request('GET', `/accounts/views/states${qs(params)}`),
   archiveAccount: (id) => request('DELETE', `/accounts/${id}`),

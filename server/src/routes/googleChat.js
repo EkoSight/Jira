@@ -5,6 +5,7 @@ import { query } from '../db/pool.js';
 import { asyncHandler, badRequest, notFound } from '../lib/errors.js';
 import { requirePermission } from '../middleware/auth.js';
 import { chatConfig, verifyIncoming } from '../lib/googleChat.js';
+import { lastSync, syncChats } from '../services/chatSync.js';
 import {
   ALERT_TYPE_LABEL, deliverOutbox, directSpaceFor, getPreferences, handleChatEvent, sendTest, setPreferences,
 } from '../services/googleChat.js';
@@ -102,6 +103,9 @@ router.get(
       client_email: cfg.clientEmail || null,
       project_id: cfg.projectId || null,
       endpoint_url: cfg.endpointUrl,
+      // whether admin-installed chats can be matched to people automatically
+      directory_admin: cfg.directoryAdmin || null,
+      last_sync: await lastSync(),
       alert_types: ALERT_TYPE_LABEL,
       spaces,
       people,
@@ -127,6 +131,18 @@ router.patch(
     );
     if (!rows[0]) throw notFound('Space not found');
     res.json({ space: rows[0] });
+  }),
+);
+
+/** Look for chats an admin install opened, now rather than at the next hourly pass. */
+router.post(
+  '/admin/sync',
+  requirePermission('settings.manage'),
+  asyncHandler(async (req, res) => {
+    if (!chatConfig().usable) throw badRequest('Google Chat is not set up on the server yet');
+    const result = await syncChats();
+    await deliverOutbox();
+    res.json(result);
   }),
 );
 

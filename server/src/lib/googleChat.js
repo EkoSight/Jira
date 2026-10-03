@@ -95,7 +95,7 @@ export function readPrivateKey(raw) {
 
 let override = null;
 /** Tests replace the environment's credentials; production never calls this. */
-export const setChatConfig = (value) => { override = value; tokenCache = null; };
+export const setChatConfig = (value) => { override = value; tokenCache = new Map(); };
 
 let keyCache = { raw: null, result: null };
 
@@ -109,6 +109,7 @@ export function chatConfig() {
     privateKey: key,
     keyProblem: base.privateKey ? problem : null,
     endpointUrl: base.audience || `${config.publicUrl}${endpointPath}`,
+    directoryAdmin: base.directoryAdmin || '',
     // present at all: shown as "set up" with the problem spelled out
     configured: Boolean(base.clientEmail && base.privateKey),
     usable: Boolean(base.clientEmail && key),
@@ -117,36 +118,121 @@ export function chatConfig() {
 
 // ---------------------------------------------------------------- outgoing
 
-let tokenCache = null;
+// one token per (scope, impersonated user), each reused until near expiry
+let tokenCache = new Map();
 
-async function accessToken(fetchImpl = fetch) {
+let googleFetch = (...args) => fetch(...args);
+/** Tests stand in for Google's servers; production always uses the network. */
+export const setGoogleFetch = (fn) => { googleFetch = fn || ((...args) => fetch(...args)); tokenCache = new Map(); };
+
+/**
+ * Signs in as the service account. `subject` impersonates a Workspace user,
+ * which only works for scopes an admin has granted under domain-wide
+ * delegation (used for the read-only directory lookup).
+ */
+async function accessToken({ scope = SCOPE, subject = null } = {}) {
   const cfg = chatConfig();
   if (!cfg.configured) throw new ChatError('Google Chat credentials are not configured on the server', { permanent: true });
   if (!cfg.usable) throw new ChatError(cfg.keyProblem || 'GOOGLE_CHAT_CLIENT_EMAIL is missing', { permanent: true });
-  if (tokenCache && tokenCache.expiresAt - 60_000 > Date.now()) return tokenCache.token;
+  const key = `${scope}|${subject || ''}`;
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
 
   const now = Math.floor(Date.now() / 1000);
   let assertion;
   try {
     assertion = jwt.sign(
-      { iss: cfg.clientEmail, scope: SCOPE, aud: TOKEN_URL, iat: now, exp: now + 3600 },
+      { iss: cfg.clientEmail, scope, aud: TOKEN_URL, iat: now, exp: now + 3600, ...(subject ? { sub: subject } : {}) },
       cfg.privateKey,
       { algorithm: 'RS256' },
     );
   } catch (err) {
     throw new ChatError(`The private key could not sign a request: ${err.message}`, { permanent: true });
   }
-  const response = await fetchImpl(TOKEN_URL, {
+  const response = await googleFetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new ChatError(`Google refused the service account sign-in: ${data.error_description || data.error || response.status}`, { status: response.status, permanent: response.status < 500 });
+    const reason = data.error_description || data.error || response.status;
+    const hint = subject && /unauthorized_client|access_denied/i.test(String(data.error))
+      ? ' — domain-wide delegation for the directory scope has not been granted to this service account in the Admin console'
+      : '';
+    throw new ChatError(`Google refused the service account sign-in: ${reason}${hint}`, { status: response.status, permanent: response.status < 500 });
   }
-  tokenCache = { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 };
-  return tokenCache.token;
+  tokenCache.set(key, { token: data.access_token, expiresAt: Date.now() + (data.expires_in || 3600) * 1000 });
+  return data.access_token;
+}
+
+/** A Google API call as the service account; returns JSON, or throws ChatError. */
+async function googleApi(url, { method = 'GET', body, scope, subject } = {}) {
+  const token = await accessToken({ scope, subject });
+  const response = await googleFetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json; charset=utf-8' } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401) tokenCache.delete(`${scope || SCOPE}|${subject || ''}`);
+    throw new ChatError(`Google: ${data.error?.message || `HTTP ${response.status}`}`, {
+      status: response.status,
+      permanent: response.status >= 400 && response.status < 500 && ![401, 429].includes(response.status),
+    });
+  }
+  return data;
+}
+
+// ---------------------------------------------------------------- finding people's chats
+
+const DIRECTORY_SCOPE = 'https://www.googleapis.com/auth/admin.directory.user.readonly';
+
+/**
+ * The Google user id for a Workspace email, from the Admin directory. Needs a
+ * one-time grant in the Admin console (domain-wide delegation, read-only) and
+ * GOOGLE_CHAT_DIRECTORY_ADMIN naming an administrator to read as.
+ * Returns null when the directory has no such user.
+ */
+export async function directoryUserId(email) {
+  const admin = chatConfig().directoryAdmin;
+  if (!admin) throw new ChatError('GOOGLE_CHAT_DIRECTORY_ADMIN is not set', { permanent: true });
+  try {
+    const user = await googleApi(
+      `https://admin.googleapis.com/admin/directory/v1/users/${encodeURIComponent(email)}?projection=basic&viewType=domain_public`,
+      { scope: DIRECTORY_SCOPE, subject: admin },
+    );
+    return user.id || null;
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+/** The direct message between TaskFlow and a Google user id, or null if there is none yet. */
+export async function findDirectMessage(googleUserId) {
+  try {
+    return await googleApi(`${CHAT_API}/spaces:findDirectMessage?name=${encodeURIComponent(`users/${googleUserId}`)}`);
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+/** Every direct message TaskFlow is in — after an admin install, one per person. */
+export async function listDirectMessages() {
+  const spaces = [];
+  let pageToken = '';
+  for (let page = 0; page < 50; page += 1) {
+    const params = new URLSearchParams({ pageSize: '1000', filter: 'spaceType = "DIRECT_MESSAGE"' });
+    if (pageToken) params.set('pageToken', pageToken);
+    const data = await googleApi(`${CHAT_API}/spaces?${params}`);
+    spaces.push(...(data.spaces || []));
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return spaces;
 }
 
 export class ChatError extends Error {
@@ -160,7 +246,7 @@ export class ChatError extends Error {
 
 async function googleTransport(spaceName, message) {
   const token = await accessToken();
-  const response = await fetch(`${CHAT_API}/${spaceName}/messages`, {
+  const response = await googleFetch(`${CHAT_API}/${spaceName}/messages`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify(message),
@@ -171,7 +257,7 @@ async function googleTransport(spaceName, message) {
     // 404/403: the app was removed or the space is gone — retrying will not help
     const spaceGone = response.status === 404 || response.status === 403;
     const permanent = spaceGone || (response.status >= 400 && response.status < 500 && response.status !== 429);
-    if (response.status === 401) tokenCache = null;
+    if (response.status === 401) tokenCache.delete(`${SCOPE}|`);
     throw new ChatError(`Google Chat: ${reason}`, { status: response.status, permanent: permanent && response.status !== 401, spaceGone });
   }
   return { name: data.name };
@@ -179,7 +265,7 @@ async function googleTransport(spaceName, message) {
 
 /** Signs in to Google once, to prove the credentials work. Sends no message. */
 export async function checkSignIn() {
-  tokenCache = null;
+  tokenCache = new Map();
   await accessToken();
   return true;
 }

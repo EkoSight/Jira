@@ -213,6 +213,8 @@ export default function GoogleChatSettings() {
         </div>
       </section>
 
+      <InstallForEveryone data={data} onSynced={load} />
+
       <section className="card">
         <div className="card-head"><h2>People</h2><span className="small muted">{linked.length} of {data.people.length} connected</span></div>
         <div className="card-pad stack-sm">
@@ -247,5 +249,59 @@ export default function GoogleChatSettings() {
         </section>
       )}
     </div>
+  );
+}
+
+/** Getting TaskFlow into everyone's Chat, and keeping new joiners connected. */
+function InstallForEveryone({ data, onSynced }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const sync = data.last_sync;
+  const result = sync?.result;
+  const summary = !sync ? 'Not run yet.'
+    : sync.error ? `Last check failed: ${sync.error}`
+      : result?.mode === 'DIRECTORY'
+        ? `Last check ${new Date(sync.finished_at || sync.started_at).toLocaleString()}: ${result.linked.length} newly connected, `
+          + `${result.not_installed.length} not installed yet${result.not_in_directory.length ? `, ${result.not_in_directory.length} not in Google Workspace (${result.not_in_directory.join(', ')})` : ''}`
+          + `${result.errors.length ? `. Problem: ${result.errors[0]}` : ''}.`
+        : result ? `Last check ${new Date(sync.finished_at || sync.started_at).toLocaleString()}: ${result.found} chat(s) found, ${result.greeted} greeted and waiting for a reply.` : 'Running…';
+
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>Install for everyone</h2>
+        {data.directory_admin ? <Badge tone="good">Automatic</Badge> : <Badge tone="warning">Needs a reply from each person</Badge>}
+      </div>
+      <div className="card-pad stack-sm small">
+        <ol className="chat-steps">
+          <li>Publish TaskFlow privately to your organisation in the Google Workspace Marketplace (Google Cloud → Google Workspace Marketplace SDK, visibility <strong>Private</strong>).</li>
+          <li>In the Google Admin console, install it for <strong>everyone</strong> (Marketplace apps → Internal apps → TaskFlow → Admin install). Google then opens a TaskFlow chat for every person, and for people who join later.</li>
+          <li>
+            Let TaskFlow match those chats to people:
+            {data.directory_admin
+              ? <> set up — reading the directory as <code>{data.directory_admin}</code>. TaskFlow checks every hour and welcomes each person once.</>
+              : <> grant read-only directory access (domain-wide delegation) and set <code>GOOGLE_CHAT_DIRECTORY_ADMIN</code> on the server. Until then, TaskFlow says hello in each new chat and links the person when they reply.</>}
+          </li>
+        </ol>
+        <div className="muted">{summary}</div>
+        <div>
+          <button
+            type="button"
+            className="btn btn-sm"
+            disabled={busy || !data.usable}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                const r = await api.chatSync();
+                toast.success(r.mode === 'DIRECTORY' ? `${r.linked.length} newly connected` : `${r.greeted} chat(s) greeted`);
+                onSynced();
+              } catch (err) { toast.error(err); } finally { setBusy(false); }
+            }}
+          >
+            {busy ? 'Checking…' : 'Connect everyone now'}
+          </button>
+        </div>
+      </div>
+    </section>
   );
 }

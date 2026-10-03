@@ -275,6 +275,7 @@ CSV text cells starting with `= + - @`, tab or carriage return are prefixed with
 | GET | `/chat/admin` | `settings.manage` — service account email (never the key), endpoint URL, spaces, who is connected, last 7 days, failures |
 | PATCH | `/chat/admin/spaces/:id` | `settings.manage` — `{ department_id, team_summary }` |
 | POST | `/chat/admin/retry` | `settings.manage` — retries failed messages from the last two days |
+| POST | `/chat/admin/sync` | `settings.manage` — finds chats an admin install opened and connects them now (also runs at start-up and hourly) |
 
 Settings key `googleChat`: `{ enabled, morningSummaryTime, teamSummaryTime, alertTypes }`.
 Off until an admin enables it. New notifications of the chosen types become direct

@@ -66,24 +66,50 @@ async function findUserByEmail(email) {
 
 const isDirect = (space) => space?.type === 'DM' || space?.spaceType === 'DIRECT_MESSAGE' || space?.singleUserBotDm === true;
 
-async function linkDirectMessage(space, googleUser) {
-  const user = await findUserByEmail(googleUser?.email);
+/**
+ * Records a direct message as belonging to a TaskFlow user (or to nobody yet).
+ * A person has one working DM; an older one for them is retired.
+ */
+export async function saveDirectMessage({ spaceName, userId, displayName = null, email = null, googleUserName = null, adminInstalled = false }) {
   await withTransaction(async (client) => {
-    if (user) {
-      // the newest DM is the one that works; an older one for the same person is retired
+    if (userId) {
       await client.query(
         `UPDATE chat_spaces SET active = FALSE, removed_at = now(), updated_at = now()
           WHERE kind = 'DM' AND user_id = $1 AND active AND space_name <> $2`,
-        [user.id, space.name],
+        [userId, spaceName],
       );
     }
     await client.query(
-      `INSERT INTO chat_spaces (space_name, kind, display_name, user_id, added_by_email, active)
-       VALUES ($1, 'DM', $2, $3, $4, TRUE)
-       ON CONFLICT (space_name) DO UPDATE SET user_id = EXCLUDED.user_id, display_name = EXCLUDED.display_name,
-         added_by_email = EXCLUDED.added_by_email, active = TRUE, removed_at = NULL, updated_at = now()`,
-      [space.name, googleUser?.displayName || null, user?.id || null, googleUser?.email || null],
+      `INSERT INTO chat_spaces (space_name, kind, display_name, user_id, added_by_email, google_user_name, admin_installed, active)
+       VALUES ($1, 'DM', $2, $3, $4, $5, $6, TRUE)
+       ON CONFLICT (space_name) DO UPDATE SET
+         user_id = COALESCE(EXCLUDED.user_id, chat_spaces.user_id),
+         display_name = COALESCE(EXCLUDED.display_name, chat_spaces.display_name),
+         added_by_email = COALESCE(EXCLUDED.added_by_email, chat_spaces.added_by_email),
+         google_user_name = COALESCE(EXCLUDED.google_user_name, chat_spaces.google_user_name),
+         admin_installed = chat_spaces.admin_installed OR EXCLUDED.admin_installed,
+         active = TRUE, removed_at = NULL, updated_at = now()`,
+      [spaceName, displayName, userId || null, email, googleUserName, Boolean(adminInstalled)],
     );
+    if (userId && googleUserName) {
+      await client.query(
+        `INSERT INTO chat_preferences (user_id, google_user_name) VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET google_user_name = EXCLUDED.google_user_name`,
+        [userId, googleUserName],
+      );
+    }
+  });
+}
+
+async function linkDirectMessage(space, googleUser) {
+  const user = await findUserByEmail(googleUser?.email);
+  await saveDirectMessage({
+    spaceName: space.name,
+    userId: user?.id || null,
+    displayName: googleUser?.displayName || null,
+    email: googleUser?.email || null,
+    googleUserName: googleUser?.name || null,
+    adminInstalled: Boolean(space.adminInstalled),
   });
   return user;
 }
@@ -125,7 +151,8 @@ export async function handleChatEvent(event) {
             + 'Ask your TaskFlow admin to check the email on your profile matches your Google Workspace email, then remove and add the TaskFlow app again.',
         };
       }
-      if (type === 'ADDED_TO_SPACE') {
+      // added by the person, or their first word in a chat an admin install opened
+      if (type === 'ADDED_TO_SPACE' || !known) {
         const { rows: me } = await query('SELECT full_name FROM users WHERE id = $1', [user.id]);
         return { text: `Hi ${chatText(me[0]?.full_name?.split(' ')[0] || 'there')}. You’re connected.\n\n${HELP}` };
       }
@@ -371,7 +398,7 @@ export async function teamSummary(departmentId, now = new Date()) {
 
 // ---------------------------------------------------------------- queueing
 
-async function enqueue({ dedupeKey, spaceName, userId = null, notificationId = null, kind, payload }) {
+export async function enqueue({ dedupeKey, spaceName, userId = null, notificationId = null, kind, payload }) {
   const { rowCount } = await query(
     `INSERT INTO chat_outbox (dedupe_key, space_name, user_id, notification_id, kind, payload)
      VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (dedupe_key) DO NOTHING`,

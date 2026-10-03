@@ -5,6 +5,10 @@
  */
 import { chatConfig } from '../lib/googleChat.js';
 import { runChatWork } from '../services/googleChat.js';
+import { syncChats } from '../services/chatSync.js';
+
+const SYNC_EVERY_MS = 60 * 60 * 1000;
+let lastSyncAt = 0;
 
 let timer = null;
 let running = false;
@@ -17,6 +21,18 @@ export function startChatWorker({ intervalSeconds = 60 } = {}) {
     if (running) return;
     running = true;
     try {
+      // find chats an admin install opened — at start-up, then hourly
+      if (Date.now() - lastSyncAt > SYNC_EVERY_MS) {
+        lastSyncAt = Date.now();
+        try {
+          const sync = await syncChats();
+          const linked = sync.linked?.length || sync.greeted || 0;
+          if (linked) console.log(`[taskflow] Google Chat: connected ${linked} new chat(s) (${sync.mode})`);
+          if (sync.errors?.length) console.error(`[taskflow] Google Chat sync: ${sync.errors[0]}`);
+        } catch (err) {
+          console.error('[taskflow] Google Chat sync failed:', err.message);
+        }
+      }
       const result = await runChatWork();
       const sent = result.delivered?.sent || 0;
       if (sent || result.delivered?.failed) {
