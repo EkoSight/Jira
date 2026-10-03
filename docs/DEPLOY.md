@@ -92,9 +92,28 @@ sudo mkdir -p /var/lib/taskflow/uploads
 sudo chown -R taskflow:taskflow /var/lib/taskflow
 ```
 
-Uploaded files are **not** in the database and **not** in git. If `UPLOAD_DIR`
-points inside the checkout, a deploy that cleans the working tree deletes them.
-`npm run doctor` warns when it is misconfigured.
+Task attachments are **not** in the database and **not** in git. If `UPLOAD_DIR`
+points inside the checkout (or is not set at all — the default is `./uploads`),
+a deploy that cleans or replaces the working tree deletes them. `npm run doctor`
+warns when it is misconfigured, and so does the server log at start-up.
+
+Organization **logos and banners** are different: since October 2026 they are
+kept in the database, so they survive any deploy. Images uploaded before that
+are copied into the database the first time the server starts after the update,
+provided their files still exist; any that were already lost are named in the
+log (`must be uploaded again`) and need uploading once more.
+
+If attachments have gone missing after a deploy and `UPLOAD_DIR` was inside the
+checkout, they are not recoverable unless a backup of that folder exists. Move
+the folder out before the next deploy:
+
+```bash
+sudo mkdir -p /var/lib/taskflow/uploads
+sudo mv /srv/taskflow/uploads/* /var/lib/taskflow/uploads/ 2>/dev/null
+sudo chown -R taskflow:taskflow /var/lib/taskflow
+echo 'UPLOAD_DIR=/var/lib/taskflow/uploads' | sudo tee -a /srv/taskflow/server/.env
+sudo systemctl restart taskflow
+```
 
 Back it up alongside the database:
 

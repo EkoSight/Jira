@@ -1395,6 +1395,79 @@ test('a logo can be uploaded, served and removed without losing a pasted one', a
   assert.equal(removed.body.account.logo_uploaded_at, null);
 });
 
+test('an uploaded logo lives in the database, so wiping the upload folder (a deploy) does not lose it', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const { uploadDir } = await import('../src/lib/uploads.js');
+  const { backfillAccountImages } = await import('../src/services/accountImages.js');
+
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AARAwMAA8AAf8Ao7wAAAAASUVORK5CYII=',
+    'base64',
+  );
+  const form = new FormData();
+  form.append('file', new Blob([png], { type: 'image/png' }), 'logo.png');
+  const upload = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/logo`, {
+    method: 'POST', headers: { authorization: `Bearer ${tokens.manager}` }, body: form,
+  });
+  assert.equal(upload.status, 201);
+
+  const { rows } = await query(
+    `SELECT stored_name, data FROM account_images WHERE account_id = $1 AND kind = 'LOGO'`, [ids.account],
+  );
+  assert.ok(Buffer.isBuffer(rows[0].data) && rows[0].data.equals(png), 'the bytes are in the row');
+  assert.ok(!fs.existsSync(path.join(uploadDir, rows[0].stored_name)), 'no file is left behind on disk');
+
+  // a deploy replaces the checkout and everything in it
+  fs.rmSync(uploadDir, { recursive: true, force: true });
+  const served = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/logo`, {
+    headers: { authorization: `Bearer ${tokens.manager}` },
+  });
+  assert.equal(served.status, 200);
+  assert.equal(Buffer.from(await served.arrayBuffer()).length, png.length);
+
+  // a row from before this change: its file is copied in while it still exists…
+  fs.mkdirSync(uploadDir, { recursive: true });
+  fs.writeFileSync(path.join(uploadDir, 'legacy-banner.png'), png);
+  await query(
+    `INSERT INTO account_images (account_id, kind, stored_name, file_name, mime_type, size_bytes)
+     VALUES ($1, 'BANNER', 'legacy-banner.png', 'banner.png', 'image/png', $2)`,
+    [ids.account, png.length],
+  );
+  // …and one whose file is already gone is named, not silently dropped
+  const { rows: other } = await query(`SELECT id FROM accounts WHERE id <> $1 LIMIT 1`, [ids.account]);
+  await query(
+    `INSERT INTO account_images (account_id, kind, stored_name, file_name, mime_type, size_bytes)
+     VALUES ($1, 'BANNER', 'gone-with-a-deploy.png', 'banner.png', 'image/png', 10)`,
+    [other[0].id],
+  );
+  const result = await backfillAccountImages();
+  assert.equal(result.copied, 1);
+  assert.deepEqual(result.missing.map((m) => [m.account_id, m.kind]), [[other[0].id, 'BANNER']]);
+  assert.ok(!fs.existsSync(path.join(uploadDir, 'legacy-banner.png')), 'the copied file is removed');
+  fs.rmSync(uploadDir, { recursive: true, force: true });
+  const banner = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/banner`, {
+    headers: { authorization: `Bearer ${tokens.manager}` },
+  });
+  assert.equal(banner.status, 200, 'the legacy banner now comes from the database');
+  const lost = await fetch(`${baseUrl}/api/taskflow/accounts/${other[0].id}/image/banner`, {
+    headers: { authorization: `Bearer ${tokens.manager}` },
+  });
+  assert.equal(lost.status, 404);
+  assert.match((await lost.json()).error, /upload it again/);
+  await query(`DELETE FROM account_images WHERE kind = 'BANNER' AND account_id = ANY($1::int[])`, [[ids.account, other[0].id]]);
+
+  // an oversized image is refused with the size, not stored
+  const big = new FormData();
+  big.append('file', new Blob([Buffer.alloc(3 * 1024 * 1024 + 1, 1)], { type: 'image/png' }), 'huge.png');
+  const refused = await fetch(`${baseUrl}/api/taskflow/accounts/${ids.account}/image/logo`, {
+    method: 'POST', headers: { authorization: `Bearer ${tokens.manager}` }, body: big,
+  });
+  assert.equal(refused.status, 400);
+  assert.match((await refused.json()).error, /under 3 MB/);
+});
+
 test('somebody who cannot edit the organization cannot change its banner', async (t) => {
   if (skipIfUnavailable(t)) return;
 

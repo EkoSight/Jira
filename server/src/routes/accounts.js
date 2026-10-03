@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import { Router } from 'express';
 import { z } from 'zod';
 import { query, withTransaction } from '../db/pool.js';
-import { upload, resolveStoredFile, deleteStoredFile } from '../lib/uploads.js';
+import { upload, deleteStoredFile } from '../lib/uploads.js';
+import { MAX_IMAGE_BYTES, discardUpload, imageBytes } from '../services/accountImages.js';
 import { asyncHandler, notFound, badRequest, forbidden } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
@@ -978,48 +979,56 @@ router.post(
   upload.single('file'),
   asyncHandler(async (req, res) => {
     const kind = IMAGE_KINDS[String(req.params.kind).toLowerCase()];
-    if (!kind) throw badRequest('Only a logo or a banner can be uploaded');
+    if (!kind) { discardUpload(req.file); throw badRequest('Only a logo or a banner can be uploaded'); }
     if (!req.file) throw badRequest('No file was uploaded');
     if (!IMAGE_MIME.has(req.file.mimetype)) {
-      deleteStoredFile(req.file.filename);
+      discardUpload(req.file);
       throw badRequest('That has to be an image');
+    }
+    if (req.file.size > MAX_IMAGE_BYTES) {
+      discardUpload(req.file);
+      throw badRequest(`Keep a ${kind.toLowerCase()} under ${MAX_IMAGE_BYTES / 1024 / 1024} MB — this one is ${(req.file.size / 1024 / 1024).toFixed(1)} MB`);
     }
 
     const id = Number(req.params.id);
+    let bytes;
     try {
       await mustEditAccount(req.currentUser, id);
+      bytes = fs.readFileSync(req.file.path);
     } catch (err) {
       // do not leave an orphan on disk when the upload is refused
-      deleteStoredFile(req.file.filename);
+      discardUpload(req.file);
       throw err;
     }
 
+    // the row holds the image itself, so a deploy that replaces the checkout
+    // cannot take it away; the temporary file is removed once the row is committed
     const replaced = await withTransaction(async (client) => {
       const { rows: old } = await client.query(
         'SELECT stored_name FROM account_images WHERE account_id = $1 AND kind = $2', [id, kind],
       );
       await client.query(
         `INSERT INTO account_images
-           (account_id, kind, stored_name, file_name, mime_type, size_bytes, uploaded_by)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
+           (account_id, kind, stored_name, file_name, mime_type, size_bytes, uploaded_by, data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
          ON CONFLICT (account_id, kind) DO UPDATE
            SET stored_name = EXCLUDED.stored_name, file_name = EXCLUDED.file_name,
                mime_type = EXCLUDED.mime_type, size_bytes = EXCLUDED.size_bytes,
-               uploaded_by = EXCLUDED.uploaded_by, created_at = now()`,
+               uploaded_by = EXCLUDED.uploaded_by, data = EXCLUDED.data, created_at = now()`,
         [id, kind, req.file.filename, req.file.originalname, req.file.mimetype,
-          req.file.size, req.currentUser.id],
+          req.file.size, req.currentUser.id, bytes],
       );
       return old[0]?.stored_name ?? null;
     });
 
-    // only once the row is safely committed
+    discardUpload(req.file);
     if (replaced && replaced !== req.file.filename) deleteStoredFile(replaced);
 
     res.status(201).json({ account: await getAccount(id) });
   }),
 );
 
-/** Streams it back. Visible to anyone who can see the organization. */
+/** Sends it back. Visible to anyone who can see the organization. */
 router.get(
   '/:id/image/:kind',
   asyncHandler(async (req, res) => {
@@ -1033,12 +1042,13 @@ router.get(
     const image = rows[0];
     if (!image) throw notFound('No image uploaded');
 
-    const filePath = resolveStoredFile(image.stored_name);
-    if (!fs.existsSync(filePath)) throw notFound('The file is no longer on the server');
+    const bytes = await imageBytes(image);
+    if (!bytes) throw notFound('This image was uploaded before images were kept in the database and its file is no longer on the server — please upload it again');
 
     res.setHeader('Content-Type', image.mime_type);
+    res.setHeader('Content-Length', bytes.length);
     res.setHeader('Cache-Control', 'private, max-age=3600');
-    fs.createReadStream(filePath).pipe(res);
+    res.end(bytes);
   }),
 );
 

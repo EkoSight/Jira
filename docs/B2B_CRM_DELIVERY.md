@@ -19,6 +19,7 @@ Three migrations, all additive, all re-runnable.
 | `011_b2b_crm.sql` | The organization/opportunity split, contacts, requirements, engagements, meetings, resources, locations, segments, ownership and change history, and the enriched activity log |
 | `012_crm_workflows.sql` | Idempotency flags on meetings and engagements, meeting reschedule history, nudge snoozes and nudge-event de-duplication |
 | `013_segment_templates_and_images.sql` | The scope-question templates on each segment, and a table for an uploaded logo or banner |
+| `018_account_images_in_db.sql` | Logos and banners move into the database (a nullable `data` column), so a deploy that replaces the checkout no longer loses them; old files are copied in at start-up |
 
 **`accounts` was not emptied out.** Its old columns — `contact_name`, `value`,
 `stage_id` and the rest — are all still there and still written to, so a rollback
