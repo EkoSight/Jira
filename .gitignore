@@ -16,3 +16,4 @@ tmp/
 # uploaded attachments — never committed, and on a server these must live
 # OUTSIDE the deployment folder (set UPLOAD_DIR) so a deploy cannot wipe them
 uploads/
+uploads-test/

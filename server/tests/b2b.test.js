@@ -1401,6 +1401,8 @@ test('an uploaded logo lives in the database, so wiping the upload folder (a dep
   const path = await import('node:path');
   const { uploadDir } = await import('../src/lib/uploads.js');
   const { backfillAccountImages } = await import('../src/services/accountImages.js');
+  // this test empties the upload folder; it must be the tests' own (see .env.test)
+  assert.match(path.basename(uploadDir), /test/, `refusing to wipe ${uploadDir}`);
 
   const png = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AARAwMAA8AAf8Ao7wAAAAASUVORK5CYII=',
