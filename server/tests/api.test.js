@@ -1869,6 +1869,48 @@ test('every figure on a review opens into the records behind it', async (t) => {
   assert.equal(lateRow.completion_note, 'Got there in the end.');
 });
 
+test('the black marks behind the figure open, and say what dated each one', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // a deadline at the end of September, missed; the 24-hour grace puts the mark in October
+  const { rows: [dept] } = await query('SELECT id FROM departments ORDER BY id LIMIT 1');
+  const { rows: [status] } = await query(`SELECT id FROM workflow_statuses WHERE stage = 'todo' ORDER BY id LIMIT 1`);
+  const { rows: [task] } = await query(
+    `INSERT INTO tasks (ref, title, department_id, status_id, assignee_id, created_by, due_date)
+     VALUES ('EVD-1', 'Soil report for the Nashik trial', $1, $2, $3, $3, '2026-09-30T12:30:00Z') RETURNING id`,
+    [dept.id, status.id, ids.member],
+  );
+  const { rows: [rule] } = await query(
+    `INSERT INTO blackmark_rules (name, trigger_type, points, grace_hours, is_active)
+     VALUES ('Missed deadline (evidence test)', 'deadline_missed', 1, 24, FALSE) RETURNING id`,
+  );
+  await query(
+    `INSERT INTO black_marks (user_id, task_id, rule_id, points, reason, source, occurred_at, period_month, occurrence_key)
+     VALUES ($1, $2, $3, 1, 'Missed deadline on EVD-1', 'auto', '2026-10-01T12:30:00Z', '2026-10-01', 'evidence-test-mark')`,
+    [ids.member, task.id, rule.id],
+  );
+
+  const res = await call(
+    'GET', `/reports/performance/${ids.member}/evidence?metric=markCount&month=2026-10`, { token: tokens.member },
+  );
+  assert.equal(res.status, 200);
+  const evidence = res.body.evidence;
+  // the drawer reads the period; without it the page went blank
+  assert.ok(evidence.period?.start && evidence.period?.end, 'the window the list covers is included');
+  const mark = evidence.marks.find((m) => m.task_id === task.id);
+  assert.ok(mark, 'the October mark is listed');
+  assert.equal(new Date(mark.task_due_date).toISOString(), '2026-09-30T12:30:00.000Z', 'with the September deadline that caused it');
+  assert.equal(mark.trigger_type, 'deadline_missed');
+  assert.equal(mark.grace_hours, 24);
+
+  const kudos = await call(
+    'GET', `/reports/performance/${ids.member}/evidence?metric=kudos&month=2026-10`, { token: tokens.member },
+  );
+  assert.ok(kudos.body.evidence.period, 'kudos carry their window too');
+
+  await query(`DELETE FROM black_marks WHERE occurrence_key = 'evidence-test-mark'`);
+});
+
 test('a figure with nothing behind it is not silently an empty list', async (t) => {
   if (skipIfUnavailable(t)) return;
 

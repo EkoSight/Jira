@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Component, useEffect, useState } from 'react';
 import { initials } from '../lib/format.js';
 import { BASE, fetchBlobUrl } from '../api/client.js';
 
@@ -242,4 +242,40 @@ export function ConfirmButton({ label, confirmLabel = 'Confirm', onConfirm, clas
       {label}
     </button>
   );
+}
+
+/**
+ * Catches a crash in one page so the rest of TaskFlow keeps working: the
+ * person sees what happened and a way back, never a blank screen.
+ */
+export class PageErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('[taskflow] a page failed to draw', error, info?.componentStack);
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <EmptyState
+        title="This page hit a problem"
+        action={(
+          <div className="row" style={{ gap: 8, justifyContent: 'center' }}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => this.setState({ error: null })}>Try again</button>
+            <button type="button" className="btn btn-sm" onClick={() => window.history.back()}>Go back</button>
+          </div>
+        )}
+      >
+        Nothing was lost. If it happens again, send this to your admin: {String(this.state.error?.message || this.state.error)}
+      </EmptyState>
+    );
+  }
 }

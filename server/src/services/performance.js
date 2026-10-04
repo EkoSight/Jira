@@ -572,12 +572,17 @@ export async function evidenceFor(userId, metric, { month, taskType } = {}) {
   };
 }
 
-/** The black marks behind the marks figure, with the task each came from. */
+/**
+ * The black marks behind the marks figure, with the task each came from and
+ * what dated it — a mark is dated after the deadline's grace period, or when a
+ * late task was finished, which can fall in the month after the deadline.
+ */
 export async function markEvidence(userId, { month } = {}) {
   const bounds = monthBounds(month);
   const { rows } = await query(
     `SELECT bm.*, t.ref AS task_ref, t.title AS task_title,
-            r.name AS rule_name, u.full_name AS raised_by_name
+            t.due_date AS task_due_date, t.completed_at AS task_completed_at,
+            r.name AS rule_name, r.trigger_type, r.grace_hours, u.full_name AS raised_by_name
        FROM black_marks bm
        LEFT JOIN tasks t ON t.id = bm.task_id
        LEFT JOIN blackmark_rules r ON r.id = bm.rule_id
@@ -587,7 +592,13 @@ export async function markEvidence(userId, { month } = {}) {
       ORDER BY bm.occurred_at DESC`,
     [userId, bounds.start, bounds.end],
   );
-  return { metric: 'markCount', label: 'Black marks in this period', basis: 'period', marks: rows };
+  return {
+    metric: 'markCount',
+    label: 'Black marks in this period',
+    basis: 'period',
+    period: { start: bounds.start.toISOString(), end: bounds.end.toISOString() },
+    marks: rows,
+  };
 }
 
 /** The kudos behind the kudos figure. */
@@ -603,7 +614,13 @@ export async function kudosEvidence(userId, { month } = {}) {
       ORDER BY k.created_at DESC`,
     [userId, bounds.start, bounds.end],
   );
-  return { metric: 'kudos', label: 'Kudos in this period', basis: 'period', kudos: rows };
+  return {
+    metric: 'kudos',
+    label: 'Kudos in this period',
+    basis: 'period',
+    period: { start: bounds.start.toISOString(), end: bounds.end.toISOString() },
+    kudos: rows,
+  };
 }
 
 export const EVIDENCE_METRICS = Object.keys(TASK_METRIC_CLAUSES);

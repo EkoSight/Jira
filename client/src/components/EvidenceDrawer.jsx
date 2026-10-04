@@ -75,6 +75,25 @@ function TaskRow({ task, onOpen }) {
   );
 }
 
+/** Why a mark carries the date it does — often not the day the deadline was. */
+export function markTiming(mark) {
+  const due = mark.task_due_date ? formatDate(mark.task_due_date) : null;
+  const on = formatDate(mark.occurred_at);
+  const grace = Number(mark.grace_hours) || 0;
+  if (mark.trigger_type === 'deadline_missed' && due) {
+    return grace
+      ? `Deadline was ${due}; recorded ${on}, once the ${grace}-hour grace period had passed`
+      : `Deadline was ${due}; recorded ${on}`;
+  }
+  if (mark.trigger_type === 'completed_late' && due) {
+    return `Deadline was ${due}; finished ${on}${grace ? `, after the ${grace}-hour grace period` : ''}`;
+  }
+  if (mark.trigger_type === 'overdue_escalation' && due) {
+    return `Deadline was ${due}; still not done on ${on}`;
+  }
+  return `Recorded ${on}`;
+}
+
 function MarkRow({ mark }) {
   return (
     <div className="evidence-row is-static">
@@ -85,9 +104,9 @@ function MarkRow({ mark }) {
         </span>
         <span className="small muted">
           {mark.rule_name ? `${mark.rule_name} · ` : ''}{mark.reason}
-          {' · '}{formatDate(mark.occurred_at)}
           {mark.source === 'manual' && mark.raised_by_name ? ` · raised by ${mark.raised_by_name}` : ''}
         </span>
+        <span className="small">{markTiming(mark)}</span>
       </span>
       <span className="evidence-figure">
         <Badge tone="critical">{Number(mark.points)} pt{Number(mark.points) === 1 ? '' : 's'}</Badge>
@@ -143,12 +162,12 @@ export default function EvidenceDrawer({ userId, userName, metric, taskType, mon
           <h2 style={{ fontSize: 15.5 }}>{title || data?.label || 'The records behind this'}</h2>
           <span className="small muted">
             {userName}
-            {data && (
+            {data && (data.basis === 'now' || data.period) && (
               <>
                 {' · '}
                 {data.basis === 'now'
                   ? 'as things stand right now'
-                  : `between ${formatDate(data.period.start)} and ${formatDate(data.period.end)}`}
+                  : `between ${formatDate(data.period.start)} and ${formatDate(new Date(new Date(data.period.end) - 1))}`}
               </>
             )}
           </span>
@@ -176,6 +195,15 @@ export default function EvidenceDrawer({ userId, userName, metric, taskType, mon
           {data.tasks?.map((task) => (
             <TaskRow key={task.id} task={task} onOpen={onOpenTask} />
           ))}
+          {data.marks?.length > 0 && (
+            <div className="callout is-quiet small">
+              <Icon name="alert" />
+              <span>
+                A mark is dated when it is recorded: after the deadline’s grace period, or on the day a late task was finished.
+                So a deadline missed at the end of one month can show up in the next.
+              </span>
+            </div>
+          )}
           {data.marks?.map((mark) => <MarkRow key={mark.id} mark={mark} />)}
           {data.kudos?.map((item) => <KudosRow key={item.id} item={item} />)}
         </div>

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useOnlineStatus, useRefData, useTheme } from '../state/AppState.jsx';
-import { Avatar, Icon, Modal } from './ui.jsx';
+import { Avatar, Icon, Modal, PageErrorBoundary } from './ui.jsx';
 import TaskDialog from './TaskDialog.jsx';
 import { AttendanceGate, SignOutReminder } from './Attendance.jsx';
 import { useAttendance } from '../state/attendance.jsx';
@@ -242,7 +242,10 @@ export default function Layout({ children }) {
         {!online && <div className="offline-banner">Offline — showing the last data loaded. Changes cannot be saved.</div>}
 
         <main className="page">
-          <div className="page-narrow">{gated ? <AttendanceGate /> : children}</div>
+          <div className="page-narrow">
+            {/* keyed by page, so moving to another page clears a crash */}
+            <PageErrorBoundary key={location.pathname}>{gated ? <AttendanceGate /> : children}</PageErrorBoundary>
+          </div>
         </main>
       </div>
 
