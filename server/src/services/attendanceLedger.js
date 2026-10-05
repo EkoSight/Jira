@@ -122,6 +122,8 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
         ...computed,
         policy_id: version.id,
         schedule_state: schedule.state,
+        // before the attendance start date: shown, never owed
+        before_start: Boolean(schedule.beforeStart),
         holiday: schedule.holiday || null,
         session: row ? {
           id: row.id, status: row.status, check_in_at: row.check_in_at, check_out_at: row.check_out_at,
@@ -217,7 +219,7 @@ export async function computePayroll(userId, month, { now = new Date() } = {}) {
     'SELECT * FROM salary_basis WHERE user_id = $1 AND effective_from <= $2 ORDER BY effective_from',
     [userId, last],
   );
-  const employed = ledger.days.filter((d) => d.schedule_state !== 'NOT_EMPLOYED' && d.schedule_state !== 'BEFORE_START');
+  const employed = ledger.days.filter((d) => d.schedule_state !== 'NOT_EMPLOYED' && !d.before_start);
   const segments = [];
   let missingBasis = false;
   for (const day of employed) {

@@ -360,6 +360,38 @@ test('a correction cannot propose a time in the future', async (t) => {
 
 // ---------------------------------------------------------------- who sees what
 
+test('with no start date set, a working day someone checked in on shows as attended — never "worked on a day off"', async (t) => {
+  if (skip(t)) return;
+  // the most recent Monday before today, so the case holds whatever day the suite runs
+  let monday = addDays(today(), -1);
+  while (weekday(monday) !== 1) monday = addDays(monday, -1);
+  const tuesday = addDays(monday, 1) < today() ? addDays(monday, 1) : null;
+  await query(
+    `INSERT INTO attendance_sessions (user_id, work_date, status, check_in_at, check_out_at, check_in_source, check_out_source)
+     VALUES ($1, $2, 'COMPLETED', $3, $4, 'DEVICE_LOCATION', 'DEVICE_LOCATION')`,
+    [ids.lead, monday, at(monday, '10:00'), at(monday, '16:49')],
+  );
+  const policy = await call('GET', '/attendance/policy', { token: tokens.admin });
+  assert.equal(policy.body.versions[0].config.startDate, null, 'the start date is not set yet');
+
+  const res = await call('GET', `/attendance/people/${ids.lead}?month=${monday.slice(0, 7)}`, { token: tokens.admin });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const day = res.body.days.find((d) => d.date === monday);
+  assert.equal(day.classification, 'ATTENDED');
+  assert.equal(day.schedule_state, 'WORKDAY');
+  assert.ok(!day.flags.includes('WORKED_ON_NON_WORKING_DAY'), JSON.stringify(day.flags));
+  assert.ok(day.flags.includes('LATE'));
+  assert.equal(day.duration, 6 * 3600 + 49 * 60);
+  assert.equal(day.late_seconds, 3600);
+  if (tuesday) {
+    const empty = res.body.days.find((d) => d.date === tuesday);
+    assert.equal(empty.classification, 'BEFORE_START', 'a day with no check-in is simply not tracked yet');
+    assert.equal(empty.R, 0);
+  }
+  assert.equal(res.body.totals.unresolved, 0, 'nothing waits for review before tracking starts');
+  await query('DELETE FROM attendance_sessions WHERE user_id = $1 AND work_date = $2', [ids.lead, monday]);
+});
+
 test('locations are shown only to the person and to managers authorised for their team', async (t) => {
   if (skip(t)) return;
   const { rows } = await query('SELECT id FROM attendance_sessions WHERE user_id = $1 AND work_date = $2', [ids.rahul, today()]);

@@ -72,7 +72,7 @@ export const DAY_META = {
   WEEKLY_OFF: { label: 'Weekly off', tone: 'neutral' },
   HOLIDAY: { label: 'Holiday', tone: 'neutral' },
   NOT_EMPLOYED: { label: 'Not employed', tone: 'neutral' },
-  BEFORE_START: { label: 'Before tracking started', tone: 'neutral' },
+  BEFORE_START: { label: 'No check-in · not tracked yet', tone: 'neutral' },
 };
 
 export const dayMeta = (classification) => DAY_META[classification] || { label: classification || '—', tone: 'neutral' };

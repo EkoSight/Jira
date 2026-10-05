@@ -424,3 +424,60 @@ test('interval arithmetic never double-counts', () => {
   assert.deepEqual(intersect([[0, 10]], [[5, 15]]), [[5, 10]]);
   assert.deepEqual(subtract([[0, 10]], [[2, 4], [6, 8]]), [[0, 2], [4, 6], [8, 10]]);
 });
+
+// ---------------------------------------------------------------- before tracking starts
+
+const PRE_START = { ...WORKDAY, beforeStart: true };
+
+test('before tracking starts, a working day someone checked in on is worked out in full — not "a day off"', () => {
+  const d = computeDay({
+    date: '2026-10-05', schedule: PRE_START, phase: 'PAST', leave: [],
+    session: { checkIn: clock('10:00'), checkOut: clock('18:30'), status: 'COMPLETED' },
+  }, POLICY);
+  assert.equal(d.classification, 'ATTENDED');
+  assert.ok(!d.flags.includes('WORKED_ON_NON_WORKING_DAY'));
+  assert.ok(d.flags.includes('LATE'));
+  assert.equal(d.R, 9 * H);
+  assert.equal(d.duration, 8 * H + 30 * M);
+  assert.equal(d.late_seconds, 60 * M);
+  // the hours are shown, but before tracking starts nothing is owed or queued
+  assert.equal(d.E_recorded, 30 * M);
+  assert.equal(d.ordinary_short, 0);
+  assert.equal(d.remaining_short, 0);
+  assert.equal(d.E_pending, 0);
+  assert.deepEqual(d.blockers, []);
+  const month = computeMonth([d]);
+  assert.equal(month.totals.unpaid, 0);
+
+  const today = computeDay({
+    date: '2026-10-05', schedule: PRE_START, phase: 'TODAY', leave: [],
+    session: { checkIn: clock('10:00'), checkOut: null, status: 'OPEN' },
+  }, POLICY);
+  assert.equal(today.classification, 'IN_PROGRESS');
+  assert.deepEqual(today.flags, ['LATE']);
+});
+
+test('before tracking starts, a day with no check-in is not owed, not short and not waiting for review', () => {
+  const past = computeDay({ date: '2026-10-02', schedule: PRE_START, phase: 'PAST', leave: [], session: null }, POLICY);
+  assert.equal(past.classification, 'BEFORE_START');
+  assert.equal(past.R, 0);
+  assert.equal(past.ordinary_short, 0);
+  assert.deepEqual(past.blockers, []);
+  const today = computeDay({ date: '2026-10-05', schedule: PRE_START, phase: 'TODAY', leave: [], session: null }, POLICY);
+  assert.equal(today.classification, 'NOT_CHECKED_IN');
+  const leave = computeDay({
+    date: '2026-10-02', schedule: PRE_START, phase: 'PAST', session: null,
+    leave: [{ start: clock('09:00'), end: clock('18:00'), paid: true, status: 'APPROVED' }],
+  }, POLICY);
+  assert.equal(leave.classification, 'PAID_LEAVE', 'leave still shows as leave');
+});
+
+test('a real weekly off is still a day off, before tracking starts or after', () => {
+  for (const beforeStart of [true, false]) {
+    const d = computeDay({
+      date: '2026-10-04', schedule: { ...WORKDAY, state: 'WEEKLY_OFF', beforeStart }, phase: 'PAST', leave: [],
+      session: { checkIn: clock('11:00'), checkOut: clock('13:00'), status: 'COMPLETED' },
+    }, POLICY);
+    assert.deepEqual(d.flags, ['WORKED_ON_NON_WORKING_DAY']);
+  }
+});

@@ -134,7 +134,7 @@ const zero = () => ({
 /**
  * One scheduled day.
  *
- *   input.schedule   { state, start, end, breaks: [{ start, end, paid }] }
+ *   input.schedule   { state, start, end, breaks: [{ start, end, paid }], beforeStart? }
  *   input.session    null | { checkIn, checkOut, status: OPEN|COMPLETED|MISSING_CHECKOUT, regularized }
  *   input.leave      [{ start, end, paid, status: APPROVED|PENDING }]
  *   input.absence    null | 'UNAPPROVED_ABSENCE'   (a reviewer's confirmed decision)
@@ -154,6 +154,20 @@ export function computeDay(input, policy) {
       out.flags.push('WORKED_ON_NON_WORKING_DAY');
       if (session.status === 'COMPLETED') out.duration = session.checkOut - session.checkIn;
     }
+    return out;
+  }
+
+  const hasCheckIn = session && session.checkIn !== null && session.checkIn !== undefined;
+
+  // before attendance tracking starts, a working day nobody recorded is not
+  // owed, not short and not waiting for review — it simply was not tracked.
+  // A day someone did record is worked out in full below.
+  if (schedule.beforeStart && !hasCheckIn) {
+    const leave = input.leave || [];
+    if (leave.some((l) => l.status === 'PENDING')) out.classification = 'PENDING_LEAVE';
+    else if (leave.some((l) => l.status === 'APPROVED' && l.paid)) out.classification = 'PAID_LEAVE';
+    else if (leave.some((l) => l.status === 'APPROVED')) out.classification = 'UNPAID_LEAVE';
+    else out.classification = phase === 'FUTURE' ? 'UPCOMING' : phase === 'TODAY' ? 'NOT_CHECKED_IN' : DAY_STATES.BEFORE_START;
     return out;
   }
 
@@ -291,6 +305,19 @@ export function computeDay(input, policy) {
   out.same_day_offset = Math.min(out.ordinary_short, out.E_eligible);
   out.remaining_short = out.ordinary_short - out.same_day_offset;
   out.remaining_extra = out.E_eligible - out.same_day_offset;
+
+  // before tracking starts the hours are shown, but nothing is owed: no
+  // shortfall, no unpaid time, and no extra time waiting for anyone to review
+  if (schedule.beforeStart) {
+    out.ordinary_short = 0;
+    out.same_day_offset = 0;
+    out.remaining_short = 0;
+    out.remaining_extra = 0;
+    out.E_eligible = 0;
+    out.E_pending = 0;
+    out.E_rejected = 0;
+    out.blockers = out.blockers.filter((b) => b !== 'EXTRA_PENDING');
+  }
 
   out.classification = classify(out, { hasSession, completed, approvedPaid, approvedUnpaid, S, absence: input.absence });
   return out;

@@ -270,7 +270,7 @@ router.get(
         missing_checkout: count((p) => p.day.session?.status === 'MISSING_CHECKOUT'),
         needs_review: count((p) => (p.day.session?.review_flags || []).length > 0),
         regularized: count((p) => p.day.flags.includes('MANUALLY_REGULARIZED')),
-        off: count((p) => p.day.R === 0),
+        off: count((p) => ['WEEKLY_OFF', 'HOLIDAY', 'NOT_EMPLOYED'].includes(p.day.schedule_state)),
       },
     });
   }),

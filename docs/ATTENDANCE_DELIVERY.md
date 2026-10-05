@@ -11,8 +11,15 @@ Attendance & pay → Attendance starts on**:
 
 - nobody is blocked from any work;
 - checking in is available but optional;
-- no day is ever counted as unrecorded or absent;
+- a day someone checks in on is worked out in full (check-in time, lateness,
+  duration, extra time) and shown as attended;
+- a day without a check-in is shown as "not tracked yet": never unrecorded,
+  absent, short or unpaid, and never waiting for a review;
 - payroll shows every month as *Needs setup*.
+
+(Fixed on 5 October 2026: before this, every day before the start date was
+treated like a day off, so a normal Monday check-in was flagged "Worked on a
+day off" and My month showed no hours.)
 
 Migration `016_attendance_leave_payroll.sql` only adds tables. No existing table,
 column, row, ID or relationship is changed. It was applied to a copy of the dev

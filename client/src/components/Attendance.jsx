@@ -607,6 +607,17 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
         <Total label="Unpaid" value={hhmm(t.unpaid)} tone={t.unpaid ? 'warning' : null} />
         <Total label="Unresolved" value={hhmm(t.unresolved)} tone={t.unresolved ? 'warning' : null} hint={t.unresolved ? 'Days still waiting for a record or a decision' : null} />
       </div>
+      {data.days.some((d) => d.before_start) && (
+        <div className="callout is-quiet small">
+          <Icon name="alert" />
+          <span>
+            {data.policy?.start_date
+              ? `Attendance tracking starts on ${dayName(data.policy.start_date)}.`
+              : 'Attendance tracking has not started yet.'}
+            {' '}Until then the days you check in are shown in full, days without a check-in are not counted, and nothing is unpaid.
+          </span>
+        </div>
+      )}
       {data.days.some((d) => ['UPCOMING', 'IN_PROGRESS', 'NOT_CHECKED_IN'].includes(d.classification)) && (
         <div className="small muted">This month is still running — these are the figures so far, not a final result.</div>
       )}

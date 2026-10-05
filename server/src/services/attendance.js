@@ -153,19 +153,24 @@ export async function holidaysBetween(from, to) {
  * One person's schedule on one date: whether it is a working day at all, and
  * its creditable hours. `ignoreEmployment` gives the full-month schedule a
  * mid-month joiner is prorated against.
+ *
+ * Before the attendance start date (or while none is set) a day keeps its real
+ * state — Monday is still a working day — and is marked `beforeStart`. That
+ * date only decides when check-in becomes required and when a day with no
+ * record starts to count; attendance someone does record is always worked out.
  */
 export function scheduleOn(date, { config, profile, holidays, departmentId, ignoreEmployment = false, ignoreStart = false }) {
   const base = { start: clock(config.officeStart), end: clock(config.officeEnd), breaks: (config.breaks || []).map((b) => ({ start: clock(b.start), end: clock(b.end), paid: Boolean(b.paid), name: b.name })) };
   if (!ignoreEmployment) {
-    if (!ignoreStart && (!config.startDate || date < config.startDate)) return { ...base, state: 'BEFORE_START' };
     if (profile?.joining_date && date < profile.joining_date) return { ...base, state: 'NOT_EMPLOYED' };
     if (profile?.exit_date && date > profile.exit_date) return { ...base, state: 'NOT_EMPLOYED' };
   }
+  const beforeStart = !ignoreEmployment && !ignoreStart && (!config.startDate || date < config.startDate);
   const days = profile?.working_days?.length ? profile.working_days : config.workingDays;
-  if (!days.includes(weekday(date))) return { ...base, state: 'WEEKLY_OFF' };
+  if (!days.includes(weekday(date))) return { ...base, state: 'WEEKLY_OFF', beforeStart };
   const holiday = holidays.find((h) => h.holiday_date === date && (h.department_id === null || h.department_id === departmentId));
-  if (holiday) return { ...base, state: 'HOLIDAY', holiday: holiday.name };
-  return { ...base, state: 'WORKDAY' };
+  if (holiday) return { ...base, state: 'HOLIDAY', holiday: holiday.name, beforeStart };
+  return { ...base, state: 'WORKDAY', beforeStart };
 }
 
 export const requiredSeconds = (schedule) => (schedule.state === 'WORKDAY' ? creditableIntervals(schedule).reduce((s, [a, b]) => s + b - a, 0) : 0);
