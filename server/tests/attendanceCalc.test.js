@@ -481,3 +481,52 @@ test('a real weekly off is still a day off, before tracking starts or after', ()
     assert.deepEqual(d.flags, ['WORKED_ON_NON_WORKING_DAY']);
   }
 });
+
+test('a real October before tracking starts: hours shown, a forgotten check-out flagged but not held, required counted to date', () => {
+  // as recorded: one evening check-in never closed, then four full days, and today in progress
+  const days = [
+    ['2026-10-01', '20:10', null, 'MISSING_CHECKOUT', 'PAST'],
+    ['2026-10-02', '08:50', '18:08', 'COMPLETED', 'PAST'],
+    ['2026-10-03', '08:51', '18:21', 'COMPLETED', 'PAST'],
+    ['2026-10-05', '08:51', '18:18', 'COMPLETED', 'PAST'],
+    ['2026-10-06', '08:56', '18:20', 'COMPLETED', 'PAST'],
+    ['2026-10-07', '08:50', null, 'OPEN', 'TODAY'],
+  ].map(([date, inAt, outAt, status, phase]) => computeDay({
+    date, schedule: PRE_START, phase, leave: [],
+    session: { checkIn: clock(inAt), checkOut: outAt ? clock(outAt) : null, status },
+  }, POLICY));
+  const upcoming = ['2026-10-08', '2026-10-09'].map((date) => computeDay({ date, schedule: PRE_START, phase: 'FUTURE', leave: [], session: null }, POLICY));
+  const sunday = computeDay({ date: '2026-10-04', schedule: { ...PRE_START, state: 'WEEKLY_OFF' }, phase: 'PAST', leave: [], session: null }, POLICY);
+
+  const [first] = days;
+  assert.equal(first.classification, 'MISSING_CHECKOUT', 'still shown, so it can be corrected');
+  assert.ok(first.flags.includes('MISSING_CHECKOUT'));
+  assert.equal(first.U, 0, 'but nothing is held waiting for it before tracking starts');
+  assert.deepEqual(first.blockers, []);
+  assert.equal(first.late_seconds, 11 * H + 10 * M, 'checked in at 20:10 against a 09:00 start');
+
+  const month = computeMonth([...days, sunday, ...upcoming]);
+  assert.equal(month.totals.required_to_date, 6 * 9 * H, 'six working days have started');
+  assert.equal(month.totals.required, 6 * 9 * H, 'before tracking starts, days nobody checked in on are not owed');
+  assert.equal(month.totals.in_schedule, 4 * 9 * H);
+  assert.equal(month.totals.extra_recorded, (8 + 21 + 18 + 20) * M);
+  assert.equal(month.totals.unresolved, 0);
+  assert.equal(month.totals.unpaid, 0);
+  assert.deepEqual(month.blockers, []);
+});
+
+test('after tracking starts, "required so far" counts the days that have begun; the whole month is kept separately', () => {
+  const at = (date, phase, session = null) => computeDay({ date, schedule: WORKDAY, phase, leave: [], session }, POLICY);
+  const month = computeMonth([
+    at('2026-10-01', 'PAST', { checkIn: clock('20:10'), checkOut: null, status: 'MISSING_CHECKOUT' }),
+    at('2026-10-02', 'PAST', { checkIn: clock('08:50'), checkOut: clock('18:08'), status: 'COMPLETED' }),
+    at('2026-10-07', 'TODAY', { checkIn: clock('08:50'), checkOut: null, status: 'OPEN' }),
+    at('2026-10-08', 'FUTURE'),
+    at('2026-10-09', 'FUTURE'),
+  ]);
+  assert.equal(month.totals.required_to_date, 3 * 9 * H);
+  assert.equal(month.totals.required, 5 * 9 * H);
+  // the forgotten check-out is a whole day waiting for a correction once tracking has started
+  assert.equal(month.totals.unresolved, 9 * H);
+  assert.deepEqual(month.blockers, ['MISSING_CHECKOUT']);
+});

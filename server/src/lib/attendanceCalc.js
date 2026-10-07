@@ -316,7 +316,10 @@ export function computeDay(input, policy) {
     out.E_eligible = 0;
     out.E_pending = 0;
     out.E_rejected = 0;
-    out.blockers = out.blockers.filter((b) => b !== 'EXTRA_PENDING');
+    // a forgotten check-out is still shown and can be corrected, but nothing
+    // is held waiting for it before tracking starts
+    out.U = 0;
+    out.blockers = [];
   }
 
   out.classification = classify(out, { hasSession, completed, approvedPaid, approvedUnpaid, S, absence: input.absence });
@@ -424,6 +427,8 @@ export function computeMonth(days) {
   return {
     totals: {
       required: required,
+      // the days that have started — what the month so far is measured against
+      required_to_date: sorted.filter((d) => d.classification !== 'UPCOMING').reduce((t, d) => t + (d.R || 0), 0),
       recorded_duration: sum('duration'),
       net_estimate: sum('net_estimate'),
       in_schedule: sum('C'),

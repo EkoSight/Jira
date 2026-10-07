@@ -599,7 +599,9 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
   return (
     <div className="stack">
       <div className="att-totals">
-        <Total label="Required" value={hhmm(t.required)} />
+        {t.required_to_date !== undefined && t.required_to_date !== t.required
+          ? <Total label="Required so far" value={hhmm(t.required_to_date)} hint={`${hhmm(t.required)} for the whole month`} />
+          : <Total label="Required" value={hhmm(t.required)} />}
         <Total label="Within office hours" value={hhmm(t.in_schedule)} />
         <Total label="Paid leave" value={hhmm(t.paid_leave)} />
         <Total label="Grace credit" value={hhmm(t.grace)} />

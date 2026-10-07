@@ -290,7 +290,7 @@ function TeamTab() {
         <div className="card table-wrap">
           <table className="data">
             <thead>
-              <tr><th>Person</th><th>Required</th><th>In office hours</th><th>Paid leave</th><th>Late days</th><th>Extra (pending)</th><th>Unpaid</th><th>Open items</th></tr>
+              <tr><th>Person</th><th>Required so far</th><th>In office hours</th><th>Paid leave</th><th>Late days</th><th>Extra (pending)</th><th>Unpaid</th><th>Open items</th></tr>
             </thead>
             <tbody>
               {monthData.people.map((p) => (
@@ -298,7 +298,7 @@ function TeamTab() {
                   <td>
                     <div className="row" style={{ gap: 8 }}><Avatar name={p.user.full_name} color={p.user.avatar_color} size={24} /> {p.user.full_name}</div>
                   </td>
-                  <td className="tnum">{hhmm(p.totals.required)}</td>
+                  <td className="tnum">{hhmm(p.totals.required_to_date ?? p.totals.required)}</td>
                   <td className="tnum">{hhmm(p.totals.in_schedule)}</td>
                   <td className="tnum">{hhmm(p.totals.paid_leave)}</td>
                   <td className="tnum">{p.day_counts.late}</td>
