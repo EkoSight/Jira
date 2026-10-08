@@ -6,6 +6,7 @@ import { useAttendance } from '../state/attendance.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import {
   BLOCKER_LABEL, CORRECTION_KINDS, CORRECTION_LABEL, CORRECTION_STATUS, DAY_PART, FLAG_LABEL, LEAVE_CATEGORIES,
+  dayExtraState, extraBreakdown,
   LEAVE_STATUS, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayMeta, dayName, hhmm, mapsLink, newRequestId,
   accuracyWords, readLocation, todayIn, words,
 } from '../lib/attendance.js';
@@ -595,7 +596,12 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
   for (const a of data.allocations || []) allocatedTo.set(a.target_date, (allocatedTo.get(a.target_date) || 0) + a.seconds);
   // what stayed unpaid on the day once extra time from any day was applied
   const unpaidOn = (d) => (d.unpaid ?? (d.N + d.remaining_short - (allocatedTo.get(d.date) || 0)));
+  // how much of each day's extra time made up a shortfall, that day or later in the month
+  const allocatedFrom = new Map();
+  for (const a of data.allocations || []) allocatedFrom.set(a.source_date, (allocatedFrom.get(a.source_date) || 0) + a.seconds);
+  const usedFrom = (d) => (d.same_day_offset || 0) + (allocatedFrom.get(d.date) || 0);
   const t = data.totals;
+  const extra = extraBreakdown(t);
   return (
     <div className="stack">
       <div className="att-totals">
@@ -605,7 +611,15 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
         <Total label="Within office hours" value={hhmm(t.in_schedule)} />
         <Total label="Paid leave" value={hhmm(t.paid_leave)} />
         <Total label="Grace credit" value={hhmm(t.grace)} />
-        <Total label="Extra time used" value={hhmm(t.same_day_offset + t.cross_day_offset)} hint={`${hhmm(t.extra_recorded)} recorded · ${hhmm(t.extra_pending)} awaiting review`} />
+        <Total
+          label="Extra time"
+          value={hhmm(extra.recorded)}
+          hint={(
+            <span className="att-extra-parts">
+              {extra.parts.map((p) => <span key={p.key}><strong className="tnum">{hhmm(p.seconds)}</strong> {p.label}</span>)}
+            </span>
+          )}
+        />
         <Total label="Unpaid" value={hhmm(t.unpaid)} tone={t.unpaid ? 'warning' : null} />
         <Total label="Unresolved" value={hhmm(t.unresolved)} tone={t.unresolved ? 'warning' : null} hint={t.unresolved ? 'Days still waiting for a record or a decision' : null} />
       </div>
@@ -653,7 +667,17 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
                   <td className="tnum">{s?.check_out_at ? clockIn(s.check_out_at, tz) : ''}{s?.check_out_source === 'MANUALLY_REGULARIZED' ? '*' : ''}</td>
                   <td className="tnum">{d.duration ? hhmm(d.duration) : ''}</td>
                   <td className="tnum">{d.late_seconds ? hhmm(d.late_seconds) : ''}</td>
-                  <td className="tnum">{d.E_recorded ? `${hhmm(d.E_recorded)}${d.E_pending ? ' ?' : d.E_rejected === d.E_recorded ? ' ✕' : ''}` : ''}</td>
+                  <td className="tnum">
+                    {d.E_recorded > 0 && (() => {
+                      const state = dayExtraState(d, usedFrom(d));
+                      return (
+                        <span className="att-extra-cell" title={state.title}>
+                          {hhmm(d.E_recorded)}
+                          <span className={`att-extra-state is-${state.tone}`}>{state.text}</span>
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="tnum">{unpaidOn(d) ? hhmm(unpaidOn(d)) : ''}</td>
                   <td className="att-row-actions">
                     {s?.has_check_in_location && onLocation && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onLocation(s.id)}>Location</button>}
@@ -669,7 +693,9 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
       </div>
       <div className="small muted">
         Durations are hours:minutes. “Duration” is the recorded attendance duration — check-out minus check-in — not a measure of work done.
-        * marks a time set by an approved correction. “?” is extra time waiting for review; “✕” was not counted.
+        * marks a time set by an approved correction.
+        Extra time is time after office hours. Once counted, it only makes up a shortfall in the same month — arriving after the
+        grace period or leaving early. Counted time that isn’t needed stays on record; it is not paid as overtime.
       </div>
       {data.allocations?.length > 0 && (
         <details className="att-details">

@@ -654,6 +654,15 @@ test('payroll: the full closing cycle with a known answer', async (t) => {
 
   const extra = await call('POST', '/attendance/reviews/extra', { token: tokens.admin, body: { user_id: ids.payee, work_date: extraDay, status: 'ELIGIBLE' } });
   assert.equal(extra.status, 200, JSON.stringify(extra.body));
+  // the day says who counted it, so "awaiting review: 0" is never a mystery
+  const ledger = await call('GET', `/attendance/people/${ids.payee}?month=${month}`, { token: tokens.admin });
+  const reviewed = ledger.body.days.find((d) => d.date === extraDay);
+  assert.equal(reviewed.extra_review.status, 'ELIGIBLE');
+  assert.equal(reviewed.extra_review.reviewer_name, 'Asha Admin');
+  assert.ok(reviewed.extra_review.reviewed_at);
+  const sums = ledger.body.totals;
+  assert.equal(sums.same_day_offset + sums.cross_day_offset + sums.unused_extra + sums.extra_pending + sums.extra_rejected + sums.extra_untracked,
+    sums.extra_recorded, 'the parts add up to what was recorded');
   const absent = await call('POST', '/attendance/reviews/day', { token: tokens.admin, body: { user_id: ids.payee, work_date: missingDay, decision: 'UNAPPROVED_ABSENCE' } });
   assert.equal(absent.status, 400, 'a confirmed absence needs a note');
   await call('POST', '/attendance/reviews/day', { token: tokens.admin, body: { user_id: ids.payee, work_date: missingDay, decision: 'UNAPPROVED_ABSENCE', note: 'No contact all day; confirmed with the team' } });

@@ -125,7 +125,7 @@ export const DAY_STATES = {
 
 const zero = () => ({
   R: 0, C: 0, L: 0, G: 0, N: 0, U: 0,
-  E_recorded: 0, E_eligible: 0, E_pending: 0, E_rejected: 0,
+  E_recorded: 0, E_eligible: 0, E_pending: 0, E_rejected: 0, E_untracked: 0,
   early_arrival: 0, late_seconds: 0, early_departure: 0,
   duration: 0, net_estimate: 0,
   ordinary_short: 0, same_day_offset: 0, remaining_short: 0, remaining_extra: 0,
@@ -316,6 +316,8 @@ export function computeDay(input, policy) {
     out.E_eligible = 0;
     out.E_pending = 0;
     out.E_rejected = 0;
+    // kept on record, so the extra-time figures still add up
+    out.E_untracked = out.E_recorded;
     // a forgotten check-out is still shown and can be corrected, but nothing
     // is held waiting for it before tracking starts
     out.U = 0;
@@ -441,6 +443,8 @@ export function computeMonth(days) {
       extra_eligible: sum('E_eligible'),
       extra_pending: sum('E_pending'),
       extra_rejected: sum('E_rejected'),
+      // recorded before tracking started: shown, never counted
+      extra_untracked: sum('E_untracked'),
       same_day_offset: sum('same_day_offset'),
       cross_day_offset: crossDay,
       residual_short: residual,

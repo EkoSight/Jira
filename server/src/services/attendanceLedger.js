@@ -77,7 +77,11 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
     query(`SELECT * FROM leave_requests WHERE user_id = ANY($1::int[]) AND end_date >= $2 AND start_date <= $3
             AND status = ANY($4::text[])`, [userIds, from, to, [...PENDING_LEAVE, ...APPROVED_LEAVE]]),
     query('SELECT * FROM attendance_day_reviews WHERE user_id = ANY($1::int[]) AND work_date BETWEEN $2 AND $3', [userIds, from, to]),
-    query('SELECT * FROM extra_time_reviews WHERE user_id = ANY($1::int[]) AND work_date BETWEEN $2 AND $3', [userIds, from, to]),
+    query(
+      `SELECT e.*, u.full_name AS reviewer_name FROM extra_time_reviews e LEFT JOIN users u ON u.id = e.reviewer_id
+        WHERE e.user_id = ANY($1::int[]) AND e.work_date BETWEEN $2 AND $3`,
+      [userIds, from, to],
+    ),
   ]);
 
   const key = (u, d) => `${u}|${d}`;
@@ -133,7 +137,10 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
         } : null,
         leave_request_ids: [...new Set(leave.map((l) => l.request_id))],
         day_review: review ? { decision: review.decision, note: review.note } : null,
-        extra_review: extraRow ? { status: extraRow.status, eligible_seconds: extraRow.eligible_seconds, reason: extraRow.reason } : null,
+        extra_review: extraRow ? {
+          status: extraRow.status, eligible_seconds: extraRow.eligible_seconds, reason: extraRow.reason,
+          reviewer_name: extraRow.reviewer_name, reviewed_at: extraRow.reviewed_at,
+        } : null,
       };
     });
     result.set(user.id, { user, profile, days });

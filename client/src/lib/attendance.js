@@ -155,6 +155,46 @@ export const RECORD_STATUS = {
   SUPERSEDED: { label: 'Superseded', tone: 'neutral' },
 };
 
+/**
+ * Where a month's recorded extra time went, every minute of it. The parts
+ * always add up to the recorded total, so nothing looks lost:
+ * used to make up a shortfall, counted but not needed, awaiting review,
+ * not counted, or recorded before tracking started.
+ */
+export function extraBreakdown(totals) {
+  const used = (totals.same_day_offset || 0) + (totals.cross_day_offset || 0);
+  const parts = [
+    { key: 'used', seconds: used, label: 'used to make up a shortfall' },
+    { key: 'unused', seconds: totals.unused_extra || 0, label: 'counted, not needed (no shortfall to make up)' },
+    { key: 'pending', seconds: totals.extra_pending || 0, label: 'awaiting review' },
+    { key: 'rejected', seconds: totals.extra_rejected || 0, label: 'not counted' },
+    { key: 'untracked', seconds: totals.extra_untracked || 0, label: 'before tracking started' },
+  ];
+  // "used" is always shown — it is the figure that matters for pay; the rest only when there is any
+  return { recorded: totals.extra_recorded || 0, used, parts: parts.filter((p) => p.key === 'used' || p.seconds > 0) };
+}
+
+const firstName = (name) => (name ? String(name).split(' ')[0] : null);
+
+/**
+ * One day's extra time in words: what happened to it, and who decided.
+ * `usedFromDay` is how much of it made up a shortfall (same day or later).
+ */
+export function dayExtraState(day, usedFromDay = 0) {
+  if (!day.E_recorded) return null;
+  const review = day.extra_review;
+  const by = review?.reviewer_name ? ` by ${firstName(review.reviewer_name)}` : '';
+  if (day.E_untracked) return { text: 'before tracking started', tone: 'neutral' };
+  if (day.E_pending) return { text: 'awaiting review', tone: 'warning' };
+  if (day.E_rejected === day.E_recorded) {
+    return { text: `not counted${by}`, tone: 'neutral', title: review?.reason || undefined };
+  }
+  const how = review ? `counted${by}` : 'counted automatically';
+  const partly = day.E_rejected > 0 ? `${hhmm(day.E_eligible)} of it ` : '';
+  if (usedFromDay > 0) return { text: `${partly}${how} · ${hhmm(usedFromDay)} used`, tone: 'good' };
+  return { text: `${partly}${how} · not needed`, tone: 'neutral' };
+}
+
 export const money = (value, currency = 'INR') => (value === null || value === undefined ? '—'
   : new Intl.NumberFormat('en-IN', { style: 'currency', currency, minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value));
 

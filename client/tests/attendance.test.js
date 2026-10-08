@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DAY_META, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayMeta, dayName, hhmm, mapsLink, money,
+  DAY_META, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayExtraState, dayMeta, dayName, extraBreakdown, hhmm, mapsLink, money,
   newRequestId, readLocation, shiftMonth, words,
 } from '../src/lib/attendance.js';
 
@@ -160,4 +160,37 @@ test('map links carry only the coordinates, and money is rupees with paise', () 
   assert.equal(mapsLink(28.6139, 77.209), 'https://www.google.com/maps/search/?api=1&query=28.6139%2C77.209');
   assert.equal(money(28333.33), '₹28,333.33');
   assert.equal(money(null), '—');
+});
+
+test('the extra-time tile accounts for every minute recorded', () => {
+  // Nikita: 1:56 recorded, all counted by a reviewer, none needed
+  const nikita = extraBreakdown({
+    extra_recorded: 116 * 60, same_day_offset: 0, cross_day_offset: 0, unused_extra: 116 * 60,
+    extra_pending: 0, extra_rejected: 0, extra_untracked: 0,
+  });
+  assert.equal(nikita.recorded, 116 * 60);
+  assert.deepEqual(nikita.parts.map((p) => [p.key, hhmm(p.seconds)]), [['used', '0:00'], ['unused', '1:56']]);
+  assert.match(nikita.parts[1].label, /counted, not needed/);
+
+  const mixed = extraBreakdown({
+    extra_recorded: 100 * 60, same_day_offset: 10 * 60, cross_day_offset: 20 * 60, unused_extra: 15 * 60,
+    extra_pending: 25 * 60, extra_rejected: 20 * 60, extra_untracked: 10 * 60,
+  });
+  assert.equal(mixed.used, 30 * 60);
+  assert.equal(mixed.parts.reduce((s, p) => s + p.seconds, 0), mixed.recorded, 'the parts add up');
+});
+
+test('each day says what happened to its extra time, and who decided', () => {
+  const base = { E_recorded: 47 * 60, E_eligible: 0, E_pending: 0, E_rejected: 0, E_untracked: 0, extra_review: null };
+  const by = { status: 'ELIGIBLE', reviewer_name: 'Dhiraj Kumar' };
+  assert.equal(dayExtraState({ ...base, E_eligible: 47 * 60, extra_review: by }).text, 'counted by Dhiraj · not needed');
+  assert.equal(dayExtraState({ ...base, E_eligible: 47 * 60, extra_review: by }, 20 * 60).text, 'counted by Dhiraj · 0:20 used');
+  assert.equal(dayExtraState({ ...base, E_eligible: 47 * 60 }).text, 'counted automatically · not needed');
+  assert.equal(dayExtraState({ ...base, E_pending: 47 * 60 }).text, 'awaiting review');
+  const rejected = dayExtraState({ ...base, E_rejected: 47 * 60, extra_review: { status: 'REJECTED', reviewer_name: 'Meera Rao', reason: 'Not pre-approved' } });
+  assert.equal(rejected.text, 'not counted by Meera');
+  assert.equal(rejected.title, 'Not pre-approved');
+  assert.equal(dayExtraState({ ...base, E_untracked: 47 * 60 }).text, 'before tracking started');
+  assert.equal(dayExtraState({ ...base, E_eligible: 15 * 60, E_rejected: 32 * 60, extra_review: by }).text, '0:15 of it counted by Dhiraj · not needed');
+  assert.equal(dayExtraState({ ...base, E_recorded: 0 }), null);
 });

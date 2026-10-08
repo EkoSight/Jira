@@ -89,6 +89,15 @@ integer seconds). It implements §15 of the brief:
 - Durations show as H:MM (8 h 30 m is “8:30”). Exports also give exact decimal
   hours (8.5).
 
+**Extra time is fully accounted for.** The month view shows where every
+recorded minute went: used to make up a shortfall, counted but not needed,
+awaiting review, not counted, or recorded before tracking started — the parts
+always add up to the total. Each day shows its own state and who decided
+("counted by …", "not counted by …", "awaiting review"). Added 8 October 2026,
+after a month where all of one person's extra time had been counted but none
+was needed (she was never late), which showed as "0:00 used · 0:00 awaiting"
+with the rest apparently missing.
+
 **Unrecorded days** read *Unrecorded — needs review* until a reviewer confirms an
 unapproved absence with a note. Nothing is assumed absent.
 

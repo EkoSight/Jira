@@ -530,3 +530,48 @@ test('after tracking starts, "required so far" counts the days that have begun; 
   assert.equal(month.totals.unresolved, 9 * H);
   assert.deepEqual(month.blockers, ['MISSING_CHECKOUT']);
 });
+
+// ---------------------------------------------------------------- extra time adds up
+
+test('every minute of recorded extra time is accounted for: used, counted-not-needed, awaiting, not counted, or before tracking', () => {
+  // a small deterministic generator, so a failure always reproduces
+  let seed = 7;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (xs) => xs[Math.floor(rand() * xs.length)];
+  for (let month = 0; month < 300; month += 1) {
+    const days = [];
+    for (let i = 1; i <= 26; i += 1) {
+      const date = `2026-10-${String(i).padStart(2, '0')}`;
+      const beforeStart = rand() < 0.2;
+      const checkIn = clock(pick(['08:40', '09:00', '09:15', '09:35', '10:10', '13:00']));
+      const checkOut = clock(pick(['13:30', '17:10', '18:00', '18:25', '19:40', '21:05']));
+      const review = pick([undefined, { status: 'ELIGIBLE', reviewed: true }, { status: 'REJECTED', reviewed: true },
+        { status: 'ELIGIBLE', eligibleSeconds: 15 * M, reviewed: true }]);
+      days.push(computeDay({
+        date, phase: 'PAST', leave: [], extra: review,
+        schedule: { ...WORKDAY, beforeStart },
+        session: rand() < 0.1 ? null : { checkIn, checkOut, status: 'COMPLETED' },
+      }, { ...POLICY, extraRequiresReview: rand() < 0.7 }));
+    }
+    const t = computeMonth(days).totals;
+    const parts = t.same_day_offset + t.cross_day_offset + t.unused_extra + t.extra_pending + t.extra_rejected + t.extra_untracked;
+    assert.equal(parts, t.extra_recorded, `month ${month}: ${JSON.stringify(t)}`);
+    assert.ok(t.unused_extra >= 0);
+  }
+});
+
+test('Nikita’s October: extra time a reviewer counted, with no shortfall to make up, is counted but not needed', () => {
+  const counted = { status: 'ELIGIBLE', reviewed: true };
+  const days = [
+    ['2026-10-02', '08:50', '18:08'], ['2026-10-03', '08:51', '18:21'], ['2026-10-05', '08:51', '18:18'],
+    ['2026-10-06', '08:56', '18:20'], ['2026-10-07', '08:50', '18:47'],
+  ].map(([date, i, o]) => computeDay({
+    date, schedule: WORKDAY, phase: 'PAST', leave: [], extra: counted,
+    session: { checkIn: clock(i), checkOut: clock(o), status: 'COMPLETED' },
+  }, POLICY));
+  const t = computeMonth(days).totals;
+  assert.equal(t.extra_recorded, (8 + 21 + 18 + 20 + 47) * M);
+  assert.equal(t.same_day_offset + t.cross_day_offset, 0, 'she is never late, so none of it is needed');
+  assert.equal(t.extra_pending, 0);
+  assert.equal(t.unused_extra, t.extra_recorded, 'all of it is counted, and kept, not lost');
+});
