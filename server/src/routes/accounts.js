@@ -28,6 +28,7 @@ import {
 } from '../services/opportunities.js';
 import { applyStageMove, wonStage } from '../services/dealMoves.js';
 import { RULE_KEYS } from '../services/dealRules.js';
+import { addCommitment, listCommitments } from '../services/commitments.js';
 import { describeRules, followUpRules, leadFigures } from '../services/leadFigures.js';
 import { ensureFolders } from '../services/resources.js';
 import { crmDashboard, managerSummaries, mapView, ownershipTree } from '../services/crmDashboard.js';
@@ -158,6 +159,9 @@ router.post(
 // only rules the server knows how to check, each once
 const stageRules = z.array(z.enum(RULE_KEYS)).max(RULE_KEYS.length)
   .transform((list) => [...new Set(list)]).optional();
+// days without hearing from the customer before a deal in this stage counts
+// as stalled; blank falls back to the pipeline-wide threshold
+const quietAfter = z.number().int().min(1).max(365).nullable().optional();
 
 router.get(
   '/stages',
@@ -178,17 +182,18 @@ router.post(
         position: z.number().int().optional(),
         entry_rules: stageRules,
         exit_rules: stageRules,
+        quiet_after_days: quietAfter,
       })
       .parse(req.body);
 
     const { rows } = await query(
-      `INSERT INTO account_stages (name, slug, kind, color, position, entry_rules, exit_rules)
+      `INSERT INTO account_stages (name, slug, kind, color, position, entry_rules, exit_rules, quiet_after_days)
        VALUES ($1,$2,COALESCE($3,'open'),COALESCE($4,'#64748b'),
                COALESCE($5,(SELECT COALESCE(MAX(position),0)+1 FROM account_stages)),
-               COALESCE($6::text[], '{}'), COALESCE($7::text[], '{}'))
+               COALESCE($6::text[], '{}'), COALESCE($7::text[], '{}'), $8)
        RETURNING *`,
       [data.name, slugify(data.name), data.kind ?? null, data.color ?? null, data.position ?? null,
-        data.entry_rules ?? null, data.exit_rules ?? null],
+        data.entry_rules ?? null, data.exit_rules ?? null, data.quiet_after_days ?? null],
     );
     res.status(201).json({ stage: rows[0] });
   }),
@@ -208,12 +213,13 @@ router.patch(
         // what the stage needs to see before a deal comes in, and before it goes on
         entry_rules: stageRules,
         exit_rules: stageRules,
+        quiet_after_days: quietAfter,
       })
       .parse(req.body);
 
     const fields = [];
     const params = [];
-    for (const key of ['name', 'kind', 'color', 'position', 'is_active', 'entry_rules', 'exit_rules']) {
+    for (const key of ['name', 'kind', 'color', 'position', 'is_active', 'entry_rules', 'exit_rules', 'quiet_after_days']) {
       if (data[key] !== undefined) {
         params.push(data[key]);
         fields.push(`${key} = $${params.length}`);
@@ -369,6 +375,7 @@ router.get(
     res.json({
       account,
       activities,
+      commitments: await listCommitments({ accountId: account.id }),
       tasks: tasks.rows,
       goals: goals.rows,
       contacts,
@@ -868,6 +875,11 @@ router.post(
         outcome: z.enum(['ATTEMPTED', 'COMPLETED', 'SENT', 'RECEIVED',
                          'SCHEDULED', 'CANCELLED', 'NO_SHOW', 'NOTED']).nullable().optional(),
         external_participants: z.string().max(1000).nullable().optional(),
+        // something the customer said they would do, and by when
+        commitment: z.object({
+          what: z.string().max(2000),
+          due_on: z.string().regex(/^\d{4}-\d{2}-\d{2}/).nullable().optional(),
+        }).nullable().optional(),
       })
       .parse(req.body);
     const id = Number(req.params.id);
@@ -938,6 +950,13 @@ router.post(
           [givesNext ? data.next_step.trim() : null, data.next_step_due ?? null,
             data.next_step_due !== undefined, id],
         );
+      }
+      if (data.commitment && String(data.commitment.what || '').trim()) {
+        await addCommitment(client, {
+          accountId: id, opportunityId: deal?.id ?? null, activityId: created.id,
+          contactId: data.contact_id ?? null, what: data.commitment.what,
+          dueOn: data.commitment.due_on ?? null, actor: req.currentUser,
+        });
       }
       return created;
     });

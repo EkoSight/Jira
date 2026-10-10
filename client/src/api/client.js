@@ -155,6 +155,7 @@ export const api = {
   leadThreads: (accountId) => request('GET', `/threads/lead/${accountId}`),
   addThreadParticipants: (id, userIds) =>
     request('POST', `/threads/${id}/participants`, { user_ids: userIds }),
+  updateBlocker: (id, data) => request('PATCH', `/threads/${id}/blocker`, data),
 
   goalsDashboard: (params) => request('GET', `/objectives/dashboard${qs(params)}`),
   goalInsights: (params) => request('GET', `/objectives/insights${qs(params)}`),
@@ -229,6 +230,32 @@ export const api = {
   linkOpportunityContact: (id, data) => request('POST', `/opportunities/${id}/contacts`, data),
   unlinkOpportunityContact: (id, contactId, role) =>
     request('DELETE', `/opportunities/${id}/contacts/${contactId}${qs({ role })}`),
+  // paused on purpose until a date, and what the customer said they would do
+  setDealWaiting: (id, data) => request('POST', `/opportunities/${id}/waiting`, data),
+  clearDealWaiting: (id, reason) => request('DELETE', `/opportunities/${id}/waiting${qs({ reason })}`),
+  dealCommitments: (id) => request('GET', `/opportunities/${id}/commitments`),
+  addDealCommitment: (id, data) => request('POST', `/opportunities/${id}/commitments`, data),
+  resolveCommitment: (commitmentId, data) =>
+    request('POST', `/opportunities/commitments/${commitmentId}/resolve`, data),
+
+  // the week on the record, each owner's review of it, and correspondence to confirm
+  crmWeek: (start) => request('GET', `/crm/week${qs({ start })}`),
+  crmWeeks: () => request('GET', '/crm/weeks'),
+  snapshotWeek: (start) => request('POST', '/crm/weeks/snapshot', { start }),
+  myWeeklyReview: (start) => request('GET', `/crm/reviews/mine${qs({ start })}`),
+  saveWeeklyReviewItem: (opportunityId, data, start) =>
+    request('PUT', `/crm/reviews/mine/items/${opportunityId}${qs({ start })}`, data),
+  submitWeeklyReview: (summary, start) =>
+    request('POST', `/crm/reviews/mine/submit${qs({ start })}`, { summary }),
+  teamWeeklyReviews: (params) => request('GET', `/crm/reviews/team${qs(params)}`),
+  importEmail: (data) => request('POST', '/crm/import/email', data),
+  importCalendar: (data) => request('POST', '/crm/import/calendar', data),
+  crmSuggestions: () => request('GET', '/crm/suggestions'),
+  confirmSuggestion: (id, data) => request('POST', `/crm/suggestions/${id}/confirm`, data),
+  dismissSuggestion: (id) => request('POST', `/crm/suggestions/${id}/dismiss`),
+  mailboxSync: () => request('GET', '/crm/mailbox-sync'),
+  setMailboxSync: (data) => request('PUT', '/crm/mailbox-sync', data),
+  runMailboxSync: () => request('POST', '/crm/mailbox-sync/run'),
 
   // meetings and demos — scheduled is not completed, and the API keeps them apart
   meetings: (params) => request('GET', `/meetings${qs(params)}`),

@@ -8,8 +8,9 @@ import { canAccess } from './tasks.js';
 import { logActivity, notify } from '../services/activity.js';
 import { logOkrActivity } from '../services/okr.js';
 import { canEditAccount, logActivity as logCrmActivity } from '../services/crm.js';
+import { today } from '../services/dealRules.js';
 import {
-  BLOCKER_CATEGORIES, CRM_ENTITY_TYPES, ENTITY_TYPES, THREAD_KINDS,
+  BLOCKER_CATEGORIES, BLOCKER_DEPENDENCIES, CRM_ENTITY_TYPES, ENTITY_TYPES, THREAD_KINDS,
   addMessage, addParticipants, canRaiseReview, canResolveThread, createThread, getThread,
   listMessages, listParticipants, listThreads, notifyThread, reopenThread, resolveThread,
 } from '../services/threads.js';
@@ -225,7 +226,61 @@ const createInput = z.object({
   // a blocker: what sort of obstacle, and who is being asked to help
   category: z.enum(BLOCKER_CATEGORIES).nullable().optional(),
   participant_user_ids: z.array(z.number().int().positive()).max(30).optional(),
+  // and what exactly is blocked, who holds the key, who is chasing it, by when
+  blocked_item: z.string().max(500).nullable().optional(),
+  dependency: z.enum(BLOCKER_DEPENDENCIES).nullable().optional(),
+  responsible_user_id: z.number().int().positive().nullable().optional(),
+  external_party: z.string().max(300).nullable().optional(),
+  expected_resolution: z.string().regex(/^\d{4}-\d{2}-\d{2}/).nullable().optional(),
 });
+
+/**
+ * A blocker says what is blocked, whether we or someone outside holds the key,
+ * who on our side is responsible for clearing it, and by when — so it can be
+ * chased, counted, and raised again when the date passes.
+ */
+const BLOCKER_KEYS = ['blocked_item', 'dependency', 'responsible_user_id', 'external_party', 'expected_resolution'];
+
+/**
+ * Checks the blocker fields being set. `only` lists the ones being changed (an
+ * update); without it every field is required (a new blocker). `data` carries
+ * the blocker as it will be, so a check can see the other fields.
+ */
+async function blockerFields(data, { only = null } = {}) {
+  const checking = (key) => only === null || only.includes(key);
+  const out = {};
+  if (checking('blocked_item')) {
+    const item = String(data.blocked_item || '').trim();
+    if (item.length < 3) throw badRequest('Say what exactly is blocked — the sample validation, the pricing approval…');
+    out.blockedItem = item;
+  }
+  if (checking('dependency')) {
+    if (!BLOCKER_DEPENDENCIES.includes(data.dependency)) {
+      throw badRequest('Say whether it depends on us or on someone outside');
+    }
+    out.dependency = data.dependency;
+  }
+  if (checking('dependency') || checking('external_party')) {
+    const party = String(data.external_party || '').trim();
+    if (data.dependency === 'EXTERNAL' && party.length < 2) {
+      throw badRequest('Say who outside holds it up — their procurement team, the lab…');
+    }
+    out.externalParty = data.dependency === 'EXTERNAL' ? party : null;
+  }
+  if (checking('responsible_user_id')) {
+    if (!data.responsible_user_id) throw badRequest('Name who on our side is responsible for clearing it');
+    const { rows } = await query('SELECT id, is_active FROM users WHERE id = $1', [data.responsible_user_id]);
+    if (!rows[0]?.is_active) throw badRequest('The person responsible must be an active user');
+    out.responsibleUserId = data.responsible_user_id;
+  }
+  if (checking('expected_resolution')) {
+    const day = data.expected_resolution ? String(data.expected_resolution).slice(0, 10) : null;
+    if (!day) throw badRequest('Give the date it is expected to clear');
+    if (day < today()) throw badRequest('The date it is expected to clear has already passed');
+    out.expectedResolution = day;
+  }
+  return out;
+}
 
 router.post(
   '/',
@@ -251,6 +306,7 @@ router.post(
     if (CRM_ENTITY_TYPES.includes(data.entity_type) && !hasPermission(req.currentUser, 'crm.activity.log')) {
       throw forbidden('You cannot write on leads');
     }
+    const blocker = data.kind === 'blocker' ? await blockerFields(data) : null;
 
     // a review is aimed at whoever owns the thing unless someone else is named;
     // the other kinds are aimed at nobody in particular by default
@@ -268,7 +324,10 @@ router.post(
         actor: req.currentUser,
         awaitingUserId: awaiting,
         category: data.category ?? null,
-        participantIds: data.participant_user_ids ?? [],
+        // the person responsible for clearing a blocker keeps hearing about it
+        participantIds: [...(data.participant_user_ids ?? []),
+          ...(blocker && blocker.responsibleUserId !== req.currentUser.id ? [blocker.responsibleUserId] : [])],
+        blocker,
       });
 
       await traceOnEntity(client, {
@@ -430,6 +489,78 @@ router.post(
 
     const participants = await listParticipants([thread.id]);
     res.json({ participants: participants.get(thread.id) || [] });
+  }),
+);
+
+/**
+ * Changes what a blocker records: who is responsible, the date it should clear,
+ * what it depends on. The person newly made responsible is told.
+ */
+router.patch(
+  '/:id/blocker',
+  asyncHandler(async (req, res) => {
+    const data = createInput.pick({
+      blocked_item: true, dependency: true, responsible_user_id: true,
+      external_party: true, expected_resolution: true,
+    }).extend({ note: z.string().max(2000).nullable().optional() }).parse(req.body);
+    const thread = await getThread(Number(req.params.id));
+    if (!thread || thread.kind !== 'blocker') throw notFound('Blocker not found');
+    if (thread.status !== 'open') throw badRequest('This blocker is closed — reopen it to change it');
+    const entity = await resolveEntity(req.currentUser, thread.entity_type, thread.entity_id);
+    if (!canResolveThread(req.currentUser, thread, entity)) {
+      throw forbidden('Only the person who raised this, or whoever works the lead, can change it');
+    }
+    const changing = BLOCKER_KEYS.filter((key) => data[key] !== undefined);
+    const fields = await blockerFields({ ...thread, ...data }, { only: changing });
+
+    await withTransaction(async (client) => {
+      await client.query(
+        `UPDATE discussion_threads
+            SET blocked_item = COALESCE($1, blocked_item),
+                dependency = COALESCE($2, dependency),
+                responsible_user_id = COALESCE($3, responsible_user_id),
+                external_party = CASE WHEN $6 THEN $4 ELSE external_party END,
+                expected_resolution = COALESCE($5::date, expected_resolution),
+                updated_at = now()
+          WHERE id = $7`,
+        [fields.blockedItem ?? null, fields.dependency ?? null, fields.responsibleUserId ?? null,
+          fields.externalParty ?? null, fields.expectedResolution ?? null,
+          'externalParty' in fields, thread.id],
+      );
+      const wasDue = thread.expected_resolution ? String(thread.expected_resolution).slice(0, 10) : null;
+      const dependency = fields.dependency ?? thread.dependency;
+      const party = 'externalParty' in fields ? fields.externalParty : thread.external_party;
+      const dependencyChanged = dependency !== thread.dependency || (party ?? null) !== (thread.external_party ?? null);
+      const changes = [
+        data.blocked_item !== undefined && fields.blockedItem !== thread.blocked_item && `blocked: ${fields.blockedItem}`,
+        data.expected_resolution !== undefined && fields.expectedResolution !== wasDue
+          && `expected to clear by ${fields.expectedResolution}`,
+        data.responsible_user_id !== undefined && data.responsible_user_id !== thread.responsible_user_id
+          && 'a new person is responsible',
+        dependencyChanged && `depends on ${dependency === 'EXTERNAL' ? (party || 'someone outside') : 'us'}`,
+      ].filter(Boolean);
+      if (changes.length || data.note) {
+        await addMessage(client, {
+          threadId: thread.id,
+          actor: req.currentUser,
+          body: [changes.length ? `Updated: ${changes.join('; ')}.` : null, data.note || null].filter(Boolean).join(' '),
+        });
+      }
+      if (data.responsible_user_id && data.responsible_user_id !== thread.responsible_user_id) {
+        await addParticipants(client, { threadId: thread.id, userIds: [data.responsible_user_id], actor: req.currentUser });
+        if (data.responsible_user_id !== req.currentUser.id) {
+          await notify(client, {
+            userId: data.responsible_user_id,
+            type: 'crm_blocker',
+            title: `You are now responsible for clearing a blocker on ${entity.label}`,
+            body: (thread.title || '').slice(0, 140) || null,
+            accountId: entity.accountId ?? null,
+          });
+        }
+      }
+    });
+
+    res.json({ thread: { ...(await getThread(thread.id)), messages: await listMessages(thread.id) } });
   }),
 );
 

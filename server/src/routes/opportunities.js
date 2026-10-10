@@ -21,6 +21,8 @@ import {
   PROPOSAL_STATUSES, addInvoice, addPayment, cancelInvoice, cancelOrder, commercialRecord,
   setProposalStatus, voidPayment,
 } from '../services/commercial.js';
+import { WAITING_ON, clearWaiting, problemWithRevisit, setWaiting } from '../services/dealPauses.js';
+import { COMMITMENT_OUTCOMES, addCommitment, listCommitments, resolveCommitment } from '../services/commitments.js';
 
 const router = Router();
 
@@ -218,7 +220,7 @@ router.get(
     const opportunity = await getOpportunity(id);
     if (!opportunity) throw notFound('Opportunity not found');
 
-    const [requirements, history, contacts, handovers, commercial] = await Promise.all([
+    const [requirements, history, contacts, handovers, commercial, commitments] = await Promise.all([
       listRequirements(id),
       listHistory(id),
       query(
@@ -231,6 +233,7 @@ router.get(
       ),
       listHandovers(id),
       commercialRecord(id),
+      listCommitments({ opportunityId: id }),
     ]);
 
     res.json({
@@ -242,6 +245,7 @@ router.get(
       contacts: contacts.rows,
       handovers,
       commercial,
+      commitments,
       can_edit: await canWorkOnOpportunity(req.currentUser, await loadOpportunity(id)),
     });
   }),
@@ -700,8 +704,16 @@ router.post(
     if (['ON_HOLD', 'NURTURE', 'LOST'].includes(status) && !reason?.trim()) {
       throw badRequest('Say why — a paused or lost deal with no reason cannot be picked back up');
     }
+    // a pause comes back on a date, rather than being flagged every day or forgotten
+    if (['ON_HOLD', 'NURTURE'].includes(status)) {
+      const problem = problemWithRevisit(revisitOn);
+      if (problem) throw badRequest(problem, { code: 'REVISIT_REQUIRED' });
+    }
 
     await withTransaction(async (client) => {
+      if (existing.waiting_on && status !== 'ACTIVE') {
+        await clearWaiting(client, { opportunity: existing, actor: req.currentUser, reason: `Status changed to ${status}` });
+      }
       await client.query(
         `UPDATE opportunities SET status = $1, outcome_reason = COALESCE($2, outcome_reason),
                 revisit_on = COALESCE($3::date, revisit_on), updated_at = now()
@@ -716,6 +728,105 @@ router.post(
     });
 
     res.json({ opportunity: await getOpportunity(id) });
+  }),
+);
+
+// ---------------------------------------------------------------- waiting, on purpose
+
+/**
+ * Pauses a live deal until a date: waiting on the customer, a third party, or
+ * us. It is not chased until then, and comes back on the date. Its next action
+ * becomes checking back.
+ */
+router.post(
+  '/:id/waiting',
+  requirePermission('crm.activity.log'),
+  asyncHandler(async (req, res) => {
+    const data = z.object({
+      waiting_on: z.enum(WAITING_ON),
+      reason: z.string().max(2000),
+      until: day,
+      owner_id: z.number().int().positive().nullable().optional(),
+    }).parse(req.body);
+    const id = Number(req.params.id);
+    const existing = await mustEdit(req.currentUser, id);
+    await withTransaction((client) => setWaiting(client, {
+      opportunity: existing, waitingOn: data.waiting_on, reason: data.reason, until: data.until,
+      ownerId: data.owner_id ?? null, actor: req.currentUser,
+    }));
+    res.json({ opportunity: await getOpportunity(id) });
+  }),
+);
+
+router.delete(
+  '/:id/waiting',
+  requirePermission('crm.activity.log'),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await mustEdit(req.currentUser, id);
+    const reason = typeof req.query.reason === 'string' ? req.query.reason.slice(0, 2000) : null;
+    await withTransaction((client) => clearWaiting(client, { opportunity: existing, actor: req.currentUser, reason }));
+    res.json({ opportunity: await getOpportunity(id) });
+  }),
+);
+
+// ---------------------------------------------------------------- what the customer committed to
+
+router.get(
+  '/:id/commitments',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!(await loadOpportunity(id))) throw notFound('Opportunity not found');
+    res.json({ commitments: await listCommitments({ opportunityId: id }) });
+  }),
+);
+
+router.post(
+  '/:id/commitments',
+  requirePermission('crm.activity.log'),
+  asyncHandler(async (req, res) => {
+    const data = z.object({
+      what: z.string().max(2000),
+      due_on: day.nullable().optional(),
+      contact_id: z.number().int().positive().nullable().optional(),
+    }).parse(req.body);
+    const id = Number(req.params.id);
+    const existing = await mustEdit(req.currentUser, id);
+    if (data.contact_id) {
+      const { rows } = await query('SELECT 1 FROM account_contacts WHERE id = $1 AND account_id = $2',
+        [data.contact_id, existing.account_id]);
+      if (!rows[0]) throw badRequest('That contact is not at this organization');
+    }
+    const commitment = await withTransaction((client) => addCommitment(client, {
+      accountId: existing.account_id, opportunityId: id, contactId: data.contact_id ?? null,
+      what: data.what, dueOn: data.due_on ?? null, actor: req.currentUser,
+    }));
+    res.status(201).json({ commitment, commitments: await listCommitments({ opportunityId: id }) });
+  }),
+);
+
+router.post(
+  '/commitments/:commitmentId/resolve',
+  requirePermission('crm.activity.log'),
+  asyncHandler(async (req, res) => {
+    const data = z.object({
+      status: z.enum(COMMITMENT_OUTCOMES),
+      note: z.string().max(2000).nullable().optional(),
+    }).parse(req.body);
+    const { rows } = await query('SELECT * FROM customer_commitments WHERE id = $1', [Number(req.params.commitmentId)]);
+    if (!rows[0]) throw notFound('Commitment not found');
+    // whoever may work the deal (or, for one on no deal, the organization) may close it
+    if (rows[0].opportunity_id) await mustEdit(req.currentUser, rows[0].opportunity_id);
+    else if (!hasPermission(req.currentUser, 'crm.manage.any')) {
+      const { rows: account } = await query('SELECT * FROM accounts WHERE id = $1', [rows[0].account_id]);
+      if (![account[0]?.owner_user_id, account[0]?.follower_user_id, account[0]?.created_by].includes(req.currentUser.id)) {
+        throw forbidden('You cannot change this organization');
+      }
+    }
+    const commitment = await withTransaction((client) => resolveCommitment(client, {
+      commitmentId: rows[0].id, status: data.status, note: data.note?.trim() || null, actor: req.currentUser,
+    }));
+    res.json({ commitment });
   }),
 );
 

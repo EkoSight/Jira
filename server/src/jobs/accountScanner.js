@@ -1,21 +1,26 @@
 import { query } from '../db/pool.js';
 import { getSettings } from '../services/settings.js';
-import { analyseAccounts, SEVERITY_RANK } from '../services/accountInsights.js';
+import { analysePipeline, SEVERITY_RANK } from '../services/accountInsights.js';
 
 /**
- * Turns the CRM momentum signals into reminders — one digest per person leading
- * a drifting deal, at most once inside the cooldown. The same shape as the Goals
- * scanner: owners get the nudge, everyone gets the pipeline board.
+ * Turns the pipeline's signals into reminders — one digest per person, at most
+ * once inside the cooldown. The same shape as the Goals scanner: owners get the
+ * nudge, everyone gets the pipeline board.
+ *
+ * It reads the deal-level signals, for leads, customers and partners alike, on
+ * the customer's clock. (It used to read lead-level "last worked", which an
+ * internal edit reset, and skipped customers entirely.) A deal paused on
+ * purpose is silent until its revisit date.
  */
 
 const DIGEST_TYPE = 'crm_digest';
 
 function digestFor(signals) {
   const ordered = [...signals].sort((a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity]);
-  const body = ordered.slice(0, 3).map((s) => `${s.title} ${s.detail}`).join(' · ');
+  const body = ordered.slice(0, 3).map((s) => `${s.title}: ${s.detail}`).join(' · ');
   const primary = ordered[0];
   const n = signals.length;
-  const title = n === 1 ? 'A lead needs a nudge' : `${n} leads need a nudge`;
+  const title = n === 1 ? 'A deal needs a nudge' : `${n} deals need a nudge`;
   return { title, body, accountId: primary?.account_id ?? null };
 }
 
@@ -25,7 +30,7 @@ export async function runAccountScan({ force = false } = {}) {
   const cadence = settings.crm?.cadence || {};
   if (cadence.enabled === false) return { skipped: 'cadence_off', notified: [] };
 
-  const { attention: signals } = await analyseAccounts({});
+  const { attention: signals } = await analysePipeline({});
   const cooldownHours = Number(cadence.reminderHours) || 24;
 
   // group the reminders by the person leading each deal

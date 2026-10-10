@@ -5,12 +5,14 @@ import { Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import DealMoveDialog from './DealMoveDialog.jsx';
 import {
   Clocks, DealPeople, NextActionFields, NextActionLine, OrderFields, PersonSelect, ProposalFields,
-  emptyOrder, emptyProposal, nextActionBody, nextActionDraft, nextActionProblem, orderBody, proposalBody,
+  dayFromToday, emptyOrder, emptyProposal, nextActionBody, nextActionDraft, nextActionProblem, orderBody,
+  proposalBody,
 } from './DealParts.jsx';
 import {
-  ENGAGEMENT_MODELS, IMPORTANCE_META, LEDGER_FIGURES, OPPORTUNITY_STATUS_META, ORDER_KIND_LABEL,
-  PROPOSAL_STATUS_META, REQUIREMENT_CATEGORIES, REQUIREMENT_STATUS_META, VALUE_BASIS_LABEL, VALUE_FIELDS,
-  describeForecast, exactMoney, formatMoney, modelLabel, todayInIndia,
+  COMMITMENT_STATUS_META, ENGAGEMENT_MODELS, IMPORTANCE_META, LEDGER_FIGURES, MAX_PAUSE_DAYS,
+  OPPORTUNITY_STATUS_META, ORDER_KIND_LABEL, PROPOSAL_STATUS_META, REQUIREMENT_CATEGORIES,
+  REQUIREMENT_STATUS_META, VALUE_BASIS_LABEL, VALUE_FIELDS, WAITING_ON, describeForecast, exactMoney,
+  formatMoney, modelLabel, revisitProblem, todayInIndia, waitingWords,
 } from '../lib/crm.js';
 import { formatDate, relativeTime } from '../lib/format.js';
 
@@ -1031,6 +1033,395 @@ function RequirementsPanel({ opportunity, canEdit, onChanged }) {
   );
 }
 
+const PAUSE_CHOICES = [
+  ...WAITING_ON.map((w) => ({ ...w, kind: 'waiting' })),
+  { value: 'ON_HOLD', label: 'On hold', kind: 'status',
+    hint: 'Off the live board until the date — something has to change before it can move.' },
+  { value: 'NURTURE', label: 'Nurture', kind: 'status',
+    hint: 'Off the live board until the date — not now, but worth keeping warm.' },
+];
+
+/**
+ * Pausing a deal on purpose: who or what it waits for, why, and the date to
+ * look again. Until then it is not chased; on the date it comes back once.
+ */
+function PauseDialog({ opportunity, initial = null, onClose, onSaved }) {
+  const toast = useToast();
+  const [choice, setChoice] = useState(initial || 'CUSTOMER');
+  const [reason, setReason] = useState('');
+  const [until, setUntil] = useState(dayFromToday(14));
+  const [ownerId, setOwnerId] = useState(String(opportunity.next_step_owner_id || opportunity.owner_user_id || ''));
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const picked = PAUSE_CHOICES.find((c) => c.value === choice);
+  const latest = dayFromToday(MAX_PAUSE_DAYS);
+
+  const save = async () => {
+    const problem = reason.trim().length < 3
+      ? (picked.kind === 'waiting' ? 'Say what it is waiting for' : 'Say why it is paused')
+      : revisitProblem(until);
+    setError(problem);
+    if (problem) return;
+    setSaving(true);
+    try {
+      if (picked.kind === 'waiting') {
+        await api.setDealWaiting(opportunity.id, {
+          waiting_on: choice, reason: reason.trim(), until, owner_id: ownerId ? Number(ownerId) : null,
+        });
+        toast.success(`Waiting on ${waitingWords(choice)} until ${formatDate(until)} — not chased until then`);
+      } else {
+        await api.setOpportunityStatus(opportunity.id, { status: choice, reason: reason.trim(), revisit_on: until });
+        toast.success(`${picked.label} until ${formatDate(until)}`);
+      }
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Pause ${opportunity.name}`}
+      size="sheet"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : picked.kind === 'waiting' ? 'Mark as waiting' : `Put it ${picked.value === 'NURTURE' ? 'in nurture' : 'on hold'}`}
+          </button>
+        </>
+      }
+    >
+      <div className="stack">
+        <Field label="What is it waiting for?">
+          <div className="row wrap" style={{ gap: 6 }}>
+            {PAUSE_CHOICES.map((c) => (
+              <button key={c.value} type="button"
+                className={`kind-chip${choice === c.value ? ' is-active' : ''}`}
+                onClick={() => setChoice(c.value)}>
+                {c.label}
+              </button>
+            ))}
+          </div>
+          <div className="small muted" style={{ marginTop: 4 }}>{picked.hint}</div>
+        </Field>
+        <Field label={picked.kind === 'waiting' ? 'Waiting for what? *' : 'Why? *'} error={error}>
+          <input className="input" autoFocus value={reason} onChange={(e) => { setReason(e.target.value); setError(null); }}
+            placeholder={picked.kind === 'waiting' ? 'Their board meets on the 20th to approve the pilot' : 'Budget is frozen until the new financial year'} />
+        </Field>
+        <div className="grid-2">
+          <Field label="Look at it again on *" hint={`Within ${MAX_PAUSE_DAYS} days`}>
+            <input className="input" type="date" min={todayInIndia()} max={latest} value={until}
+              onChange={(e) => { setUntil(e.target.value); setError(null); }} />
+          </Field>
+          {picked.kind === 'waiting' && (
+            <Field label="Who checks back?" hint="Becomes the next action, due on that date">
+              <PersonSelect value={ownerId} onChange={setOwnerId} />
+            </Field>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+/** Taking a held or nurtured deal back into the live pipeline, with what happens next. */
+function ResumeDialog({ opportunity, onClose, onSaved }) {
+  const { user } = useAuth();
+  const toast = useToast();
+  const [next, setNext] = useState(() => nextActionDraft(opportunity, user?.id));
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    const problem = nextActionProblem(next) || (reason.trim().length < 3 ? 'Say what changed' : null);
+    setError(problem);
+    if (problem) return;
+    setSaving(true);
+    try {
+      // the next action first: a deal is never live without one, even for a moment
+      await api.setNextAction(opportunity.id, { ...nextActionBody(next), reason: reason.trim() });
+      await api.setOpportunityStatus(opportunity.id, { status: 'ACTIVE', reason: reason.trim() });
+      toast.success('Back in the live pipeline');
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err.message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Pick ${opportunity.name} back up`}
+      size="sheet"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
+            {saving ? 'Saving…' : 'Back to live'}
+          </button>
+        </>
+      }
+    >
+      <div className="stack">
+        <Field label="What changed? *" error={error}>
+          <input className="input" autoFocus value={reason} onChange={(e) => { setReason(e.target.value); setError(null); }}
+            placeholder="Budget released for the new season" />
+        </Field>
+        <NextActionFields value={next} onChange={(v) => { setNext(v); setError(null); }} />
+      </div>
+    </Modal>
+  );
+}
+
+/** Paused on purpose, or not: the state, the date to look again, and the way out. */
+function PausePanel({ opportunity, canEdit, onChanged }) {
+  const toast = useToast();
+  const [pausing, setPausing] = useState(null);
+  const [resuming, setResuming] = useState(false);
+  const [ending, setEnding] = useState(false);
+  const [why, setWhy] = useState('');
+
+  const held = opportunity.status === 'ON_HOLD' || opportunity.status === 'NURTURE';
+  if (opportunity.status !== 'ACTIVE' && !held) return null;
+
+  const endWait = async () => {
+    try {
+      await api.clearDealWaiting(opportunity.id, why.trim() || undefined);
+      toast.success('No longer waiting — set what happens next');
+      setEnding(false);
+      setWhy('');
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  const dialogs = (
+    <>
+      {pausing && (
+        <PauseDialog opportunity={opportunity} initial={pausing === true ? null : pausing}
+          onClose={() => setPausing(null)} onSaved={onChanged} />
+      )}
+      {resuming && <ResumeDialog opportunity={opportunity} onClose={() => setResuming(false)} onSaved={onChanged} />}
+    </>
+  );
+
+  if (opportunity.is_waiting) {
+    const until = String(opportunity.waiting_until).slice(0, 10);
+    return (
+      <div className={`pause-banner${opportunity.revisit_due ? ' is-due' : ''}`}>
+        <Icon name="clock" size={14} />
+        <div className="grow small">
+          <strong>Waiting on {waitingWords(opportunity.waiting_on)}</strong>
+          {opportunity.revisit_due ? ' — the date to check back has come' : ` until ${formatDate(until)}`}
+          <div className="muted">{opportunity.waiting_reason}</div>
+          {ending && (
+            <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>
+              <input className="input" style={{ maxWidth: 320 }} value={why} autoFocus
+                onChange={(e) => setWhy(e.target.value)} placeholder="What happened? (optional)" />
+              <button type="button" className="btn btn-sm btn-primary" onClick={endWait}>End the wait</button>
+              <button type="button" className="btn btn-sm" onClick={() => setEnding(false)}>Cancel</button>
+            </div>
+          )}
+        </div>
+        {canEdit && !ending && (
+          <div className="row wrap" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm" onClick={() => setPausing(opportunity.waiting_on)}>New date</button>
+            <button type="button" className="btn btn-sm" onClick={() => setEnding(true)}>No longer waiting</button>
+          </div>
+        )}
+        {dialogs}
+      </div>
+    );
+  }
+
+  if (held) {
+    const revisit = opportunity.revisit_on ? String(opportunity.revisit_on).slice(0, 10) : null;
+    const label = OPPORTUNITY_STATUS_META[opportunity.status].label;
+    return (
+      <div className={`pause-banner${opportunity.revisit_due || !revisit ? ' is-due' : ''}`}>
+        <Icon name="clock" size={14} />
+        <div className="grow small">
+          <strong>{label}</strong>
+          {revisit
+            ? (opportunity.revisit_due ? ` — it was to be looked at again on ${formatDate(revisit)}` : ` until ${formatDate(revisit)}`)
+            : ' with no date to look at it again'}
+          {opportunity.outcome_reason && <div className="muted">{opportunity.outcome_reason}</div>}
+        </div>
+        {canEdit && (
+          <div className="row wrap" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm" onClick={() => setPausing(opportunity.status)}>
+              {revisit ? 'New date' : 'Set a date'}
+            </button>
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => setResuming(true)}>Pick it back up</button>
+          </div>
+        )}
+        {dialogs}
+      </div>
+    );
+  }
+
+  if (!canEdit) return null;
+  return (
+    <div className="row wrap" style={{ gap: 6 }}>
+      <button type="button" className="btn btn-sm" onClick={() => setPausing(true)}
+        title="Waiting on the customer, a third party or us — or on hold — until a date, so it is not chased in the meantime">
+        <Icon name="clock" size={13} /> Pause until a date…
+      </button>
+      {dialogs}
+    </div>
+  );
+}
+
+/**
+ * What the customer said they would do, and whether they did. "They will send
+ * the samples by Friday" is tracked to kept or missed — never quietly dropped.
+ */
+export function CommitmentsPanel({ opportunity = null, commitments = [], canEdit, onChanged, showDeal = false }) {
+  const toast = useToast();
+  const [adding, setAdding] = useState(false);
+  const [contacts, setContacts] = useState([]);
+  const [form, setForm] = useState({ what: '', due_on: '', contact_id: '' });
+  const [closing, setClosing] = useState(null);
+  const [note, setNote] = useState('');
+  const [showEarlier, setShowEarlier] = useState(false);
+  const todayDate = todayInIndia();
+
+  const open = commitments.filter((c) => c.status === 'OPEN');
+  const earlier = commitments.filter((c) => c.status !== 'OPEN');
+
+  const startAdding = () => {
+    setAdding(true);
+    api.accountContacts(opportunity.account_id).then((r) => setContacts(r.contacts)).catch(() => setContacts([]));
+  };
+
+  const add = async () => {
+    if (form.what.trim().length < 3) return toast.error('Say what they committed to');
+    try {
+      await api.addDealCommitment(opportunity.id, {
+        what: form.what.trim(), due_on: form.due_on || null, contact_id: form.contact_id ? Number(form.contact_id) : null,
+      });
+      toast.success('Recorded — it shows in the weekly record, and is raised if the date passes');
+      setForm({ what: '', due_on: '', contact_id: '' });
+      setAdding(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  const resolve = async (commitment, status) => {
+    try {
+      await api.resolveCommitment(commitment.id, { status, note: note.trim() || null });
+      toast.success(`Marked ${COMMITMENT_STATUS_META[status].label.toLowerCase()}`);
+      setClosing(null);
+      setNote('');
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  if (!open.length && !earlier.length && (!canEdit || !opportunity)) return null;
+
+  return (
+    <div className="stack-sm">
+      <div className="row-between wrap">
+        <span className="stat-label">What they committed to{showDeal && open.length ? ` (${open.length} open)` : ''}</span>
+        {canEdit && opportunity && !adding && (
+          <button type="button" className="btn-link small" onClick={startAdding}>Record a commitment</button>
+        )}
+      </div>
+      {!open.length && !adding && (
+        <div className="small muted">Nothing open. When they say they will do something by a date, record it here.</div>
+      )}
+      {open.map((c) => {
+        const due = c.due_on ? String(c.due_on).slice(0, 10) : null;
+        const late = due && due < todayDate;
+        return (
+          <div key={c.id} className={`commitment-row${late ? ' is-late' : ''}`}>
+            <div className="grow small">
+              <strong>{c.what}</strong>
+              <div className="muted">
+                {showDeal ? `${c.opportunity_name || 'the organization in general'} · ` : ''}
+                {c.contact_name ? `${c.contact_name} · ` : ''}
+                {due ? (late ? `was due ${formatDate(due)}` : `by ${formatDate(due)}`) : 'no date given'}
+              </div>
+              {closing?.id === c.id && (
+                <div className="row wrap" style={{ gap: 6, marginTop: 6 }}>
+                  <input className="input" style={{ maxWidth: 300 }} value={note} autoFocus
+                    onChange={(e) => setNote(e.target.value)}
+                    placeholder={closing.status === 'MISSED' ? 'What happened? What now?' : 'Why? (optional)'} />
+                  <button type="button" className="btn btn-sm btn-primary" onClick={() => resolve(c, closing.status)}>
+                    Mark {COMMITMENT_STATUS_META[closing.status].label.toLowerCase()}
+                  </button>
+                  <button type="button" className="btn btn-sm" onClick={() => setClosing(null)}>Cancel</button>
+                </div>
+              )}
+            </div>
+            {canEdit && closing?.id !== c.id && (
+              <div className="row" style={{ gap: 4 }}>
+                <button type="button" className="btn btn-sm" onClick={() => resolve(c, 'KEPT')}>Kept</button>
+                <button type="button" className="btn btn-sm" onClick={() => { setNote(''); setClosing({ id: c.id, status: 'MISSED' }); }}>Missed</button>
+                <button type="button" className="btn btn-sm btn-ghost" title="They no longer intend to"
+                  onClick={() => { setNote(''); setClosing({ id: c.id, status: 'WITHDRAWN' }); }}>Withdrawn</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {adding && (
+        <div className="stack-sm helper-add">
+          <Field label="What did they commit to? *">
+            <input className="input" autoFocus value={form.what} onChange={(e) => setForm({ ...form, what: e.target.value })}
+              placeholder="Send 12 soil samples from the Nashik centres" />
+          </Field>
+          <div className="grid-2">
+            <Field label="By when">
+              <input className="input" type="date" value={form.due_on} onChange={(e) => setForm({ ...form, due_on: e.target.value })} />
+            </Field>
+            <Field label="Who said so">
+              <select className="select" value={form.contact_id} onChange={(e) => setForm({ ...form, contact_id: e.target.value })}>
+                <option value="">Not recorded</option>
+                {contacts.map((c) => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div className="row" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm btn-primary" onClick={add}>Record it</button>
+            <button type="button" className="btn btn-sm" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {earlier.length > 0 && (
+        <>
+          <button type="button" className="disclosure" onClick={() => setShowEarlier((v) => !v)}>
+            <Icon name="chevron" size={12} style={{ transform: showEarlier ? 'rotate(90deg)' : 'none' }} />
+            Earlier ({earlier.length})
+          </button>
+          {showEarlier && earlier.map((c) => (
+            <div key={c.id} className="commitment-row is-settled small">
+              <Badge tone={COMMITMENT_STATUS_META[c.status].tone}>{COMMITMENT_STATUS_META[c.status].label}</Badge>
+              <span className="grow">
+                {c.what}
+                {c.resolution_note && <span className="muted"> — {c.resolution_note}</span>}
+              </span>
+              <span className="muted">{c.resolved_by_name ? `${c.resolved_by_name} · ` : ''}{relativeTime(c.resolved_at)}</span>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
+
 /** One deal, opened: everything about it that decides what happens next. */
 function DealBody({ summary, canEditList, onChanged, onMove }) {
   const [detail, setDetail] = useState(null);
@@ -1051,6 +1442,7 @@ function DealBody({ summary, canEditList, onChanged, onMove }) {
 
   return (
     <div className="opportunity-body">
+      <PausePanel opportunity={opportunity} canEdit={canEdit} onChanged={changed} />
       <div className="deal-top">
         <NextActionPanel opportunity={opportunity} canEdit={canEdit} onChanged={changed} />
         <div className="stack-sm">
@@ -1058,6 +1450,8 @@ function DealBody({ summary, canEditList, onChanged, onMove }) {
           <Clocks opportunity={opportunity} />
         </div>
       </div>
+      <hr className="divider" />
+      <CommitmentsPanel opportunity={opportunity} commitments={detail?.commitments} canEdit={canEdit} onChanged={changed} />
       <hr className="divider" />
       <PeoplePanel opportunity={opportunity} handovers={detail?.handovers} canEdit={canEdit} onChanged={changed} />
       <hr className="divider" />
@@ -1141,7 +1535,15 @@ export default function CrmOpportunities({
                       {opportunity.stage_name && (
                         <Badge dot={opportunity.stage_color}>{opportunity.stage_name}</Badge>
                       )}
-                      {live && <Clocks opportunity={opportunity} compact />}
+                      {live && <Clocks opportunity={opportunity} compact quietAfter={opportunity.stage_quiet_after_days || undefined} />}
+                      {opportunity.is_waiting && (
+                        <Badge tone={opportunity.revisit_due ? 'warning' : 'neutral'}>
+                          {opportunity.revisit_due ? 'check back now' : `waiting on ${waitingWords(opportunity.waiting_on)}`}
+                        </Badge>
+                      )}
+                      {!live && opportunity.revisit_on && ['ON_HOLD', 'NURTURE'].includes(opportunity.status) && (
+                        <span className="small muted">look again {formatDate(opportunity.revisit_on)}</span>
+                      )}
                     </span>
                     <span className="small muted row wrap" style={{ gap: 6, marginTop: 2 }}>
                       <span>{modelLabel(opportunity.engagement_model)}</span>

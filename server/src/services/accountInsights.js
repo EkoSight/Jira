@@ -1,7 +1,8 @@
 import { query } from '../db/pool.js';
 import { getSettings } from './settings.js';
 import { listAccounts, logosFor } from './crm.js';
-import { nextActionGaps } from './dealRules.js';
+import { nextActionGaps, today } from './dealRules.js';
+import { FRESHNESS_COLUMNS } from './opportunities.js';
 
 /**
  * The CRM attention engine — the same idea as the Goals one, pointed at deals.
@@ -179,15 +180,17 @@ export async function analysePipeline({ departmentId = null } = {}) {
 
   // ---- deals
   const { rows: deals } = await query(
-    `SELECT o.id, o.name, o.status, o.next_step, o.next_step_due, o.expected_close,
-            o.last_external_at, o.stage_changed_at, o.owner_user_id, o.next_step_owner_id,
-            s.kind AS stage_kind,
+    `SELECT o.id, o.name, o.status, o.next_step, o.next_step_due, o.next_step_owner_id,
+            o.expected_close, o.stage_changed_at, o.owner_user_id, o.created_at,
+            o.waiting_on, o.waiting_until, o.waiting_reason, o.revisit_on, o.outcome_reason,
             a.id AS account_id, a.name AS account_name, a.department_id,
             s.slug AS stage_slug, s.name AS stage_name, s.position AS stage_position,
+            s.kind AS stage_kind, s.quiet_after_days,
             u.full_name AS owner_name, u.avatar_color AS owner_color,
             (SELECT COUNT(*)::int FROM opportunity_requirements r
               WHERE r.opportunity_id = o.id AND r.importance = 'MUST_HAVE'
-                AND r.status NOT IN ('MET','WAIVED')) AS unmet_must_haves
+                AND r.status NOT IN ('MET','WAIVED')) AS unmet_must_haves,
+            ${FRESHNESS_COLUMNS}
        FROM opportunities o
        JOIN accounts a ON a.id = o.account_id
        LEFT JOIN account_stages s ON s.id = o.stage_id
@@ -197,6 +200,10 @@ export async function analysePipeline({ departmentId = null } = {}) {
         AND ($1::int IS NULL OR a.department_id = $1::int)`,
     [departmentId],
   );
+
+  const todayDate = today();
+  const daysAgo = (value) => (value ? Math.floor((now - new Date(value).getTime()) / DAY) : null);
+  const dayOf = (value) => (value ? String(value).slice(0, 10) : null);
 
   for (const deal of deals) {
     const base = {
@@ -212,21 +219,58 @@ export async function analysePipeline({ departmentId = null } = {}) {
       stage_name: deal.stage_name,
     };
 
-    const quietDays = deal.last_external_at
-      ? Math.floor((now - new Date(deal.last_external_at).getTime()) / DAY)
-      : null;
-    const allowed = cadenceFor(deal.stage_slug, cadence, deal.status);
+    // Paused on purpose, with a date: silent until the date, then one
+    // reminder to look again — never a daily "gone quiet".
+    if (deal.status === 'ON_HOLD' || deal.status === 'NURTURE') {
+      const revisit = dayOf(deal.revisit_on);
+      if (revisit) {
+        if (revisit <= todayDate) {
+          push({ ...base, kind: 'revisit_due', severity: 'warning',
+            detail: `${deal.status === 'NURTURE' ? 'nurtured' : 'on hold'} until ${revisit}${deal.outcome_reason ? ` (${deal.outcome_reason})` : ''} — time to look again` });
+        }
+        continue;
+      }
+      // paused before revisit dates were asked for: the old, slower cadence
+      const quiet = daysAgo(deal.last_customer_at ?? deal.last_outbound_at);
+      const allowed = cadenceFor(deal.stage_slug, cadence, deal.status);
+      if (quiet === null || quiet >= allowed) {
+        push({ ...base, kind: 'gone_quiet', severity: 'warning',
+          detail: `paused with no date to look again, and no contact for ${quiet ?? 'ever'} days` });
+      }
+      continue;
+    }
+    if (deal.waiting_on) {
+      const until = dayOf(deal.waiting_until);
+      if (until && until <= todayDate) {
+        push({ ...base, kind: 'revisit_due', severity: 'warning',
+          detail: `waiting on ${deal.waiting_on === 'CUSTOMER' ? 'the customer' : deal.waiting_on === 'THIRD_PARTY' ? 'a third party' : 'us'} (${deal.waiting_reason}) — the date to check back was ${until}` });
+      }
+      continue;
+    }
 
-    // every live deal owes a specific move, a person, and a date
+    // live and not paused: every live deal owes a next move, and the customer
+    // has to be engaging at the pace its stage expects
     const gaps = nextActionGaps(deal);
+    const allowed = deal.quiet_after_days || cadenceFor(deal.stage_slug, cadence, deal.status);
+    const customerDays = daysAgo(deal.last_customer_at);
+    const outboundDays = daysAgo(deal.last_outbound_at);
+    const ageDays = daysAgo(deal.created_at) ?? 0;
+    const silent = customerDays === null ? ageDays >= allowed : customerDays >= allowed;
+
     if (gaps.some((gap) => gap.kind === 'next_action_overdue')) {
       push({ ...base, kind: 'next_action_overdue', severity: 'warning',
         detail: `next action "${deal.next_step}" is past its date` });
-    } else if (quietDays === null || quietDays >= allowed) {
-      push({ ...base, kind: 'gone_quiet', severity: quietDays === null ? 'critical' : 'warning',
-        detail: quietDays === null
-          ? 'nobody has spoken to them yet'
-          : `no contact for ${quietDays} days, and ${deal.stage_name || 'this stage'} expects every ${allowed}` });
+    } else if (silent && outboundDays !== null && outboundDays < allowed) {
+      // we are chasing; they are not answering — a wait to record, or an escalation
+      push({ ...base, kind: 'awaiting_reply', severity: 'warning',
+        detail: customerDays === null
+          ? `chased ${outboundDays === 0 ? 'today' : `${outboundDays} days ago`}, and they have never responded`
+          : `no response for ${customerDays} days though we chased ${outboundDays === 0 ? 'today' : `${outboundDays} days ago`}; ${deal.stage_name || 'this stage'} expects every ${allowed}` });
+    } else if (silent) {
+      push({ ...base, kind: 'gone_quiet', severity: customerDays === null ? 'critical' : 'warning',
+        detail: customerDays === null
+          ? 'nobody has heard from them yet'
+          : `no contact for ${customerDays} days, and ${deal.stage_name || 'this stage'} expects every ${allowed}` });
     } else if (gaps.some((gap) => gap.kind === 'no_next_action')) {
       push({ ...base, kind: 'no_next_action', severity: 'warning',
         detail: 'nothing agreed as the next step' });
@@ -239,7 +283,7 @@ export async function analysePipeline({ departmentId = null } = {}) {
     const closingIn = deal.expected_close
       ? Math.floor((new Date(deal.expected_close).getTime() - now) / DAY)
       : null;
-    if (deal.status === 'ACTIVE' && closingIn !== null
+    if (closingIn !== null
         && closingIn <= (Number(cadence.closingSoonDays) || 21)
         && deal.unmet_must_haves > 0) {
       push({ ...base, kind: 'closing_with_blockers', severity: 'critical',
@@ -247,6 +291,89 @@ export async function analysePipeline({ departmentId = null } = {}) {
           ? `close date passed with ${deal.unmet_must_haves} must-have${deal.unmet_must_haves === 1 ? '' : 's'} unresolved`
           : `closes in ${closingIn} days with ${deal.unmet_must_haves} must-have${deal.unmet_must_haves === 1 ? '' : 's'} unresolved` });
     }
+  }
+
+  // ---- what customers said they would do, and have not
+  const { rows: commitments } = await query(
+    `SELECT c.id, c.what, c.due_on, c.account_id, c.opportunity_id,
+            a.name AS account_name, a.department_id,
+            COALESCE(o.owner_user_id, a.owner_user_id) AS owner_user_id,
+            u.full_name AS owner_name, u.avatar_color AS owner_color, o.name AS opportunity_name
+       FROM customer_commitments c
+       JOIN accounts a ON a.id = c.account_id
+       LEFT JOIN opportunities o ON o.id = c.opportunity_id
+       LEFT JOIN users u ON u.id = COALESCE(o.owner_user_id, a.owner_user_id)
+      WHERE c.status = 'OPEN' AND c.due_on < (now() AT TIME ZONE 'Asia/Kolkata')::date
+        AND a.is_archived = FALSE
+        AND ($1::int IS NULL OR a.department_id = $1::int)`,
+    [departmentId],
+  );
+  for (const commitment of commitments) {
+    push({
+      entity_type: commitment.opportunity_id ? 'OPPORTUNITY' : 'ACCOUNT',
+      entity_id: commitment.opportunity_id ?? commitment.account_id,
+      account_id: commitment.account_id,
+      title: commitment.opportunity_name || commitment.account_name,
+      subtitle: commitment.account_name,
+      owner_user_id: commitment.owner_user_id, owner_name: commitment.owner_name,
+      owner_color: commitment.owner_color, department_id: commitment.department_id,
+      kind: 'commitment_overdue', severity: 'warning',
+      detail: `they committed to "${commitment.what}" by ${dayOf(commitment.due_on)}`,
+    });
+  }
+
+  // ---- handovers nobody has said they have
+  const confirmDays = Number(settings.crm?.handoverConfirmDays) || 2;
+  const { rows: handovers } = await query(
+    `SELECT h.id, h.role, h.to_user_id, h.created_at, o.id AS opportunity_id, o.name, o.account_id,
+            a.name AS account_name, a.department_id,
+            u.full_name AS to_name, u.avatar_color AS to_color
+       FROM opportunity_handovers h
+       JOIN opportunities o ON o.id = h.opportunity_id
+       JOIN accounts a ON a.id = o.account_id
+       LEFT JOIN users u ON u.id = h.to_user_id
+      WHERE h.acknowledged_at IS NULL AND h.to_user_id IS NOT NULL
+        AND h.created_at < now() - ($1 || ' days')::interval
+        AND o.is_archived = FALSE AND o.status IN ('ACTIVE','ON_HOLD','NURTURE')
+        AND ($2::int IS NULL OR a.department_id = $2::int)`,
+    [confirmDays, departmentId],
+  );
+  for (const handover of handovers) {
+    push({
+      entity_type: 'OPPORTUNITY', entity_id: handover.opportunity_id, account_id: handover.account_id,
+      title: handover.name, subtitle: handover.account_name,
+      owner_user_id: handover.to_user_id, owner_name: handover.to_name, owner_color: handover.to_color,
+      department_id: handover.department_id,
+      kind: 'handover_unconfirmed', severity: 'warning',
+      detail: `${handover.role === 'OWNER' ? 'the deal' : handover.role === 'NEXT_ACTION' ? 'the next move' : 'escalations'} handed over ${daysAgo(handover.created_at)} days ago and not yet confirmed`,
+    });
+  }
+
+  // ---- blockers past the date they were expected to clear
+  const { rows: lateBlockers } = await query(
+    `SELECT t.id, t.title, t.blocked_item, t.expected_resolution, t.dependency, t.external_party,
+            COALESCE(o.account_id, CASE WHEN t.entity_type = 'ACCOUNT' THEN t.entity_id END) AS account_id,
+            a.name AS account_name, a.department_id,
+            COALESCE(t.responsible_user_id, o.owner_user_id, a.owner_user_id) AS owner_user_id,
+            u.full_name AS owner_name, u.avatar_color AS owner_color
+       FROM discussion_threads t
+       LEFT JOIN opportunities o ON t.entity_type = 'OPPORTUNITY' AND o.id = t.entity_id
+       JOIN accounts a ON a.id = COALESCE(o.account_id, CASE WHEN t.entity_type = 'ACCOUNT' THEN t.entity_id END)
+       LEFT JOIN users u ON u.id = COALESCE(t.responsible_user_id, o.owner_user_id, a.owner_user_id)
+      WHERE t.kind = 'blocker' AND t.status = 'open' AND a.is_archived = FALSE
+        AND t.expected_resolution < (now() AT TIME ZONE 'Asia/Kolkata')::date
+        AND ($1::int IS NULL OR a.department_id = $1::int)`,
+    [departmentId],
+  );
+  for (const blocker of lateBlockers) {
+    push({
+      entity_type: 'ACCOUNT', entity_id: blocker.account_id, account_id: blocker.account_id,
+      title: blocker.title || 'A blocker', subtitle: blocker.account_name,
+      owner_user_id: blocker.owner_user_id, owner_name: blocker.owner_name, owner_color: blocker.owner_color,
+      department_id: blocker.department_id,
+      kind: 'blocker_overdue', severity: 'critical',
+      detail: `${blocker.blocked_item ? `${blocker.blocked_item} is ` : ''}still blocked${blocker.dependency === 'EXTERNAL' && blocker.external_party ? ` on ${blocker.external_party}` : ''}; it was expected to clear by ${dayOf(blocker.expected_resolution)}`,
+    });
   }
 
   // ---- meetings that have been and gone with nothing recorded
@@ -361,6 +488,11 @@ export async function analysePipeline({ departmentId = null } = {}) {
       next_action_overdue: count('next_action_overdue'),
       no_next_action: count('no_next_action'),
       next_action_incomplete: count('next_action_incomplete'),
+      awaiting_reply: count('awaiting_reply'),
+      revisit_due: count('revisit_due'),
+      commitment_overdue: count('commitment_overdue'),
+      handover_unconfirmed: count('handover_unconfirmed'),
+      blocker_overdue: count('blocker_overdue'),
       closing_with_blockers: count('closing_with_blockers'),
       meeting_outcome_missing: count('meeting_outcome_missing'),
       milestone_overdue: count('milestone_overdue'),

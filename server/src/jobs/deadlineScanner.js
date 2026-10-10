@@ -4,6 +4,7 @@ import { runBlackMarkScan } from '../services/blackmarks.js';
 import { runOkrScan } from './okrScanner.js';
 import { runAccountScan } from './accountScanner.js';
 import { runAttendanceScan } from './attendanceScanner.js';
+import { runPipelineWeekly } from './pipelineWeekly.js';
 import { getSettings } from '../services/settings.js';
 
 let timer = null;
@@ -62,6 +63,15 @@ export async function runScanOnce() {
     }
   } catch (err) {
     console.error('[taskflow] CRM scan failed:', err.message);
+  }
+
+  try {
+    const weekly = await runPipelineWeekly();
+    if (weekly.snapshot?.stored) {
+      console.log(`[taskflow] pipeline week of ${weekly.snapshot.week_start} recorded`);
+    }
+  } catch (err) {
+    console.error('[taskflow] weekly pipeline pass failed:', err.message);
   }
 
   try {

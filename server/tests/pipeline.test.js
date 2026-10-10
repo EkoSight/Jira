@@ -378,6 +378,11 @@ test('the lead owner can raise a blocker, and the people asked are told', async 
       title: 'Board will not approve before the co-operative audit',
       body: 'Their board meets after the audit in November. Can we offer a pilot in one taluka first?',
       participant_user_ids: [ids.colleague],
+      blocked_item: 'Board approval of the pilot',
+      dependency: 'EXTERNAL',
+      external_party: 'Their board',
+      responsible_user_id: ids.manager,
+      expected_resolution: new Date(Date.now() + 40 * 86400000).toISOString().slice(0, 10),
     },
   });
   assert.equal(raised.status, 201, JSON.stringify(raised.body));
@@ -469,6 +474,9 @@ test('a blocker nobody answers becomes a nudge', async (t) => {
       entity_type: 'ACCOUNT', entity_id: ids.gujarat, kind: 'blocker', category: 'BUDGET',
       title: 'Budget frozen until April', body: 'Anyone know another route in?',
       participant_user_ids: [ids.colleague],
+      blocked_item: 'Funding for the purchase', dependency: 'EXTERNAL', external_party: 'Their finance team',
+      responsible_user_id: ids.manager,
+      expected_resolution: new Date(Date.now() + 120 * 86400000).toISOString().slice(0, 10),
     },
   });
   assert.equal(raised.status, 201);

@@ -1,8 +1,36 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
-import { useToast } from '../state/AppState.jsx';
+import { useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, Spinner } from './ui.jsx';
 import { STAGE_RULE_KEYS, STAGE_RULE_META } from '../lib/crm.js';
+
+/**
+ * Days without hearing from the customer before a deal in this stage counts as
+ * stalled. Blank uses the pipeline-wide figure for the stage, shown faintly.
+ */
+function QuietAfter({ stage, fallback, onSave, disabled }) {
+  const [value, setValue] = useState(stage.quiet_after_days ?? '');
+  useEffect(() => setValue(stage.quiet_after_days ?? ''), [stage.quiet_after_days]);
+  const commit = () => {
+    const next = value === '' ? null : Math.round(Number(value));
+    if (next === (stage.quiet_after_days ?? null)) return;
+    if (next !== null && (!Number.isFinite(next) || next < 1 || next > 365)) {
+      setValue(stage.quiet_after_days ?? '');
+      return;
+    }
+    onSave(next);
+  };
+  return (
+    <div className="row" style={{ gap: 6 }}>
+      <input className="input" type="number" min="1" max="365" style={{ width: 76 }}
+        value={value} placeholder={String(fallback)} disabled={disabled}
+        aria-label={`Days before a deal in ${stage.name} counts as stalled`}
+        onChange={(e) => setValue(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
+      <span className="small muted">days{value === '' ? ' (default)' : ''}</span>
+    </div>
+  );
+}
 
 /**
  * What each pipeline stage needs to see before a deal comes in, and before it
@@ -16,8 +44,26 @@ import { STAGE_RULE_KEYS, STAGE_RULE_META } from '../lib/crm.js';
  */
 export default function PipelineStageSettings() {
   const toast = useToast();
+  const { settings } = useRefData();
   const [stages, setStages] = useState(null);
   const [saving, setSaving] = useState(null);
+  const cadence = settings?.crm?.cadence || {};
+  const fallbackFor = (stage) => Number(cadence.byStage?.[stage.slug]) || Number(cadence.engagementDays) || 7;
+
+  const saveQuiet = async (stage, days) => {
+    setSaving(`${stage.id}-quiet`);
+    try {
+      await api.updateAccountStage(stage.id, { quiet_after_days: days });
+      setStages((list) => list.map((s) => (s.id === stage.id ? { ...s, quiet_after_days: days } : s)));
+      toast.success(days === null
+        ? `${stage.name} uses the default again`
+        : `${stage.name}: stalled after ${days} days without hearing from them`);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const load = () => {
     api.accountStages({ active: 'all' })
@@ -52,11 +98,17 @@ export default function PipelineStageSettings() {
           order or the meeting has to be on record. Moving back or to Lost is never blocked, and a
           pipeline manager can move a deal without the evidence by saying why — that stays on its history.
         </div>
+        <div className="small muted">
+          <strong>Stalled after</strong> counts days since the customer last responded — not since anyone
+          touched the record. A deal marked as waiting until a date, on hold or in nurture is not flagged
+          until its date.
+        </div>
         <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr>
                 <th>Stage</th>
+                <th>Stalled after</th>
                 <th>To come in, a deal needs</th>
                 <th>To move on, a deal needs</th>
               </tr>
@@ -67,6 +119,12 @@ export default function PipelineStageSettings() {
                   <td>
                     <Badge dot={stage.color}>{stage.name}</Badge>
                     {!stage.is_active && <div className="small muted">not in use</div>}
+                  </td>
+                  <td>
+                    {stage.kind === 'open' ? (
+                      <QuietAfter stage={stage} fallback={fallbackFor(stage)} disabled={saving !== null}
+                        onSave={(days) => saveQuiet(stage, days)} />
+                    ) : <span className="small muted">closed</span>}
                   </td>
                   {['entry_rules', 'exit_rules'].map((field) => (
                     <td key={field}>

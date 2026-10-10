@@ -9,8 +9,9 @@ import CrmDashboard from '../components/CrmDashboard.jsx';
 import DealMoveDialog from '../components/DealMoveDialog.jsx';
 import { Clocks, NextActionLine } from '../components/DealParts.jsx';
 import { ListView, MapView, TreeView } from '../components/CrmViews.jsx';
+import { Correspondence, TeamReviews, WeekRecord, WeeklyReview } from '../components/CrmWeekly.jsx';
 import {
-  ACCOUNT_TYPE_META, INDIAN_STATES, OPPORTUNITY_STATUS_META, VALUE_BASIS_LABEL, formatMoney,
+  ACCOUNT_TYPE_META, INDIAN_STATES, OPPORTUNITY_STATUS_META, VALUE_BASIS_LABEL, formatMoney, waitingWords,
 } from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
 
@@ -117,7 +118,19 @@ function DealCard({ deal, stages, onOpen, onDragStart, onDragEnd, onMove, onChan
           {deal.pending_handovers > 0 && (
             <Badge tone="warning" title="Handed to someone who has not yet confirmed they have it">handover unconfirmed</Badge>
           )}
-          <Clocks opportunity={deal} compact quietAfter={quietAfter} />
+          {deal.is_waiting && (
+            <Badge tone={deal.revisit_due ? 'warning' : 'neutral'} title={deal.waiting_reason || undefined}>
+              <Icon name="clock" size={10} /> {deal.revisit_due
+                ? 'check back now'
+                : `waiting on ${waitingWords(deal.waiting_on)} · ${formatDate(deal.waiting_until)}`}
+            </Badge>
+          )}
+          {deal.overdue_commitments > 0 && (
+            <Badge tone="warning" title="Something they said they would do is past its date">
+              {deal.overdue_commitments === 1 ? 'commitment missed?' : `${deal.overdue_commitments} commitments late`}
+            </Badge>
+          )}
+          <Clocks opportunity={deal} compact quietAfter={deal.stage_quiet_after_days || quietAfter} />
         </div>
         <NextActionLine opportunity={deal} compact />
         {otherFlags.length > 0 && (
@@ -135,8 +148,8 @@ function DealCard({ deal, stages, onOpen, onDragStart, onDragEnd, onMove, onChan
               <span className="small muted truncate">{deal.owner_name}</span>
             </span>
           ) : <span className="kr-flag kr-flag-warning">Nobody owns it</span>}
-          {deal.awaiting_customer && (
-            <span className="small muted" title="We have followed up since they last responded">waiting on them</span>
+          {deal.awaiting_customer && !deal.is_waiting && (
+            <span className="small muted" title="We have followed up since they last responded">chased, no reply yet</span>
           )}
         </div>
       </div>
@@ -227,8 +240,17 @@ export default function Pipeline() {
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [showPaused, setShowPaused] = useState(false);
   const [moving, setMoving] = useState(null);
-  // board, list, map, tree and dashboard are five ways of reading one dataset
+  // board, list, map, tree and dashboard are five ways of reading one dataset;
+  // the week, the reviews and the correspondence inbox are the weekly rhythm
   const [view, setView] = useState('board');
+  const [reviewScope, setReviewScope] = useState('mine');
+  const [pending, setPending] = useState(0);
+  const weekly = view === 'week' || view === 'review' || view === 'inbox';
+  const canSeeTeam = can('crm.manage.any') || can('report.view');
+
+  useEffect(() => {
+    api.crmSuggestions().then((r) => setPending(r.suggestions.length)).catch(() => setPending(0));
+  }, []);
 
   const filters = useMemo(
     () => ({
@@ -310,6 +332,7 @@ export default function Pipeline() {
 
       <HandoversWaiting onChanged={load} />
 
+      {!weekly && (
       <div className="filters">
         <button type="button" className={`btn btn-sm${mine ? ' btn-primary' : ''}`}
           title="Deals you own, owe the next move on, are the escalation point for, or help with"
@@ -363,6 +386,7 @@ export default function Pipeline() {
             value={search} onChange={(e) => setSearch(e.target.value)} />
         )}
       </div>
+      )}
 
       <div className="tabs tabs-scroll" role="tablist">
         {[
@@ -371,6 +395,9 @@ export default function Pipeline() {
           ['map', 'States & map'],
           ['tree', 'Who leads what'],
           ['dashboard', 'Dashboard'],
+          ['week', 'This week'],
+          ['review', 'Weekly review'],
+          ['inbox', pending ? `Correspondence (${pending})` : 'Correspondence'],
         ].map(([key, label]) => (
           <button
             key={key}
@@ -399,7 +426,23 @@ export default function Pipeline() {
           segmentId={segmentFilter} />
       )}
 
-      {view !== 'board' && view !== 'dashboard' && (
+      {view === 'week' && <WeekRecord />}
+      {view === 'review' && (
+        <div className="stack" style={{ gap: 12 }}>
+          {canSeeTeam && (
+            <div className="row" style={{ gap: 6 }} role="group" aria-label="Whose reviews">
+              <button type="button" className={`kind-chip${reviewScope === 'mine' ? ' is-active' : ''}`}
+                onClick={() => setReviewScope('mine')}>My review</button>
+              <button type="button" className={`kind-chip${reviewScope === 'team' ? ' is-active' : ''}`}
+                onClick={() => setReviewScope('team')}>Everyone’s</button>
+            </div>
+          )}
+          {canSeeTeam && reviewScope === 'team' ? <TeamReviews departmentId={departmentFilter} /> : <WeeklyReview />}
+        </div>
+      )}
+      {view === 'inbox' && <Correspondence onCount={setPending} />}
+
+      {view !== 'board' && view !== 'dashboard' && !weekly && (
         <CrmNudges departmentId={departmentFilter} />
       )}
 

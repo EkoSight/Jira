@@ -37,7 +37,11 @@ export const CRM_ENTITY_TYPES = ['OPPORTUNITY', 'ACCOUNT'];
  */
 export const BLOCKER_CATEGORIES = [
   'BUDGET', 'APPROVAL', 'PRICING', 'PROOF', 'TECHNICAL', 'TIMING', 'COMPETITION', 'CONTACT', 'OTHER',
+  // the obstacles the business named, kept as their own kinds so they can be counted
+  'SAMPLE_VALIDATION', 'PRICING_APPROVAL', 'FUNDING', 'PROCUREMENT',
 ];
+
+export const BLOCKER_DEPENDENCIES = ['INTERNAL', 'EXTERNAL'];
 
 export const THREAD_KINDS = [
   'review',
@@ -70,12 +74,14 @@ const THREAD_SELECT = `
          o.full_name AS opened_by_name, o.avatar_color AS opened_by_color,
          a.full_name AS awaiting_name,  a.avatar_color AS awaiting_color,
          r.full_name AS resolved_by_name,
+         rp.full_name AS responsible_name, rp.avatar_color AS responsible_color,
          (SELECT COUNT(*)::int FROM discussion_messages m WHERE m.thread_id = t.id) AS message_count,
          (SELECT MAX(m.created_at) FROM discussion_messages m WHERE m.thread_id = t.id) AS last_message_at
     FROM discussion_threads t
     LEFT JOIN users o ON o.id = t.opened_by
     LEFT JOIN users a ON a.id = t.awaiting_user
     LEFT JOIN users r ON r.id = t.resolved_by
+    LEFT JOIN users rp ON rp.id = t.responsible_user_id
 `;
 
 /**
@@ -179,17 +185,20 @@ export function canResolveThread(user, thread, entity = null) {
 /** Creates a thread with its first message. Both, or neither. */
 export async function createThread(client, {
   entityType, entityId, kind, title, body, actor, awaitingUserId = null,
-  category = null, participantIds = [],
+  category = null, participantIds = [], blocker = null,
 }) {
   if (!ENTITY_TYPES.includes(entityType)) throw badRequest('Unknown thing to discuss');
   if (!THREAD_KINDS.includes(kind)) throw badRequest('Unknown kind of thread');
 
   const { rows } = await client.query(
     `INSERT INTO discussion_threads
-       (entity_type, entity_id, kind, title, opened_by, awaiting_user, category)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+       (entity_type, entity_id, kind, title, opened_by, awaiting_user, category,
+        blocked_item, dependency, responsible_user_id, external_party, expected_resolution)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::date)
      RETURNING *`,
-    [entityType, entityId, kind, title || null, actor.id, awaitingUserId, category],
+    [entityType, entityId, kind, title || null, actor.id, awaitingUserId, category,
+      blocker?.blockedItem ?? null, blocker?.dependency ?? null, blocker?.responsibleUserId ?? null,
+      blocker?.externalParty ?? null, blocker?.expectedResolution ?? null],
   );
   const thread = rows[0];
 

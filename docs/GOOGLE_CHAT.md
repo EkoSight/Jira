@@ -186,6 +186,46 @@ yet installed, and any TaskFlow user without a Workspace account.
 **Without step 4c**, TaskFlow says hello once in each chat it cannot place,
 asking the person to reply. Their first reply connects them.
 
+## 5. Gmail and Calendar for the pipeline (optional)
+
+The pipeline's **Correspondence** tab turns emails and calendar entries with
+customers into suggested timeline entries, which a person confirms. Importing
+`.eml` and `.ics` files works without any of this. Reading Gmail and Calendar
+directly needs the same service account and two more read-only scopes.
+
+**Before you start:** domain-wide delegation lets the service account read the
+mailbox and calendar of *any* user in the Workspace — Google does not limit it to
+some people. TaskFlow itself only reads the mailboxes of people who switch it on,
+and only correspondence with the pipeline's organizations, but the permission you
+grant is domain-wide. Grant it only if that is acceptable.
+
+1. In the Admin console, open **Security → Access and data control → API controls
+   → Manage domain-wide delegation**, and edit the entry for the service account's
+   client ID (from step 4c, or add one). The scopes are one comma-separated list
+   that replaces the old one, so keep any you already granted and add:
+   ```
+   https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/calendar.readonly
+   ```
+2. In Google Cloud, enable the **Gmail API** and the **Google Calendar API**
+   (**APIs & Services → Library**).
+3. In TaskFlow, **Settings → Google Chat → Gmail and Calendar for the pipeline →
+   Allow people to switch it on**. "Look back" sets how many days each check
+   reads (default 3).
+4. Each person who wants it: **B2B Pipeline → Correspondence → Read my Gmail /
+   Read my Calendar**, then **Check now**. After that it is checked about hourly.
+
+What it reads, for a person who switched it on:
+
+- **Gmail:** messages from the last few days sent to or from the pipeline's
+  contacts' addresses or organization domains (public webmail domains are never
+  used to match) — the sender, recipients, subject, date and Gmail's short
+  preview. Never the full body, never attachments. Mail that matches no
+  organization is not stored.
+- **Calendar:** events on their primary calendar from a few days back to a week
+  ahead that include someone outside EkoSight.
+- Nothing reaches a timeline until the person confirms it. A past meeting is
+  logged only when they say it took place and what came of it.
+
 ## In Chat
 
 In a direct message to TaskFlow, people can send:
@@ -217,6 +257,9 @@ These have been tested against stand-ins for Google, not the live service:
 
 - Google Chat delivering events to `taskflow.ekosight.com`.
 - Messages appearing in a real Chat space.
+- Reading a real Gmail mailbox or Google Calendar (section 5): the requests,
+  the per-person sign-in and the matching are tested against a stand-in for
+  Google's APIs only.
 
 The sign-in call to Google's token service was exercised from the build
 environment with a throwaway account. Google answered as expected ("account not

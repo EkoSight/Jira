@@ -5,8 +5,8 @@ The brief: sixteen pipeline features, with one priority above the rest —
 pipeline still showed outdated stages and next steps.
 
 This report covers what was built, why each rule is shaped the way it is, what was
-tested, and what was not. It is written in phases; this is **phase 1, items 1–7
-("Must build first")**.
+tested, and what was not. It is written in phases: **phase 1, items 1–7 ("Must
+build first")**, then **phase 2, items 8–12 ("Weekly visibility")** further down.
 
 ---
 
@@ -202,4 +202,183 @@ Four kinds of fact, never added together:
 - **Not deployed.**
 - **Older deals are flagged, not fixed.** Deals created before this release have
   no next-action owner; they show "who?" until someone sets one.
-- Phases 2 and 3 (items 8–16) follow in later commits.
+
+---
+
+# Phase 2 — weekly visibility (items 8–12)
+
+## What changed in the database
+
+`021_weekly_visibility.sql`, additive only; the migration safety suite passes.
+
+| Change | Existing data |
+|---|---|
+| `opportunities.waiting_on`, `waiting_reason`, `waiting_until`, `waiting_since`, `waiting_set_by` | Blank: no existing deal is marked as waiting. |
+| `account_stages.quiet_after_days` | Blank: every stage keeps the follow-up cadence it already had. |
+| `customer_commitments` | New, empty. |
+| `pipeline_snapshots` (one row per week, unique on the week) | New, empty. Past weeks are **not** back-filled. |
+| `discussion_threads.blocked_item`, `dependency`, `responsible_user_id`, `external_party`, `expected_resolution` | Blank on existing blockers, which are shown as "not yet recorded" with a link to add the details. Nothing is guessed. |
+| `account_activities.external_ref`, `crm_meetings.external_ref`, each with a unique index that ignores blanks | Blank on every existing row. |
+| `crm_suggestions`, `crm_mailbox_sync`, `weekly_reviews`, `weekly_review_items` | New, empty. |
+
+## The rules, item by item
+
+### 8. The week, on the record
+
+**B2B Pipeline → This week.** A week runs Monday to Sunday, India time.
+
+- **Customer outcomes first:** deals moved forward and back; what customers
+  committed to, kept, missed, and still owe past its date; proposals sent;
+  **booked** (orders received), **invoiced** and **cash received** — never added
+  together; **what slipped** (next actions past their date, deal tasks not
+  finished on time); and **what needs a decision** (open blockers, deals past
+  their close date, handovers nobody confirmed, deals moved without evidence,
+  help asked for in reviews).
+- **Effort apart:** how many emails, calls and meetings were logged, in their
+  own section. Orders, payments and proposals already on the ledger are outcomes
+  and are not counted again as effort.
+- Every figure jumps to the records behind it; every deal links to its page.
+- **Written down once.** After 08:30 on Monday (India time) the scanner writes
+  down the week just ended and tells the pipeline managers. A week is never
+  rewritten: writing it again returns the existing record, and the database
+  allows one per week. The week in progress is worked out live and labelled
+  *In progress*.
+- **History:** back and forward by week, and a table of every week on the record.
+- **What a stored week means:** events (moves, commitments, money) are counted to
+  the end of the week; the current-state parts (next actions, close dates,
+  blockers, handovers) are as they stood when it was written — the screen says when.
+- A pipeline manager can write down an ended week that was not written (for
+  example, a week before this release); it records the data as it stands then,
+  and says so.
+
+### 9. Stalled-deal alerts that respect deliberate pauses
+
+- **Stalled is read on the customer's clock** — days since they last responded —
+  never on internal edits.
+- **Each stage can set its own threshold** (*Settings → Pipeline stages → Stalled
+  after*). Blank keeps the existing per-stage cadence.
+- Two different nudges: **Gone quiet** (nobody has been in touch) and **Chased, no
+  reply** (we followed up within the threshold; they have not answered).
+- **Waiting, on purpose.** A live deal can be marked *waiting on the customer*,
+  *a third party* or *us*, with a reason and a date (at most 180 days away). It
+  stays on the board with a "waiting" badge; its next action becomes *Check back:
+  …* on that date, owed by whoever checks back; it is not flagged until the date,
+  and then once (*Time to look again*). **Waiting on the customer ends by itself
+  when they respond**, and the history says so.
+- **On hold and Nurture now need a reason and a date to look again** (same 180-day
+  limit). They are silent until then. Deals paused before this release keep the
+  old slow cadence until someone gives them a date.
+- Also raised: a customer commitment past its date, a handover not confirmed
+  after two days (to the person it was handed to), and a blocker past its date
+  (to the person responsible).
+
+### 10. Blockers
+
+- A new blocker records **what is blocked**, whether it **depends on us or on
+  someone outside** (and who), **who on our side clears it**, and **the date it
+  should clear**. New categories: *Sample validation*, *Pricing approval*,
+  *Funding*, *Procurement* (the earlier ones remain).
+- The person responsible is told and added to the conversation.
+- Changing the date, the person or the dependency is noted in the blocker's
+  thread; on screen, moving the date asks why. Fields that did not change are
+  not reported as changed.
+- Past its date, a blocker is raised to the person responsible and listed in
+  the week's decisions.
+
+### 11. Email and calendar, confirmed rather than retyped
+
+**B2B Pipeline → Correspondence.**
+
+- Bring in an email (`.eml`, or "show original" pasted) or a calendar file
+  (`.ics`). Each becomes a **suggestion**: matched to a contact by exact email
+  address, else to an organization by its domain (from its contacts or website).
+  Public webmail domains are never used to match. An email between colleagues
+  only is refused.
+- **Nothing is logged until the person confirms it.** A confirmed email goes on
+  the timeline as *from them* or *to them*, dated when it was sent, marked "from
+  an imported email", and moves the right clock. The same step can record what
+  the customer committed to and the deal's next action.
+- A **future** calendar event becomes a booked meeting. A **past** one is logged
+  only if the person says it took place and what came of it.
+- The same email or event cannot land twice on an organization, whoever imports it.
+- **Reading Gmail and Calendar directly** is optional: an admin allows it, and
+  each person switches it on for themselves. Only correspondence with the
+  pipeline's contacts and organization domains is read — headers and Gmail's
+  preview, never full bodies or attachments — and still only suggested. Setup and
+  the domain-wide permission it needs: `docs/GOOGLE_CHAT.md`, section 5.
+- **Today's FarMart and Coromandel follow-ups** therefore reach the record by
+  importing (or syncing) the emails and confirming them — they appear on the
+  timeline and in the week, and move the customer clock, without a second log.
+
+### 12. The weekly review
+
+**B2B Pipeline → Weekly review.**
+
+- Each owner (and whoever owes a deal's next move) answers per deal: **what
+  changed** (or "nothing changed"), **the evidence** (a link), **the next
+  milestone and its date**, and **help needed** — and from whom.
+- Beside each deal: **what the record shows moved** that week (stage, proposal,
+  order, payment, commitments, hearing from them). Apart from it: **what they
+  logged** — effort, not outcome.
+- Sending needs an answer for every live deal; the missing ones are highlighted.
+  A sent review is not rewritten. Anyone asked for help is told.
+- Owners who have not sent one by 15:00 on Friday (India time) are reminded, once.
+- **Everyone's** (pipeline managers, and people with reports access): who has
+  sent theirs, help asked for, and each deal's record beside what the owner says —
+  with a note when someone says something changed but nothing on the record
+  moved. Answers are not shown to anyone else until they are sent.
+
+## Settings
+
+| Setting | Default | Where |
+|---|---|---|
+| Stalled after, per stage | the stage's existing cadence | Settings → Pipeline stages |
+| Gmail and Calendar reading | off; look back 3 days | Settings → Google Chat |
+| `crm.weekly` — snapshot Monday 08:30, review reminder Friday 15:00 (India) | as shown | settings API only, for now |
+| `crm.handoverConfirmDays` | 2 | settings API only |
+
+## Tested (phase 2)
+
+- **Server: 372 passing, 0 skipped**, including 17 new tests in
+  `server/tests/weekly.test.js`: waiting (validation, the next action it sets,
+  silence until its date, the reminder on it, ending when the customer writes);
+  On hold / Nurture needing a date; per-stage thresholds read on the customer's
+  clock ("gone quiet" vs "chased, no reply"; an internal note does not count);
+  commitments (recorded with an activity, raised when late, closed once);
+  blockers (every field required, the responsible person told, raised when late,
+  updates noted in the thread, unchanged fields not reported); the week
+  (contents, effort kept apart, never stored while running, never rewritten,
+  managers only); the weekly job (stores and notifies once on Monday, reminds
+  once on Friday — on a simulated clock); reviews (outcomes beside effort,
+  incomplete reviews refused, help notified, sent reviews locked, drafts hidden
+  from the team view, permissions); correspondence (parsing, matching by contact
+  and by domain, webmail never matched, internal mail refused, duplicates,
+  confirming, past vs future meetings, someone else's suggestion refused); and
+  Gmail / Calendar reading against a stand-in for Google (opt-in, reading as the
+  right person, unmatched mail never stored).
+- **Client: 67 passing**, including week arithmetic, pause dates, blocker
+  details, effort wording and that every nudge kind has words on screen.
+- **Browser** (Chromium via Playwright; 1400 px and 390 px; light and dark) on a
+  fresh database filled through the API: the week in progress and last week's
+  stored record with its history table; everyone's reviews; the stalled-after
+  setting saving; a deal's blocker details, commitments and pause dialog (a
+  pause without a reason is refused); the blocker dialog's new fields;
+  confirming an imported FarMart email with a new next action (the timeline,
+  the next action and the customer clock all updated); a past calendar call
+  refused until marked as held, then logged; an incomplete review highlighting
+  the missing deal; the waiting banner on Coromandel's second deal; no sideways
+  scrolling on a phone on the week, review, correspondence and deal screens.
+
+## Not done, or not claimed (phase 2)
+
+- **Not deployed.**
+- **Gmail and Calendar reading has not been run against real Google accounts** —
+  only against a stand-in. It needs the two delegation scopes and APIs above
+  before it can work, and the domain-wide nature of that permission is a
+  decision for the Workspace admin.
+- **No back-filled weeks.** The record starts with the first week that ends after
+  deployment (or a week a manager writes down by hand).
+- The Monday and Friday timings were tested with a simulated clock, not observed
+  on a running server across a real week.
+- The weekly schedule times have no Settings screen yet.
+- Phase 3 (items 13–16) follows.

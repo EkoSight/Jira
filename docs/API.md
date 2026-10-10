@@ -321,6 +321,49 @@ logged with an activity needs `next_step_due` and sets the deal's next action
 | `OUTCOME_REQUIRED` | Deal work finished without an outcome, or without saying whether it achieved what was asked | `field` |
 | `OUTCOME_READS_AS_PLAN` | The outcome reads like a plan; record progress or send `confirm_intent: true` | `field` |
 | `REASON_REQUIRED` | An owner or value change that needs a reason | `field` |
+| `REVISIT_REQUIRED` | On hold or Nurture needs `revisit_on` — not past, within 180 days | |
+| `REVIEW_INCOMPLETE` | A weekly review was sent without an answer for every live deal | `missing [{opportunity_id, name, missing}]` |
+| `MEETING_OUTCOME_REQUIRED` | A past calendar event was confirmed without `took_place: true` and an `outcome` | |
+
+---
+
+## B2B pipeline — the week
+
+The rules are in `docs/PIPELINE_PROGRESS.md` (phase 2). Every route here needs
+`crm.view` and the B2B module switched on.
+
+| Method | Route | Permission | Notes |
+|---|---|---|---|
+| POST | `/opportunities/:id/waiting` | `crm.activity.log` + works on the deal | `{ waiting_on: CUSTOMER\|THIRD_PARTY\|INTERNAL, reason, until, owner_id? }` — live deals only; `until` not past, within 180 days. The next action becomes "Check back: …" due `until` |
+| DELETE | `/opportunities/:id/waiting?reason=` | as above | Ends the wait (also ends by itself when the customer responds) |
+| POST | `/opportunities/:id/status` | as above | `ON_HOLD` / `NURTURE` now need `reason` and `revisit_on` |
+| GET | `/opportunities/:id/commitments` | signed in | What the customer committed to on this deal |
+| POST | `/opportunities/:id/commitments` | `crm.activity.log` + works on the deal | `{ what, due_on?, contact_id? }` |
+| POST | `/opportunities/commitments/:id/resolve` | as above | `{ status: KEPT\|MISSED\|WITHDRAWN, note? }` — once; never deleted |
+| PATCH | `/accounts/stages/:id` | `crm.stages.manage` | Also `quiet_after_days` (1–365, or `null` for the default) |
+| PATCH | `/threads/:id/blocker` | whoever may close the blocker | `{ blocked_item?, dependency?, external_party?, responsible_user_id?, expected_resolution?, note? }` — the change is noted in the thread; a new responsible person is told |
+| GET | `/crm/week?start=` | signed in | The week containing `start` (Monday–Sunday, India). `stored: true` once written down; `running: true` while in progress |
+| GET | `/crm/weeks` | signed in | Weeks on the record, newest first, with their summaries |
+| POST | `/crm/weeks/snapshot` | `crm.manage.any` | `{ start }` — writes down an ended week now; never overwrites one already written |
+| GET | `/crm/reviews/mine?start=` | signed in | My deals for the week: the record's outcomes, my logged activity, my answers |
+| PUT | `/crm/reviews/mine/items/:opportunityId?start=` | `crm.activity.log` | `{ what_changed?, no_change?, evidence_url?, next_milestone?, next_milestone_due?, help_needed?, help_from_user_id? }` |
+| POST | `/crm/reviews/mine/submit?start=` | `crm.activity.log` | `{ summary? }` — needs every live deal answered; tells anyone asked for help |
+| GET | `/crm/reviews/team?start=&department_id=` | `crm.manage.any` or `report.view` | Everyone's reviews; unsent answers are withheld |
+| POST | `/crm/import/email` | `crm.activity.log` | `{ raw, account_id? }` — a raw email (`.eml` or "show original"); returns a suggestion or `skipped` (`already_logged`, `already_suggested`) |
+| POST | `/crm/import/calendar` | `crm.activity.log` | `{ raw, account_id? }` — an `.ics` file; returns counts |
+| GET | `/crm/suggestions` | signed in | My pending suggestions |
+| POST | `/crm/suggestions/:id/confirm` | `crm.activity.log`, mine only | `{ account_id?, opportunity_id?, direction?, took_place?, outcome?, commitment?, next_step?, next_step_owner_id?, next_step_due? }` |
+| POST | `/crm/suggestions/:id/dismiss` | mine only | |
+| GET / PUT | `/crm/mailbox-sync` | signed in | `{ gmail_enabled?, calendar_enabled? }` — only once an admin allows it (`crm.mailboxSync.enabled`) |
+| POST | `/crm/mailbox-sync/run` | `crm.activity.log` | Reads my Gmail / Calendar now |
+
+**Blockers** (`POST /threads` with `kind: "blocker"`) also need `blocked_item`,
+`dependency` (`INTERNAL` | `EXTERNAL`), `external_party` (when external),
+`responsible_user_id` and `expected_resolution`. Categories now include
+`SAMPLE_VALIDATION`, `PRICING_APPROVAL`, `FUNDING` and `PROCUREMENT`.
+
+**Activities** also take `commitment { what, due_on? }`: something the customer
+said they would do, recorded with the activity.
 
 ---
 

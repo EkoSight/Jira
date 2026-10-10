@@ -215,6 +215,8 @@ export default function GoogleChatSettings() {
 
       <InstallForEveryone data={data} onSynced={load} />
 
+      <MailboxSyncAdmin usable={data.usable} />
+
       <section className="card">
         <div className="card-head"><h2>People</h2><span className="small muted">{linked.length} of {data.people.length} connected</span></div>
         <div className="card-pad stack-sm">
@@ -301,6 +303,78 @@ function InstallForEveryone({ data, onSynced }) {
             {busy ? 'Checking…' : 'Connect everyone now'}
           </button>
         </div>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Letting people have their Gmail and Calendar read for pipeline correspondence.
+ * Off by default; even when allowed, each person switches it on for themselves,
+ * only mail with the pipeline's organizations is read, and nothing is logged
+ * until the person confirms it.
+ */
+function MailboxSyncAdmin({ usable }) {
+  const toast = useToast();
+  const { settings, refresh } = useRefData();
+  const current = settings?.crm?.mailboxSync || { enabled: false, lookbackDays: 3 };
+  const [lookback, setLookback] = useState(String(current.lookbackDays ?? 3));
+  const [saving, setSaving] = useState(false);
+
+  const save = async (patch) => {
+    setSaving(true);
+    try {
+      // the whole pipeline block goes back, so nothing else in it is reset
+      await api.updateSettings('crm', { ...settings.crm, mailboxSync: { ...current, ...patch } });
+      refresh();
+      toast.success('Saved');
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="card card-pad stack-sm">
+      <div className="row-between wrap">
+        <div>
+          <h2>Gmail and Calendar for the pipeline</h2>
+          <div className="small muted">
+            Suggests timeline entries from correspondence with the pipeline’s organizations. Nothing is logged until the person confirms it.
+          </div>
+        </div>
+        {current.enabled ? <Badge tone="good">Allowed</Badge> : <Badge>Off</Badge>}
+      </div>
+      <div className="callout is-quiet small">
+        <Icon name="alert" />
+        <span>
+          Needs domain-wide delegation for the service account with the read-only scopes{' '}
+          <code>https://www.googleapis.com/auth/gmail.readonly</code> and{' '}
+          <code>https://www.googleapis.com/auth/calendar.readonly</code> (Google Admin → Security → API controls →
+          Domain-wide delegation). Only mail to or from known contacts and organization domains is read — subject,
+          sender and a short preview, never attachments — and only for people who switch it on in the pipeline’s
+          Correspondence tab.
+        </span>
+      </div>
+      <label className="check">
+        <input type="checkbox" checked={Boolean(current.enabled)} disabled={!usable || saving}
+          onChange={(e) => save({ enabled: e.target.checked })} />
+        <span><strong>Allow people to switch it on for themselves</strong>{usable ? '' : ' — the Google credentials above have to work first'}</span>
+      </label>
+      <div className="row wrap" style={{ gap: 8, alignItems: 'flex-end' }}>
+        <Field label="Look back (days)" hint="How far back each check reads">
+          <input className="input" type="number" min="1" max="14" style={{ width: 90 }} value={lookback}
+            onChange={(e) => setLookback(e.target.value)} />
+        </Field>
+        <button type="button" className="btn btn-sm" disabled={saving}
+          onClick={() => {
+            const days = Math.round(Number(lookback));
+            if (!Number.isFinite(days) || days < 1 || days > 14) return toast.error('Between 1 and 14 days');
+            return save({ lookbackDays: days });
+          }}>
+          Save
+        </button>
       </div>
     </section>
   );

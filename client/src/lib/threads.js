@@ -11,6 +11,8 @@
  *   it happened, and they gate nothing.
  */
 
+import { todayInIndia } from './crm.js';
+
 export const THREAD_KINDS = [
   {
     value: 'review',
@@ -99,6 +101,10 @@ export const kindsFor = (canRaiseReview) =>
 
 /** What sort of thing is in a lead's way. Mirrors the server's list. */
 export const BLOCKER_CATEGORIES = [
+  { value: 'SAMPLE_VALIDATION', label: 'Sample validation', hint: 'Samples or a pilot must be tested and accepted first' },
+  { value: 'PRICING_APPROVAL', label: 'Pricing approval', hint: 'A price, discount or terms need sign-off — ours or theirs' },
+  { value: 'FUNDING', label: 'Funding', hint: 'Money has to be raised, released or sanctioned' },
+  { value: 'PROCUREMENT', label: 'Procurement', hint: 'Vendor registration, tender or purchase process' },
   { value: 'BUDGET', label: 'Budget', hint: 'No money this cycle, or it is committed elsewhere' },
   { value: 'APPROVAL', label: 'Approval', hint: 'Somebody above our contact has to say yes' },
   { value: 'PRICING', label: 'Pricing', hint: 'The price or terms do not work for them' },
@@ -111,6 +117,29 @@ export const BLOCKER_CATEGORIES = [
 ];
 export const blockerCategory = (value) =>
   BLOCKER_CATEGORIES.find((c) => c.value === value) || null;
+
+/** Whose move it is to clear a blocker: ours, or somebody outside. */
+export const BLOCKER_DEPENDENCIES = [
+  { value: 'INTERNAL', label: 'On us', hint: 'Somebody inside EkoSight has to act' },
+  { value: 'EXTERNAL', label: 'On someone outside', hint: 'The customer, their lab, a funder, a supplier' },
+];
+
+/**
+ * What is wrong with a blocker's details, or null: what is blocked, whose move
+ * it is (and who outside, if not ours), who on our side clears it, and the date
+ * it should clear — the same checks the server makes.
+ */
+export function blockerProblem(facts, todayDate = todayInIndia()) {
+  if (String(facts.blocked_item || '').trim().length < 3) return 'Say what exactly is blocked';
+  if (!facts.dependency) return 'Say whether it depends on us or on someone outside';
+  if (facts.dependency === 'EXTERNAL' && String(facts.external_party || '').trim().length < 2) {
+    return 'Say who outside holds it up';
+  }
+  if (!facts.responsible_user_id) return 'Name who on our side clears it';
+  if (!facts.expected_resolution) return 'Give the date it is expected to clear';
+  if (facts.expected_resolution < todayDate) return 'That date has already passed';
+  return null;
+}
 
 /** Open threads where somebody is waiting on somebody else. */
 export const openAsks = (threads = []) =>

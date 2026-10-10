@@ -303,6 +303,8 @@ test('the watchdog flags a lead that has stopped moving, and reminds the owner',
     [id],
   );
   await query(`UPDATE account_activities SET occurred_at = now() - interval '12 days' WHERE account_id = $1`, [id]);
+  // and its deal, which is what the reminders now read
+  await query(`UPDATE opportunities SET created_at = now() - interval '12 days' WHERE account_id = $1`, [id]);
 
   const insights = await call('GET', '/accounts/insights', { token: tokens.rep });
   const drifting = insights.body.attention.find((s) => s.account_id === id);

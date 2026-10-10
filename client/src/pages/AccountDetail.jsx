@@ -7,7 +7,7 @@ import AccountDialog from '../components/AccountDialog.jsx';
 import LogActivityDialog from '../components/LogActivityDialog.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import CrmPeople from '../components/CrmPeople.jsx';
-import CrmOpportunities from '../components/CrmOpportunities.jsx';
+import CrmOpportunities, { CommitmentsPanel } from '../components/CrmOpportunities.jsx';
 import CrmMeetings from '../components/CrmMeetings.jsx';
 import CrmDelivery from '../components/CrmDelivery.jsx';
 import CrmResources from '../components/CrmResources.jsx';
@@ -135,6 +135,7 @@ export default function AccountDetail() {
   const money = formatMoney(account.value, account.currency);
   const isLead = account.type === 'LEAD';
   const liveDeals = opportunities.filter((o) => o.status === 'ACTIVE');
+  const openCommitments = (data.commitments || []).filter((c) => c.status === 'OPEN');
   // the deal the organization's headline follows, if it is still live
   const mainDeal = liveDeals.find((o) => o.id === account.primary_opportunity_id) || liveDeals[0] || null;
 
@@ -308,6 +309,14 @@ export default function AccountDetail() {
 
       <CrmBlockers account={account} opportunities={opportunities} compact
         raiseSignal={raiseSignal} onChanged={load} />
+
+      {/* each deal shows its own on the Opportunities tab */}
+      {openCommitments.length > 0 && tab !== 'opportunities' && (
+        <section className="card card-pad">
+          <CommitmentsPanel commitments={openCommitments} canEdit={canEdit && can('crm.activity.log')}
+            onChanged={load} showDeal />
+        </section>
+      )}
 
       <div className="tabs tabs-scroll" role="tablist">
         {[

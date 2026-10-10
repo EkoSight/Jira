@@ -185,6 +185,13 @@ async function googleApi(url, { method = 'GET', body, scope, subject } = {}) {
   return data;
 }
 
+/**
+ * Any other Google Workspace API, as the service account acting for `subject`
+ * (a Workspace user) — used to read a person's own Gmail and Calendar when they
+ * have switched that on. Needs the scope granted under domain-wide delegation.
+ */
+export const workspaceApi = (url, options = {}) => googleApi(url, options);
+
 // ---------------------------------------------------------------- finding people's chats
 
 const DIRECTORY_SCOPE = 'https://www.googleapis.com/auth/admin.directory.user.readonly';

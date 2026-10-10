@@ -131,6 +131,23 @@ export const DEFAULT_SETTINGS = {
     },
     // a blocker nobody has replied to in this long is nudged
     blockerQuietDays: 3,
+    // a handover nobody has confirmed after this long is raised with them again
+    handoverConfirmDays: 2,
+    // the weekly record of what moved (India time)
+    weekly: {
+      // the snapshot of the week just ended is written on this day, at this time
+      snapshotDay: 1,
+      snapshotTime: '08:30',
+      // owners who have not sent their weekly review are reminded once
+      reviewReminderDay: 5,
+      reviewReminderTime: '15:00',
+    },
+    // reading people's own Gmail and Calendar for correspondence with known
+    // contacts: off until an admin turns it on, and then only for those who opt in
+    mailboxSync: {
+      enabled: false,
+      lookbackDays: 3,
+    },
   },
   googleChat: {
     // off until an admin has sent a test message and switched it on

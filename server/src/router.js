@@ -17,6 +17,7 @@ import keyResultRoutes from './routes/keyResults.js';
 import accountRoutes from './routes/accounts.js';
 import threadRoutes from './routes/threads.js';
 import opportunityRoutes from './routes/opportunities.js';
+import crmWeeklyRoutes from './routes/crmWeekly.js';
 import meetingRoutes from './routes/meetings.js';
 import engagementRoutes from './routes/engagements.js';
 import resourceRoutes from './routes/resources.js';
@@ -88,6 +89,8 @@ export function createTaskFlowRouter() {
   router.use('/meetings', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), meetingRoutes);
   router.use('/engagements', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), engagementRoutes);
   router.use('/resources', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), resourceRoutes);
+  // the week's record, weekly reviews and imported correspondence
+  router.use('/crm', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), crmWeeklyRoutes);
 
   return router;
 }

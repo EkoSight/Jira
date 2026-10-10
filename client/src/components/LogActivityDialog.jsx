@@ -55,6 +55,8 @@ export default function LogActivityDialog({ account, opportunities = [], type = 
   const [next, setNext] = useState(() => nextActionDraft(primary, user?.id));
   const [nextError, setNextError] = useState(null);
   const [makeTask, setMakeTask] = useState(false);
+  const [withCommitment, setWithCommitment] = useState(false);
+  const [commitment, setCommitment] = useState({ what: '', due_on: '' });
   const [saving, setSaving] = useState(false);
 
   const deal = liveDeals.find((o) => String(o.id) === dealId) || null;
@@ -76,6 +78,11 @@ export default function LogActivityDialog({ account, opportunities = [], type = 
       const problem = nextActionProblem(next);
       setNextError(problem);
       if (problem) return undefined;
+    }
+    const committed = withCommitment && direction !== 'INTERNAL';
+    if (committed && commitment.what.trim().length < 3) {
+      toast.error('Say what they committed to');
+      return undefined;
     }
     setSaving(true);
     try {
@@ -110,10 +117,15 @@ export default function LogActivityDialog({ account, opportunities = [], type = 
         occurred_at: when ? fromDateTimeLocal(when) : null,
         task_id: taskId,
         ...(withNext ? nextActionBody(next) : {}),
+        ...(committed ? { commitment: { what: commitment.what.trim(), due_on: commitment.due_on || null } } : {}),
       });
 
-      toast.success(taskId ? `${meta.label} logged, next action set, follow-up task created`
-        : withNext ? `${meta.label} logged, next action set` : `${meta.label} logged`);
+      toast.success([
+        `${meta.label} logged`,
+        withNext && 'next action set',
+        taskId && 'follow-up task created',
+        committed && 'their commitment recorded',
+      ].filter(Boolean).join(', '));
       onSaved();
       onClose();
     } catch (err) {
@@ -181,6 +193,28 @@ export default function LogActivityDialog({ account, opportunities = [], type = 
         <Field label="When did it happen?" hint="Leave blank for now. Logging it late does not make it new.">
           <input className="input" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
         </Field>
+
+        {direction !== 'INTERNAL' && (
+          <div className="alignment" style={{ gap: 10 }}>
+            <label className="checklist-item" style={{ padding: 0 }}>
+              <input type="checkbox" checked={withCommitment} onChange={(e) => setWithCommitment(e.target.checked)} />
+              <span>They committed to doing something</span>
+            </label>
+            {withCommitment && (
+              <div className="grid-2">
+                <Field label="What did they commit to? *">
+                  <input className="input" value={commitment.what}
+                    onChange={(e) => setCommitment({ ...commitment, what: e.target.value })}
+                    placeholder="Send 12 soil samples" />
+                </Field>
+                <Field label="By when" hint="It is raised if this date passes">
+                  <input className="input" type="date" value={commitment.due_on}
+                    onChange={(e) => setCommitment({ ...commitment, due_on: e.target.value })} />
+                </Field>
+              </div>
+            )}
+          </div>
+        )}
 
         {deal ? (
           <div className="alignment" style={{ gap: 10 }}>

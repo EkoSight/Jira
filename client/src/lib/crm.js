@@ -60,6 +60,26 @@ export const CRM_SIGNAL_META = {
     label: 'Gone quiet', severity: 'warning',
     action: 'Speak to them, then log it',
   },
+  awaiting_reply: {
+    label: 'Chased, no reply', severity: 'warning',
+    action: 'Try another contact or channel — or mark it waiting on them, with a date',
+  },
+  revisit_due: {
+    label: 'Time to look again', severity: 'warning',
+    action: 'Pick it back up, or set a new date with a reason',
+  },
+  commitment_overdue: {
+    label: 'Customer commitment missed', severity: 'warning',
+    action: 'Ask them about it, then mark it kept or missed',
+  },
+  handover_unconfirmed: {
+    label: 'Handover not confirmed', severity: 'warning',
+    action: 'Confirm you have it, or tell whoever handed it over',
+  },
+  blocker_overdue: {
+    label: 'Blocker past its date', severity: 'critical',
+    action: 'Clear it, or give it an honest new date',
+  },
   next_action_overdue: {
     label: 'Next action overdue', severity: 'warning',
     action: 'Do it, or agree a new one with a date',
@@ -483,3 +503,75 @@ export const LEDGER_FIGURES = [
   { key: 'invoiced', label: 'Invoiced', hint: 'Revenue billed and not cancelled' },
   { key: 'cash_received', label: 'Cash received', hint: 'Payments that actually arrived, voids excluded' },
 ];
+
+/** Who a deal paused on purpose is waiting on. Mirrors the server's list. */
+export const WAITING_ON = [
+  { value: 'CUSTOMER', label: 'Waiting on the customer', short: 'the customer',
+    hint: 'It stays on the board and is not chased until the date. It ends by itself when they respond.' },
+  { value: 'THIRD_PARTY', label: 'Waiting on a third party', short: 'a third party',
+    hint: 'Their lab, a funder, a partner. It stays on the board and is not chased until the date.' },
+  { value: 'INTERNAL', label: 'Waiting on us', short: 'us',
+    hint: 'Our own pricing approval, samples or sign-off. It stays on the board until the date.' },
+];
+export const waitingWords = (value) => WAITING_ON.find((w) => w.value === value)?.short || 'someone';
+
+/** The longest a deal may be parked before it counts as forgotten. The server's limit. */
+export const MAX_PAUSE_DAYS = 180;
+
+/** What is wrong with the date to look at a paused deal again, or null. */
+export function revisitProblem(day, todayDate = todayInIndia()) {
+  if (!day) return 'Give the date to look at it again';
+  if (day < todayDate) return 'That date has already passed';
+  const limit = new Date(`${todayDate}T00:00:00Z`);
+  limit.setUTCDate(limit.getUTCDate() + MAX_PAUSE_DAYS);
+  if (day > limit.toISOString().slice(0, 10)) {
+    return `Pick a date within ${MAX_PAUSE_DAYS} days — a deal parked longer than that is forgotten, not waiting`;
+  }
+  return null;
+}
+
+/** What became of something the customer said they would do. */
+export const COMMITMENT_STATUS_META = {
+  OPEN: { label: 'Open', tone: 'brand' },
+  KEPT: { label: 'Kept', tone: 'good' },
+  MISSED: { label: 'Missed', tone: 'critical' },
+  WITHDRAWN: { label: 'Withdrawn', tone: 'neutral' },
+};
+
+/** Monday to Monday (India) around a day, as YYYY-MM-DD; the end is exclusive. The server's rule. */
+export function weekOf(day = todayInIndia()) {
+  const d = new Date(`${String(day).slice(0, 10)}T00:00:00Z`);
+  const start = new Date(d);
+  start.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 7);
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+}
+
+/** The start of the week `weeks` before or after the week starting `start`. */
+export function shiftWeek(start, weeks) {
+  const d = new Date(`${start}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 7 * weeks);
+  return d.toISOString().slice(0, 10);
+}
+
+/** "5 – 11 Oct 2026", Monday to Sunday. */
+export function weekLabel(start) {
+  const first = new Date(`${start}T00:00:00Z`);
+  const last = new Date(first);
+  last.setUTCDate(first.getUTCDate() + 6);
+  const fmt = (d, opts) => d.toLocaleDateString('en-IN', { timeZone: 'UTC', ...opts });
+  const sameMonth = first.getUTCMonth() === last.getUTCMonth();
+  return `${fmt(first, sameMonth ? { day: 'numeric' } : { day: 'numeric', month: 'short' })} – ${fmt(last, { day: 'numeric', month: 'short', year: 'numeric' })}`;
+}
+
+/** "3 emails, 1 call" from counts by activity type; empty when nothing was logged. */
+export function effortWords(counts = {}) {
+  return Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .map(([type, n]) => {
+      const label = (ACTIVITY_META[type]?.label || type).toLowerCase();
+      return `${n} ${n === 1 ? label : `${label}${/s$/.test(label) ? '' : 's'}`}`;
+    })
+    .join(', ');
+}

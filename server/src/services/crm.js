@@ -200,6 +200,9 @@ export async function pipeline(filters = {}) {
  */
 const EXTERNAL_TYPES = new Set(['EMAIL', 'CALL', 'PPT', 'PROPOSAL', 'MEETING', 'DEMO', 'IN_PERSON']);
 
+/** Exchanges that, when they took place, mean the customer engaged. */
+const TWO_WAY_TYPES = new Set(['CALL', 'MEETING', 'DEMO', 'IN_PERSON']);
+
 /**
  * What a touch of each kind means by default, when the caller does not say.
  * Sending is not the same as being answered, and neither is the same as a
@@ -215,7 +218,7 @@ export async function logActivity(client, {
   taskId = null, occurredAt = null, meta = {},
   opportunityId = null, engagementId = null, meetingId = null, contactId = null,
   channel = null, direction = null, outcome = null, externalParticipants = null,
-  isExternal = null, source = null,
+  isExternal = null, source = null, externalRef = null,
 }) {
   const runner = client || { query };
 
@@ -232,14 +235,15 @@ export async function logActivity(client, {
     `INSERT INTO account_activities
        (account_id, type, actor_id, subject, body, next_step, task_id, occurred_at, meta,
         opportunity_id, engagement_id, meeting_id, contact_id, channel, direction,
-        outcome, external_participants, is_external, source)
+        outcome, external_participants, is_external, source, external_ref)
      VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()),$9,
-             $10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
      RETURNING *`,
     [
       accountId, type, actorId, subject, body, nextStep, taskId, occurredAt, meta,
       opportunityId, engagementId, meetingId, contactId, channel, resolvedDirection,
       resolvedOutcome, externalParticipants, external, source ?? (type === 'STAGE_CHANGE' ? 'SYSTEM' : null),
+      externalRef,
     ],
   );
 
@@ -257,6 +261,34 @@ export async function logActivity(client, {
       WHERE id = $1`,
     [accountId, rows[0].occurred_at, countsAsEngagement],
   );
+
+  // Hearing from the customer ends a wait on them: the reason the deal was
+  // paused is gone, so it goes back to being chased like any live deal. The
+  // change is written to the deal's history, so it never happens silently.
+  const customerSpoke = external && (resolvedDirection === 'INBOUND' || resolvedOutcome === 'RECEIVED'
+    || (resolvedOutcome === 'COMPLETED' && TWO_WAY_TYPES.has(type)));
+  if (opportunityId && customerSpoke) {
+    const { rows: waiting } = await runner.query(
+      `SELECT waiting_until, waiting_reason FROM opportunities
+        WHERE id = $1 AND waiting_on = 'CUSTOMER' FOR UPDATE`,
+      [opportunityId],
+    );
+    if (waiting[0]) {
+      await runner.query(
+        `UPDATE opportunities
+            SET waiting_on = NULL, waiting_reason = NULL, waiting_until = NULL, waiting_since = NULL,
+                waiting_set_by = NULL, updated_at = now()
+          WHERE id = $1`,
+        [opportunityId],
+      );
+      await runner.query(
+        `INSERT INTO opportunity_history (opportunity_id, field, from_value, to_value, reason, actor_id)
+         VALUES ($1, 'waiting', $2, NULL, $3, $4)`,
+        [opportunityId, `CUSTOMER until ${String(waiting[0].waiting_until).slice(0, 10)}`,
+          `They responded: ${subject || type.toLowerCase()}`, actorId],
+      );
+    }
+  }
 
   // and so is the deal it was about
   if (opportunityId && countsAsEngagement) {

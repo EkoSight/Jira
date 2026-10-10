@@ -21,7 +21,7 @@ import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { notify } from './activity.js';
 import { logActivity } from './crm.js';
-import { nextActionGaps, problemWithNextAction } from './dealRules.js';
+import { nextActionGaps, problemWithNextAction, today } from './dealRules.js';
 
 const DAY = 86_400_000;
 
@@ -116,7 +116,7 @@ export const OPPORTUNITY_SELECT = `
          ro.full_name AS relationship_owner_name,
          s.name AS stage_name, s.slug AS stage_slug, s.kind AS stage_kind,
          s.color AS stage_color, s.position AS stage_position,
-         s.default_probability AS stage_probability,
+         s.default_probability AS stage_probability, s.quiet_after_days AS stage_quiet_after_days,
          s.requires_contact, s.requires_next_action, s.requires_value,
          (SELECT COUNT(*)::int FROM opportunity_contacts oc WHERE oc.opportunity_id = o.id) AS contact_count,
          (SELECT COUNT(*)::int FROM opportunity_requirements r
@@ -155,6 +155,11 @@ export const OPPORTUNITY_SELECT = `
            WHERE dt.kind = 'blocker' AND dt.status = 'open'
              AND ((dt.entity_type = 'OPPORTUNITY' AND dt.entity_id = o.id)
                   OR (dt.entity_type = 'ACCOUNT' AND dt.entity_id = o.account_id))) AS open_blockers,
+         (SELECT COUNT(*)::int FROM customer_commitments cc
+           WHERE cc.opportunity_id = o.id AND cc.status = 'OPEN') AS open_commitments,
+         (SELECT COUNT(*)::int FROM customer_commitments cc
+           WHERE cc.opportunity_id = o.id AND cc.status = 'OPEN'
+             AND cc.due_on < (now() AT TIME ZONE 'Asia/Kolkata')::date) AS overdue_commitments,
          ${FRESHNESS_COLUMNS},
          ${COMMERCIAL_COLUMNS}
     FROM opportunities o
@@ -281,6 +286,12 @@ export function decorateOpportunity(row, now = Date.now()) {
     // we have chased since they last engaged — the ball is in their court
     awaiting_customer: outboundAt !== null && (customerAt === null || outboundAt > customerAt),
     next_step_age_days: daysSince(row.next_step_set_at, now),
+    // paused on purpose: until the revisit date it is not chased, on it it is
+    is_waiting: Boolean(row.waiting_on) && row.status === 'ACTIVE',
+    revisit_due: (row.waiting_on && row.status === 'ACTIVE' && row.waiting_until
+        && String(row.waiting_until).slice(0, 10) <= today())
+      || (['ON_HOLD', 'NURTURE'].includes(row.status) && row.revisit_on
+        && String(row.revisit_on).slice(0, 10) <= today()) || false,
     next_action_gaps: nextActionGaps(row),
     flags: dealFlags(row, gaps),
     account_logo_src: row.account_logo_uploaded_at
