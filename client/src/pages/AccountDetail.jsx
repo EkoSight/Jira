@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { AuthedImage, Avatar, Badge, ConfirmButton, EmptyState, Icon, Spinner } from '../components/ui.jsx';
@@ -13,9 +13,24 @@ import CrmDelivery from '../components/CrmDelivery.jsx';
 import CrmResources from '../components/CrmResources.jsx';
 import AccountDossier from '../components/AccountDossier.jsx';
 import CrmBlockers from '../components/CrmBlockers.jsx';
-import { ConvertDialog, SettleDialog } from '../components/LeadMoveDialogs.jsx';
-import { ACCOUNT_TYPE_META, QUICK_ACTIVITIES, activityMeta, formatMoney, freshnessLabel } from '../lib/crm.js';
-import { formatDate, relativeTime, dueLabel, STAGE_LABEL } from '../lib/format.js';
+import { ConvertDialog } from '../components/LeadMoveDialogs.jsx';
+import DealMoveDialog from '../components/DealMoveDialog.jsx';
+import { NextActionLine } from '../components/DealParts.jsx';
+import {
+  ACCOUNT_TYPE_META, CLOCKS, DIRECTION_META, QUICK_ACTIVITIES, SOURCE_LABEL, activityMeta, agoWords,
+  clockTone, formatMoney,
+} from '../lib/crm.js';
+import { relativeTime, dueLabel } from '../lib/format.js';
+
+/**
+ * Which way an entry went. Older entries recorded before directions were kept
+ * show nothing rather than a guess.
+ */
+function directionOf(activity) {
+  if (activity.direction) return activity.direction;
+  if (activity.is_external === false) return 'INTERNAL';
+  return null;
+}
 
 function Timeline({ activities }) {
   if (!activities.length) return <div className="small muted">Nothing logged yet.</div>;
@@ -23,15 +38,23 @@ function Timeline({ activities }) {
     <div className="stack">
       {activities.map((activity) => {
         const meta = activityMeta(activity.type);
+        const direction = DIRECTION_META[directionOf(activity)];
         return (
-          <div key={activity.id} className="timeline-row">
+          <div key={activity.id} className={`timeline-row${directionOf(activity) === 'INTERNAL' ? ' is-internal' : ''}`}>
             <span className="timeline-icon"><Icon name={meta.icon} size={13} /></span>
             <div className="grow" style={{ minWidth: 0 }}>
               <div className="row wrap" style={{ gap: 6 }}>
                 <span style={{ fontWeight: 600, fontSize: 13 }}>{activity.subject || meta.label}</span>
                 <Badge tone="neutral">{meta.label}</Badge>
+                {direction && <Badge tone={direction.tone} title={direction.title}>{direction.label}</Badge>}
+                {activity.opportunity_name && <span className="small muted">· {activity.opportunity_name}</span>}
               </div>
               {activity.body && <div className="small" style={{ whiteSpace: 'pre-wrap', marginTop: 2 }}>{activity.body}</div>}
+              {activity.meta?.evidence_url && (
+                <div className="small" style={{ marginTop: 2 }}>
+                  <a className="btn-link" href={activity.meta.evidence_url} target="_blank" rel="noopener noreferrer">evidence</a>
+                </div>
+              )}
               {activity.next_step && <div className="small muted" style={{ marginTop: 2 }}>Next: {activity.next_step}</div>}
               {activity.task_ref && (
                 <div className="small" style={{ marginTop: 2 }}>
@@ -40,6 +63,7 @@ function Timeline({ activities }) {
               )}
               <div className="small muted" style={{ marginTop: 2 }}>
                 {activity.actor_name || 'Someone'} · {relativeTime(activity.occurred_at)}
+                {activity.source && SOURCE_LABEL[activity.source] ? ` · ${SOURCE_LABEL[activity.source]}` : ''}
               </div>
             </div>
           </div>
@@ -49,8 +73,23 @@ function Timeline({ activities }) {
   );
 }
 
+/** How a finished deal task closed: achieved with evidence, achieved without, or not achieved. */
+function OutcomeBadge({ task }) {
+  if (task.stage !== 'done') return null;
+  if (task.outcome_status === 'NOT_ACHIEVED') return <Badge tone="warning">closed, not achieved</Badge>;
+  if (task.outcome_status === 'ACHIEVED' && task.outcome_evidence_url) {
+    return <Badge tone="good" title="Finished, with a link to the evidence">evidence</Badge>;
+  }
+  if (task.outcome_status === 'ACHIEVED') {
+    return <Badge tone="neutral" title="Finished, but no link to the evidence was given">no evidence link</Badge>;
+  }
+  return null;
+}
+
 export default function AccountDetail() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const focusDeal = searchParams.get('deal') ? Number(searchParams.get('deal')) : null;
   const navigate = useNavigate();
   const { can } = useAuth();
   const toast = useToast();
@@ -61,10 +100,11 @@ export default function AccountDetail() {
   const [editing, setEditing] = useState(false);
   const [logging, setLogging] = useState(null);
   const [addingTask, setAddingTask] = useState(false);
-  const [tab, setTab] = useState('overview');
+  // arriving from a deal card opens that deal
+  const [tab, setTab] = useState(() => (focusDeal ? 'opportunities' : 'overview'));
   const [openTask, setOpenTask] = useState(null);
   const [converting, setConverting] = useState(null);
-  const [settling, setSettling] = useState(null);
+  const [moving, setMoving] = useState(null);
   const [raiseSignal, setRaiseSignal] = useState(0);
 
   const load = () => {
@@ -80,6 +120,10 @@ export default function AccountDetail() {
     api.accountStages().then((d) => setStages(d.stages)).catch(() => {});
   }, [id]);
 
+  useEffect(() => {
+    if (focusDeal) setTab('opportunities');
+  }, [focusDeal]);
+
   if (loading && !data) return <Spinner label="Loading the account" />;
   if (!data) return <EmptyState title="Account not found" />;
 
@@ -88,23 +132,18 @@ export default function AccountDetail() {
     engagements = [], can_edit: canEdit,
   } = data;
   const typeMeta = ACCOUNT_TYPE_META[account.type];
-  const fresh = freshnessLabel(account.days_since_activity);
   const money = formatMoney(account.value, account.currency);
   const isLead = account.type === 'LEAD';
+  const liveDeals = opportunities.filter((o) => o.status === 'ACTIVE');
+  // the deal the organization's headline follows, if it is still live
+  const mainDeal = liveDeals.find((o) => o.id === account.primary_opportunity_id) || liveDeals[0] || null;
 
-  const moveStage = async (stageId) => {
-    const target = stages.find((s) => s.id === Number(stageId));
-    // won and lost each ask their one question; open stages just move
-    if (target && target.kind !== 'open') {
-      setSettling(target);
-      return;
-    }
-    try {
-      await api.moveAccountStage(account.id, Number(stageId));
-      load();
-    } catch (err) {
-      toast.error(err);
-    }
+  // moving the organization's stage moves its main deal, through the same
+  // dialog — evidence and next action included — as moving the deal itself
+  const moveStage = (stageId) => {
+    if (!mainDeal) return toast.error('There is no live deal here to move — add one on the Opportunities tab');
+    setMoving({ deal: mainDeal, stageId: Number(stageId) });
+    return undefined;
   };
 
   const convert = (type) => setConverting(type);
@@ -136,14 +175,26 @@ export default function AccountDetail() {
                 : <span className="muted" title="Set it with Edit — it drives the state-wise view">no state recorded</span>}
               {account.source && <><span>·</span><span>from {account.source}</span></>}
               <span>·</span>
-              <span>last worked <Badge tone={fresh.tone}>{fresh.text}</Badge></span>
+              <span>{liveDeals.length} live deal{liveDeals.length === 1 ? '' : 's'}</span>
+            </div>
+            <div className="clock-inline small">
+              {CLOCKS.map((clock) => (
+                <span key={clock.key} title={clock.hint}>
+                  {clock.label}{' '}
+                  <strong className={`clock-text clock-${clock.key === 'days_since_internal' ? 'neutral' : clockTone(account[clock.key])}`}>
+                    {agoWords(account[clock.key])}
+                  </strong>
+                </span>
+              ))}
             </div>
           </div>
           <div className="row wrap">
-            {canEdit && isLead && (
-              <select className="select" style={{ width: 'auto' }} value="" onChange={(e) => e.target.value && moveStage(e.target.value)}>
-                <option value="">Move stage…</option>
-                {stages.filter((s) => s.id !== account.stage_id).map((s) => (
+            {canEdit && mainDeal && (
+              <select className="select" style={{ width: 'auto' }} value=""
+                title={liveDeals.length > 1 ? `Moves ${mainDeal.name} — open Opportunities to move another deal` : undefined}
+                onChange={(e) => e.target.value && moveStage(e.target.value)}>
+                <option value="">{liveDeals.length > 1 ? 'Move main deal…' : 'Move stage…'}</option>
+                {stages.filter((s) => s.id !== mainDeal.stage_id).map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>
@@ -205,20 +256,20 @@ export default function AccountDetail() {
               ) : <span className="muted small">Nobody</span>}
             </div>
           </div>
-          <div className="grow" style={{ minWidth: 180 }}>
-            <div className="stat-label">Next step</div>
-            {account.next_step ? (
-              <div style={{ marginTop: 4 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{account.next_step}</div>
-                {account.next_step_due && (
-                  <Badge tone={account.next_step_overdue ? 'critical' : 'neutral'}>
-                    {account.next_step_overdue ? 'overdue' : 'due'} {formatDate(account.next_step_due)}
-                  </Badge>
-                )}
-              </div>
-            ) : (
-              <div className="small muted" style={{ marginTop: 4 }}>None set — every open lead should have one.</div>
-            )}
+          <div className="grow" style={{ minWidth: 200 }}>
+            <div className="stat-label">
+              Next action{mainDeal && liveDeals.length > 1 ? ` · ${mainDeal.name}` : ''}
+            </div>
+            <div style={{ marginTop: 4 }}>
+              {mainDeal ? <NextActionLine opportunity={mainDeal} /> : (
+                <div className="small muted">No live deal — nothing is owed next.</div>
+              )}
+              {liveDeals.length > 1 && (
+                <button type="button" className="btn-link small" onClick={() => setTab('opportunities')}>
+                  {liveDeals.length - 1} more live deal{liveDeals.length === 2 ? '' : 's'}, each with its own next action
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
@@ -299,6 +350,8 @@ export default function AccountDetail() {
           opportunities={opportunities}
           stages={stages}
           canEdit={canEdit}
+          relationshipOwnerId={account.owner_user_id}
+          focusId={focusDeal}
           segmentTemplate={account.segment_scope_template || []}
           segmentName={account.segment_name}
           onChanged={load}
@@ -376,6 +429,7 @@ export default function AccountDetail() {
                     <span className="task-ref">{task.ref}</span>
                     <span className="grow truncate">{task.title}</span>
                     {task.assignee_name && <Avatar name={task.assignee_name} color={task.assignee_color} size={20} />}
+                    <OutcomeBadge task={task} />
                     <Badge tone={task.stage === 'done' ? 'good' : due.tone}>
                       {task.stage === 'done' ? 'Done' : due.text}
                     </Badge>
@@ -412,6 +466,7 @@ export default function AccountDetail() {
                     <span className="task-ref">{task.ref}</span>
                     <span className="grow truncate">{task.title}</span>
                     {task.assignee_name && <Avatar name={task.assignee_name} color={task.assignee_color} size={20} />}
+                    <OutcomeBadge task={task} />
                     <Badge tone={task.stage === 'done' ? 'good' : due.tone}>
                       {task.stage === 'done' ? 'Done' : due.text}
                     </Badge>
@@ -427,7 +482,8 @@ export default function AccountDetail() {
         <AccountDialog account={account} stages={stages} onClose={() => setEditing(false)} onSaved={load} />
       )}
       {logging && (
-        <LogActivityDialog account={account} type={logging} onClose={() => setLogging(null)} onSaved={load} />
+        <LogActivityDialog account={account} opportunities={opportunities} type={logging}
+          onClose={() => setLogging(null)} onSaved={load} />
       )}
       {addingTask && (
         <TaskDialog
@@ -445,9 +501,9 @@ export default function AccountDetail() {
         <ConvertDialog account={account} type={converting}
           onClose={() => setConverting(null)} onDone={load} />
       )}
-      {settling && (
-        <SettleDialog account={account} stage={settling}
-          onClose={() => setSettling(null)} onDone={load} />
+      {moving && (
+        <DealMoveDialog opportunity={moving.deal} stages={stages} initialStageId={moving.stageId}
+          onClose={() => setMoving(null)} onMoved={load} />
       )}
     </div>
   );

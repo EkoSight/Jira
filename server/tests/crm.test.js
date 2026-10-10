@@ -141,7 +141,10 @@ test('logging activities keeps a timeline and the deal warm', async (t) => {
 
   const email = await call('POST', `/accounts/${ids.acme}/activities`, {
     token: tokens.rep,
-    body: { type: 'EMAIL', subject: 'Sent the intro deck', next_step: 'Follow up in 3 days' },
+    body: {
+      type: 'EMAIL', subject: 'Sent the intro deck',
+      next_step: 'Follow up in 3 days', next_step_due: daysFromNow(3).slice(0, 10),
+    },
   });
   assert.equal(email.status, 201);
   assert.ok(email.body.account.last_activity_at, 'the account is now freshly worked');
@@ -181,7 +184,7 @@ test('a meeting can spin off a follow-up task tied to the lead', async (t) => {
     body: {
       type: 'MEETING', subject: 'Kickoff meeting',
       body: 'Agreed to run a demo next week.',
-      next_step: 'Run the field demo', task_id: ids.demoTask,
+      next_step: 'Run the field demo', next_step_due: daysFromNow(5).slice(0, 10), task_id: ids.demoTask,
     },
   });
   assert.equal(meeting.status, 201);
@@ -199,11 +202,15 @@ test('a meeting can spin off a follow-up task tied to the lead', async (t) => {
 test('moving the lead a stage records it and resets the clock', async (t) => {
   if (skipIfUnavailable(t)) return;
 
+  // Proposal asks for the dated proposal itself, recorded in the same step
   const moved = await call('POST', `/accounts/${ids.acme}/stage`, {
     token: tokens.rep,
-    body: { stage_id: ids.proposalStage },
+    body: {
+      stage_id: ids.proposalStage,
+      proposal: { sent_on: daysFromNow(0).slice(0, 10), amount: 500000 },
+    },
   });
-  assert.equal(moved.status, 200);
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
   assert.equal(moved.body.account.stage_slug, 'proposal');
   assert.equal(moved.body.account.days_since_stage_change, 0);
 
@@ -214,10 +221,15 @@ test('moving the lead a stage records it and resets the clock', async (t) => {
 test('winning the deal and converting the lead into a customer', async (t) => {
   if (skipIfUnavailable(t)) return;
 
+  // Won asks for the accepted order
   const won = await call('POST', `/accounts/${ids.acme}/stage`, {
     token: tokens.rep,
-    body: { stage_id: ids.wonStage },
+    body: {
+      stage_id: ids.wonStage,
+      order: { reference: 'PO-ACME-0042', received_on: daysFromNow(0).slice(0, 10), amount: 500000 },
+    },
   });
+  assert.equal(won.status, 200, JSON.stringify(won.body));
   assert.equal(won.body.account.status, 'WON', 'a won stage settles the deal');
 
   const converted = await call('POST', `/accounts/${ids.acme}/convert`, {

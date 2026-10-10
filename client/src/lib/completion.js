@@ -104,3 +104,39 @@ export function completionPrompt(task = {}, user = {}) {
     placeholder: 'Describe the outcome — what was done and why it counts as complete…',
   };
 }
+
+// ------------------------------------------------------------ deal work
+
+// statuses, not outcomes
+const BARE = new Set([
+  'done', 'completed', 'complete', 'ok', 'okay', 'yes', 'finished', 'closed', 'na', 'n/a',
+  'nil', 'none', 'resolved', 'fixed', 'sent', 'shared',
+]);
+
+/**
+ * True when the first thing an outcome says is a plan rather than a result —
+ * "will send samples" is progress on "test samples", not its end. Only the
+ * opening clause is read, so "Sent the samples; will follow up Friday" is fine.
+ * The server applies the same test; this one warns before anything is sent.
+ */
+export function readsLikeAPlan(text) {
+  const first = String(text || '')
+    .trim()
+    .split(/[.;\n!?]|,\s|\s(?:and|but|then)\s/i)
+    .map((part) => part.trim())
+    .find(Boolean);
+  if (!first) return false;
+  return /\b(will|shall|won't|going to|gonna|plan(?:ning|s)? to|intend(?:s|ing)? to|need(?:s)? to|yet to|about to|to be (?:done|sent|shared|tested|scheduled|arranged|confirmed)|pending|awaiting|waiting (?:for|on)|tbd|tomorrow|next week)\b/i.test(first)
+    || /\b\w+'ll\b/i.test(first);
+}
+
+/** What is wrong with a deal task's outcome as written, or null. */
+export function outcomeProblem(note) {
+  const text = String(note || '').trim();
+  if (!text) return 'Say what actually happened';
+  if (BARE.has(text.toLowerCase().replace(/[.!]+$/, ''))) {
+    return `"${text}" is a status, not an outcome — say what was done and what came of it`;
+  }
+  if (text.length < 10) return 'Describe the outcome in a sentence';
+  return null;
+}

@@ -1,6 +1,7 @@
 import { query } from '../db/pool.js';
 import { getSettings } from './settings.js';
 import { listAccounts, logosFor } from './crm.js';
+import { nextActionGaps } from './dealRules.js';
 
 /**
  * The CRM attention engine — the same idea as the Goals one, pointed at deals.
@@ -133,7 +134,13 @@ export async function analyseAccounts(filters = {}) {
 export function cadenceFor(stageSlug, cadence, status) {
   if (status === 'ON_HOLD' || status === 'NURTURE') return Number(cadence.nurtureDays) || 45;
   const byStage = cadence.byStage || {};
-  return Number(byStage[stageSlug]) ?? Number(cadence.engagementDays) ?? 7;
+  // Number(undefined) is NaN, which `??` does not catch: a stage with no figure
+  // of its own (any stage an admin added) used to get NaN, and "quiet for NaN
+  // days" is never true — so those deals could never be flagged as gone quiet
+  const own = Number(byStage[stageSlug]);
+  if (Number.isFinite(own) && own > 0) return own;
+  const general = Number(cadence.engagementDays);
+  return Number.isFinite(general) && general > 0 ? general : 7;
 }
 
 /** Signals a person has put down, with a reason and an expiry. */
@@ -173,7 +180,8 @@ export async function analysePipeline({ departmentId = null } = {}) {
   // ---- deals
   const { rows: deals } = await query(
     `SELECT o.id, o.name, o.status, o.next_step, o.next_step_due, o.expected_close,
-            o.last_external_at, o.stage_changed_at, o.owner_user_id,
+            o.last_external_at, o.stage_changed_at, o.owner_user_id, o.next_step_owner_id,
+            s.kind AS stage_kind,
             a.id AS account_id, a.name AS account_name, a.department_id,
             s.slug AS stage_slug, s.name AS stage_name, s.position AS stage_position,
             u.full_name AS owner_name, u.avatar_color AS owner_color,
@@ -209,7 +217,9 @@ export async function analysePipeline({ departmentId = null } = {}) {
       : null;
     const allowed = cadenceFor(deal.stage_slug, cadence, deal.status);
 
-    if (deal.next_step_due && new Date(deal.next_step_due).getTime() < now && deal.status === 'ACTIVE') {
+    // every live deal owes a specific move, a person, and a date
+    const gaps = nextActionGaps(deal);
+    if (gaps.some((gap) => gap.kind === 'next_action_overdue')) {
       push({ ...base, kind: 'next_action_overdue', severity: 'warning',
         detail: `next action "${deal.next_step}" is past its date` });
     } else if (quietDays === null || quietDays >= allowed) {
@@ -217,9 +227,12 @@ export async function analysePipeline({ departmentId = null } = {}) {
         detail: quietDays === null
           ? 'nobody has spoken to them yet'
           : `no contact for ${quietDays} days, and ${deal.stage_name || 'this stage'} expects every ${allowed}` });
-    } else if (!deal.next_step && (deal.stage_position ?? 0) >= 3 && deal.status === 'ACTIVE') {
+    } else if (gaps.some((gap) => gap.kind === 'no_next_action')) {
       push({ ...base, kind: 'no_next_action', severity: 'warning',
-        detail: 'qualified, but nothing agreed as the next step' });
+        detail: 'nothing agreed as the next step' });
+    } else if (gaps.length) {
+      push({ ...base, kind: 'next_action_incomplete', severity: 'warning',
+        detail: gaps.map((gap) => gap.label.toLowerCase()).join(', ') });
     }
 
     // a close date coming up with must-haves unresolved is the expensive one
@@ -347,6 +360,7 @@ export async function analysePipeline({ departmentId = null } = {}) {
       gone_quiet: count('gone_quiet'),
       next_action_overdue: count('next_action_overdue'),
       no_next_action: count('no_next_action'),
+      next_action_incomplete: count('next_action_incomplete'),
       closing_with_blockers: count('closing_with_blockers'),
       meeting_outcome_missing: count('meeting_outcome_missing'),
       milestone_overdue: count('milestone_overdue'),

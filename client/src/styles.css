@@ -3192,3 +3192,196 @@ th.cal-person {
 .att-extra-state.is-good { color: var(--good-text); }
 .att-extra-state.is-warning { color: var(--warning-text); }
 .att-extra-state.is-neutral { color: var(--ink-muted); }
+
+/* ------------------------------------------------------------------
+   Trustworthy progress: deal cards, the three clocks, the next action,
+   evidence for a stage, and the commercial record
+   ------------------------------------------------------------------ */
+
+.deal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+/* a live deal missing what, who or when is the thing to fix first */
+.deal-card.is-stale { border-left-color: var(--warning); }
+.deal-card.is-blocked { border-left-color: var(--critical); }
+.deal-card .task-card-title { font-weight: 600; }
+.deal-org {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+
+.next-action-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  min-width: 0;
+}
+.next-action-line > span:first-child { min-width: 0; max-width: 100%; }
+.next-action-meta { display: inline-flex; gap: 6px; color: var(--ink-muted); white-space: nowrap; }
+.next-action-meta .is-late,
+.next-action-line.is-overdue .next-action-meta .is-late { color: var(--critical-text); font-weight: 650; }
+
+/* the three clocks: compact chips on a card, a small grid on the deal */
+.clock-row { display: inline-flex; gap: 4px; }
+.clock-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  background: var(--surface-3);
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.clock-chip.clock-good { background: var(--good-wash); color: var(--good-text); }
+.clock-chip.clock-warning { background: var(--warning-wash); color: var(--warning-text); }
+.clock-chip.clock-critical { background: var(--critical-wash); color: var(--critical-text); }
+
+.clock-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.clock-cell {
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+.clock-value { font-size: 13.5px; font-weight: 650; margin-top: 2px; }
+.clock-value.clock-good { color: var(--good-text); }
+.clock-value.clock-warning { color: var(--warning-text); }
+.clock-value.clock-critical { color: var(--critical-text); }
+.clock-note { grid-column: 1 / -1; }
+
+.deal-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.people-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+/* what a stage move needs, met or not */
+.evidence-list { display: flex; flex-direction: column; gap: 6px; }
+.evidence-need {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-wash);
+  color: var(--warning-text);
+}
+.evidence-need .small { color: inherit; }
+.evidence-need .muted { color: var(--ink-2); }
+.evidence-need.is-met { background: var(--good-wash); color: var(--good-text); }
+.evidence-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 11px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.stage-rule-note {
+  padding: 0 10px 6px;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+/* the commercial record: one line per proposal, order, invoice or payment */
+.ledger-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+.ledger-kind {
+  min-width: 92px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+/* cancelled, voided or withdrawn: kept on the record, visibly not counted */
+.ledger-row.is-struck { background: var(--surface-2); }
+.ledger-row.is-struck .tnum { text-decoration: line-through; color: var(--ink-muted); }
+
+.history-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+.history-row:last-of-type { border-bottom: 0; }
+.history-what { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.history-why { color: var(--ink-2); font-style: italic; }
+
+.handover-strip { border-left: 3px solid var(--brand); }
+.handover-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* finishing deal work: done, progress, or cannot be done */
+.outcome-choice { display: grid; gap: 6px; }
+.outcome-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.outcome-option > span { display: flex; flex-direction: column; gap: 1px; }
+.outcome-option.is-active { border-color: var(--brand); background: var(--brand-wash); }
+.outcome-option input { margin-top: 3px; }
+
+/* internal work reads quieter on the timeline than contact with the customer */
+.timeline-row.is-internal .timeline-icon { background: transparent; border: 1px dashed var(--border-strong); }
+
+.rule-picks { display: flex; flex-direction: column; gap: 1px; }
+.data-table tr.is-muted td { opacity: 0.6; }
+
+@media (max-width: 640px) {
+  .deal-top { grid-template-columns: 1fr; }
+  .clock-grid { grid-template-columns: 1fr 1fr; }
+  .ledger-kind { min-width: 0; }
+}
+
+/* the organization's three clocks, in one line under its name */
+.clock-inline { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: var(--ink-muted); }
+.clock-text.clock-good { color: var(--good-text); }
+.clock-text.clock-warning { color: var(--warning-text); }
+.clock-text.clock-critical { color: var(--critical-text); }
+.clock-text.clock-neutral { color: var(--ink-2); }
+.helper-add .select { width: auto; max-width: 240px; }

@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import AccountDialog from '../components/AccountDialog.jsx';
 import CrmNudges from '../components/CrmNudges.jsx';
 import CrmDashboard from '../components/CrmDashboard.jsx';
+import DealMoveDialog from '../components/DealMoveDialog.jsx';
+import { Clocks, NextActionLine } from '../components/DealParts.jsx';
 import { ListView, MapView, TreeView } from '../components/CrmViews.jsx';
-import { SettleDialog } from '../components/LeadMoveDialogs.jsx';
-import { INDIAN_STATES, formatMoney, freshnessLabel } from '../lib/crm.js';
+import {
+  ACCOUNT_TYPE_META, INDIAN_STATES, OPPORTUNITY_STATUS_META, VALUE_BASIS_LABEL, formatMoney,
+} from '../lib/crm.js';
+import { formatDate } from '../lib/format.js';
 
-/** Typing the expected revenue straight onto a card that has none. */
-function QuickValue({ account, onSaved }) {
+/** Typing the expected value straight onto a deal that has none. */
+function QuickValue({ deal, onSaved }) {
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
@@ -21,7 +25,7 @@ function QuickValue({ account, onSaved }) {
     return (
       <button type="button" className="value-missing"
         onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-        title="No expected revenue on this lead's open deals, so it adds nothing to the pipeline total">
+        title="No value on this deal, so it adds nothing to the pipeline total">
         <Icon name="plus" size={10} /> Add expected value
       </button>
     );
@@ -33,7 +37,7 @@ function QuickValue({ account, onSaved }) {
     if (value === '' || Number(value) < 0) return;
     setSaving(true);
     try {
-      await api.updateAccount(account.id, { value: Number(value) });
+      await api.updateOpportunity(deal.id, { estimated_value: Number(value) });
       toast.success('Expected value saved on the deal');
       onSaved();
     } catch (err) {
@@ -53,15 +57,36 @@ function QuickValue({ account, onSaved }) {
   );
 }
 
-function AccountCard({ account, onOpen, onDragStart, onDragEnd, stages, onMove, onChanged, canEdit }) {
-  const fresh = freshnessLabel(account.days_since_activity);
-  // what its open deals are worth by the forecast's rules — every open deal,
-  // not only the headline one, and never a non-commercial pilot
-  const money = formatMoney(account.eligible_value, account.currency);
+const RULE_SHORT = {
+  proposal: 'a dated proposal',
+  order: 'an accepted order',
+  meeting_completed: 'a meeting that happened',
+  contact: 'a named contact',
+  value: 'a value',
+  close_date: 'a close date',
+  must_haves_met: 'must-haves met',
+};
+
+/** What a column checks, in a line under its name. */
+const ruleNote = (stage) => [
+  ...(stage.entry_rules || []).map((rule) => `In: ${RULE_SHORT[rule] || rule}`),
+  ...(stage.exit_rules || []).map((rule) => `Out: ${RULE_SHORT[rule] || rule}`),
+].join(' · ');
+
+// the next-action flags have their own line on the card
+const OWN_LINE = new Set(['no_next_action', 'no_next_action_owner', 'no_next_action_due', 'next_action_overdue']);
+
+/** One live deal: what it is, who it is with, what happens next, and how fresh it is. */
+function DealCard({ deal, stages, onOpen, onDragStart, onDragEnd, onMove, onChanged, canEdit, quietAfter }) {
+  const money = formatMoney(deal.eligible_value, deal.currency);
+  const otherFlags = deal.flags.filter((f) => !OWN_LINE.has(f.kind));
+  const kind = ACCOUNT_TYPE_META[deal.account_kind];
+  const stale = deal.next_action_gaps.length > 0;
+
   return (
     <div>
       <div
-        className={`task-card account-card${account.days_since_stage_change >= 7 ? ' is-stalled' : ''}${account.open_blockers ? ' is-blocked' : ''}`}
+        className={`task-card deal-card${stale ? ' is-stale' : ''}${deal.open_blockers ? ' is-blocked' : ''}`}
         role="button"
         tabIndex={0}
         draggable
@@ -70,69 +95,117 @@ function AccountCard({ account, onOpen, onDragStart, onDragEnd, stages, onMove, 
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
       >
-        <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-          <CompanyLogo src={account.logo_src} name={account.name} size={26} />
-          <div className="task-card-title" style={{ minWidth: 0 }}>{account.name}</div>
+        <div className="deal-org">
+          <CompanyLogo src={deal.account_logo_src} name={deal.account_name} size={20} />
+          <span className="truncate">{deal.account_name}</span>
+          {kind && deal.account_kind !== 'LEAD' && <Badge tone={kind.tone}>{kind.label}</Badge>}
         </div>
+        <div className="task-card-title">{deal.name}</div>
         <div className="task-card-meta">
           {money && (
-            <Badge tone="brand" title={account.open_deals > 1 ? `${account.open_deals} open deals` : 'Expected from the open deal'}>
-              {money}
+            <Badge tone="brand" title={`Uses the ${VALUE_BASIS_LABEL[deal.eligible_basis] || 'recorded value'}`}>{money}</Badge>
+          )}
+          {!money && deal.eligible_basis === 'none' && canEdit && <QuickValue deal={deal} onSaved={onChanged} />}
+          {!money && deal.eligible_basis !== 'none' && (
+            <Badge tone="neutral">{VALUE_BASIS_LABEL[deal.eligible_basis]}</Badge>
+          )}
+          {deal.open_blockers > 0 && (
+            <Badge tone="critical" title="Something is stopping this deal — open it to see and discuss">
+              <Icon name="alert" size={10} /> {deal.open_blockers === 1 ? 'blocker' : `${deal.open_blockers} blockers`}
             </Badge>
           )}
-          {!money && account.deals_without_value > 0 && canEdit && (
-            <QuickValue account={account} onSaved={onChanged} />
+          {deal.pending_handovers > 0 && (
+            <Badge tone="warning" title="Handed to someone who has not yet confirmed they have it">handover unconfirmed</Badge>
           )}
-          {!money && account.deals_without_value > 0 && !canEdit && (
-            <Badge tone="neutral">no value yet</Badge>
-          )}
-          {!money && !account.deals_without_value && account.non_commercial_deals > 0 && (
-            <Badge tone="neutral" title="Unpaid pilots, CSR projects and partnerships add nothing to the pipeline value">
-              not commercial
-            </Badge>
-          )}
-          {account.open_blockers > 0 && (
-            <Badge tone="critical" title="Something is stopping this lead — open it to see and discuss">
-              <Icon name="alert" size={10} /> {account.open_blockers === 1 ? 'blocker' : `${account.open_blockers} blockers`}
-            </Badge>
-          )}
-          {account.open_task_count > 0 && (
-            <Badge tone="neutral" title="Open tasks"><Icon name="list" size={10} /> {account.open_task_count}</Badge>
-          )}
-          <Badge tone={fresh.tone}>{fresh.text}</Badge>
+          <Clocks opportunity={deal} compact quietAfter={quietAfter} />
         </div>
-        {account.state && <div className="small muted truncate">{account.state}</div>}
-        {account.next_step && <div className="small muted truncate">Next: {account.next_step}</div>}
+        <NextActionLine opportunity={deal} compact />
+        {otherFlags.length > 0 && (
+          <div className="kr-flags">
+            {otherFlags.slice(0, 2).map((flag) => (
+              <span key={flag.kind} className="kr-flag kr-flag-warning">{flag.label}</span>
+            ))}
+            {otherFlags.length > 2 && <span className="kr-flag kr-flag-info">+{otherFlags.length - 2}</span>}
+          </div>
+        )}
         <div className="row-between">
-          {account.owner_name ? (
-            <span className="row" style={{ gap: 6 }}>
-              <Avatar name={account.owner_name} color={account.owner_color} size={20} />
-              <span className="small muted truncate">{account.owner_name}</span>
+          {deal.owner_name ? (
+            <span className="row" style={{ gap: 6 }} title="Accountable for this deal">
+              <Avatar name={deal.owner_name} color={deal.owner_color} size={20} />
+              <span className="small muted truncate">{deal.owner_name}</span>
             </span>
-          ) : <span className="small muted">Unowned</span>}
-          {account.follower_name && (
-            <Avatar name={account.follower_name} color={account.follower_color} size={18} title={`Following: ${account.follower_name}`} />
+          ) : <span className="kr-flag kr-flag-warning">Nobody owns it</span>}
+          {deal.awaiting_customer && (
+            <span className="small muted" title="We have followed up since they last responded">waiting on them</span>
           )}
         </div>
       </div>
-      <select
-        className="select card-move"
-        value=""
-        onChange={(e) => e.target.value && onMove(Number(e.target.value))}
-        aria-label={`Move ${account.name} to another stage`}
-      >
-        <option value="">Move to…</option>
-        {stages.filter((s) => s.id !== account.stage_id).map((s) => (
-          <option key={s.id} value={s.id}>{s.name}</option>
-        ))}
-      </select>
+      {canEdit && (
+        <select
+          className="select card-move"
+          value=""
+          onChange={(e) => e.target.value && onMove(Number(e.target.value))}
+          aria-label={`Move ${deal.name} to another stage`}
+        >
+          <option value="">Move to…</option>
+          {stages.filter((s) => s.id !== deal.stage_id).map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      )}
     </div>
+  );
+}
+
+/** Things handed to me that I have not yet said I have. */
+function HandoversWaiting({ onChanged }) {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const [handovers, setHandovers] = useState([]);
+
+  const load = useCallback(() => {
+    api.myHandovers().then((r) => setHandovers(r.handovers)).catch(() => setHandovers([]));
+  }, []);
+  useEffect(load, [load]);
+
+  if (!handovers.length) return null;
+
+  const confirm = async (handover) => {
+    try {
+      await api.acknowledgeHandover(handover.id);
+      toast.success(`Confirmed — ${handover.opportunity_name} is with you`);
+      load();
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  const role = { OWNER: 'the deal', NEXT_ACTION: 'the next move', ESCALATION: 'escalations' };
+  return (
+    <section className="card card-pad stack-sm handover-strip">
+      <div className="small" style={{ fontWeight: 650 }}>
+        Handed to you — confirm you have {handovers.length === 1 ? 'it' : 'them'}
+      </div>
+      {handovers.map((h) => (
+        <div key={h.id} className="handover-row">
+          <button type="button" className="btn-link grow truncate"
+            onClick={() => navigate(`/accounts/${h.account_id}?deal=${h.opportunity_id}`)}>
+            {h.opportunity_name} <span className="muted">· {h.account_name}</span>
+          </button>
+          <span className="small muted">
+            {role[h.role]}{h.from_name ? ` from ${h.from_name}` : ''}{h.owed ? ` · owed: ${h.owed}` : ''}
+          </span>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => confirm(h)}>I have it</button>
+        </div>
+      ))}
+    </section>
   );
 }
 
 export default function Pipeline() {
   const { user, can } = useAuth();
-  const { departments, users } = useRefData();
+  const { departments, users, settings } = useRefData();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -144,12 +217,16 @@ export default function Pipeline() {
   const [ownerFilter, setOwnerFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [segmentFilter, setSegmentFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const [mine, setMine] = useState(false);
+  const [owedByMe, setOwedByMe] = useState(false);
   const [segments, setSegments] = useState([]);
   const [search, setSearch] = useState('');
   const [stateFilter, setStateFilter] = useState('');
   const [onlyNoValue, setOnlyNoValue] = useState(false);
-  const [settling, setSettling] = useState(null);
+  const [onlyAttention, setOnlyAttention] = useState(false);
+  const [showPaused, setShowPaused] = useState(false);
+  const [moving, setMoving] = useState(null);
   // board, list, map, tree and dashboard are five ways of reading one dataset
   const [view, setView] = useState('board');
 
@@ -158,14 +235,16 @@ export default function Pipeline() {
       owner_id: ownerFilter || undefined,
       department_id: departmentFilter || undefined,
       mine: mine ? 'true' : undefined,
+      next_owner_id: owedByMe ? user?.id : undefined,
       state: stateFilter || undefined,
+      account_type: typeFilter || undefined,
     }),
-    [ownerFilter, departmentFilter, mine, stateFilter],
+    [ownerFilter, departmentFilter, mine, owedByMe, user?.id, stateFilter, typeFilter],
   );
 
   const load = useCallback(() => {
     setLoading(true);
-    api.pipeline(filters).then(setBoard).catch((err) => toast.error(err)).finally(() => setLoading(false));
+    api.dealBoard(filters).then(setBoard).catch((err) => toast.error(err)).finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);
 
@@ -175,45 +254,21 @@ export default function Pipeline() {
     api.crmSegments().then((r) => setSegments(r.segments)).catch(() => setSegments([]));
   }, []);
 
-  const move = async (account, stageId) => {
-    if (account.stage_id === stageId) return;
-    // won and lost ask their question first: why it was lost, what was agreed
-    const target = board.stages.find((s) => s.id === stageId);
-    if (target && target.kind !== 'open') {
-      setSettling({ account, stage: target });
-      return;
-    }
-    const previous = board;
-    // optimistic: pull the card out of its column into the new one
-    setBoard((current) => ({
-      ...current,
-      stages: current.stages.map((s) => ({
-        ...s,
-        accounts:
-          s.id === stageId
-            ? [{ ...account, stage_id: stageId }, ...s.accounts.filter((a) => a.id !== account.id)]
-            : s.accounts.filter((a) => a.id !== account.id),
-      })),
-    }));
-    try {
-      await api.moveAccountStage(account.id, stageId);
-      load();
-    } catch (err) {
-      setBoard(previous);
-      toast.error(err);
-    }
+  const startMove = (deal, stageId) => {
+    if (deal.stage_id === stageId) return;
+    // every move goes through the dialog: it asks for the evidence the stage
+    // needs and confirms what happens next, which is the moment the old next
+    // step stops being true
+    setMoving({ deal, stageId });
   };
 
   if (loading && !board) return <Spinner label="Loading the pipeline" />;
   if (!board) return <EmptyState title="Could not load the pipeline" />;
 
-  const openStages = board.stages.filter((s) => s.kind === 'open');
-  const closedStages = board.stages.filter((s) => s.kind !== 'open');
-  const totalValue = board.eligible_value ?? 0;
-  // the "no value yet" filter narrows the board to the cards that need a number
-  const visible = (accounts) => (onlyNoValue
-    ? accounts.filter((a) => a.eligible_value === null && a.deals_without_value > 0)
-    : accounts);
+  const quietAfter = settings?.crm?.cadence?.engagementDays || 7;
+  const visible = (deals) => deals.filter((d) => (!onlyNoValue || d.eligible_basis === 'none')
+    && (!onlyAttention || d.flags.length > 0));
+  const canMove = can('crm.activity.log');
 
   return (
     <div className="stack" style={{ gap: 14 }}>
@@ -222,17 +277,26 @@ export default function Pipeline() {
           <h1>B2B Pipeline</h1>
           <div className="small muted row wrap" style={{ gap: 6 }}>
             <span>
-              {board.total} open lead{board.total === 1 ? '' : 's'}
-              {totalValue > 0
-                ? ` · ${formatMoney(totalValue)} expected from open deals`
+              {board.total} live deal{board.total === 1 ? '' : 's'} across {board.organizations} organization
+              {board.organizations === 1 ? '' : 's'}
+              {board.eligible_value > 0
+                ? ` · ${formatMoney(board.eligible_value)} expected from live deals`
                 : ' · no expected values recorded yet'}
             </span>
-            {board.leads_without_value > 0 && (
+            {board.needs_attention > 0 && (
+              <button type="button"
+                className={`kind-chip${onlyAttention ? ' is-active' : ''}`}
+                title="Deals missing a next action, an owner, or something their stage expects"
+                onClick={() => { setOnlyAttention((v) => !v); setView('board'); }}>
+                {board.needs_attention} need attention{onlyAttention ? ' — showing only these' : ''}
+              </button>
+            )}
+            {board.deals_without_value > 0 && (
               <button type="button"
                 className={`kind-chip${onlyNoValue ? ' is-active' : ''}`}
-                title="Leads whose open deals have no expected revenue. They add nothing to the total until they do."
+                title="Deals with no value recorded. They add nothing to the total until they do."
                 onClick={() => { setOnlyNoValue((v) => !v); setView('board'); }}>
-                {board.leads_without_value} with no expected value{onlyNoValue ? ' — showing only these' : ''}
+                {board.deals_without_value} with no value{onlyNoValue ? ' — showing only these' : ''}
               </button>
             )}
           </div>
@@ -244,19 +308,32 @@ export default function Pipeline() {
         )}
       </div>
 
+      <HandoversWaiting onChanged={load} />
+
       <div className="filters">
-        <button
-          type="button"
-          className={`btn btn-sm${mine ? ' btn-primary' : ''}`}
-          onClick={() => setMine((v) => !v)}
-        >
+        <button type="button" className={`btn btn-sm${mine ? ' btn-primary' : ''}`}
+          title="Deals you own, owe the next move on, are the escalation point for, or help with"
+          onClick={() => setMine((v) => !v)}>
           Mine
         </button>
-        <select className="select" value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}>
-          <option value="">Anyone leading</option>
+        <button type="button" className={`btn btn-sm${owedByMe ? ' btn-primary' : ''}`}
+          title="Deals where the next move is yours"
+          onClick={() => setOwedByMe((v) => !v)}>
+          Owed by me
+        </button>
+        <select className="select" value={ownerFilter} onChange={(e) => setOwnerFilter(e.target.value)}
+          aria-label="Filter by deal owner">
+          <option value="">Any deal owner</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>{u.full_name}</option>
           ))}
+        </select>
+        <select className="select" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+          aria-label="Filter by kind of organization">
+          <option value="">All organizations</option>
+          <option value="LEAD">Leads only</option>
+          <option value="CUSTOMER">Customers only</option>
+          <option value="PARTNER">Partners only</option>
         </select>
         <select className="select" value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)}>
           <option value="">All departments</option>
@@ -326,9 +403,27 @@ export default function Pipeline() {
         <CrmNudges departmentId={departmentFilter} />
       )}
 
+      {view === 'board' && board.misplaced.length > 0 && (
+        <div className="ask-banner ask-warning">
+          <Icon name="alert" size={15} />
+          <div className="grow small">
+            <strong>{board.misplaced.length} live deal{board.misplaced.length === 1 ? ' sits' : 's sit'} in a closed stage or none</strong>
+            {' — '}
+            {board.misplaced.map((d, index) => (
+              <span key={d.id}>
+                {index > 0 && ', '}
+                <button type="button" className="btn-link"
+                  onClick={() => navigate(`/accounts/${d.account_id}?deal=${d.id}`)}>{d.name}</button>
+              </span>
+            ))}
+            . Open each and move it to the stage it is really in.
+          </div>
+        </div>
+      )}
+
       {view === 'board' && (
       <div className="board-scroll">
-        {openStages.map((stage) => (
+        {board.stages.map((stage) => (
           <section
             key={stage.id}
             className={`board-col ${dropTarget === stage.id ? 'drop-target' : ''}`}
@@ -340,27 +435,33 @@ export default function Pipeline() {
             onDrop={(e) => {
               e.preventDefault();
               setDropTarget(null);
-              if (dragging) move(dragging, stage.id);
+              if (dragging && canMove) startMove(dragging, stage.id);
             }}
           >
             <header className="board-col-head">
               <span className="badge-dot" style={{ background: stage.color }} />
               <span className="board-col-title">{stage.name}</span>
-              <span className="board-col-count tnum">{stage.accounts.length}</span>
+              <span className="board-col-count tnum">{stage.deals.length}</span>
               {stage.eligible_value > 0 && <span className="small muted" style={{ marginLeft: 'auto' }}>{formatMoney(stage.eligible_value)}</span>}
             </header>
+            {ruleNote(stage) && (
+              <div className="stage-rule-note small muted" title="Checked whenever a deal moves forward">
+                {ruleNote(stage)}
+              </div>
+            )}
             <div className="board-col-body">
-              {visible(stage.accounts).length === 0 && <div className="small muted center" style={{ padding: 14 }}>Empty</div>}
-              {visible(stage.accounts).map((account) => (
-                <AccountCard
-                  key={account.id}
-                  account={account}
-                  stages={board.stages}
-                  canEdit={can('crm.activity.log')}
+              {visible(stage.deals).length === 0 && <div className="small muted center" style={{ padding: 14 }}>Empty</div>}
+              {visible(stage.deals).map((deal) => (
+                <DealCard
+                  key={deal.id}
+                  deal={deal}
+                  stages={board.all_stages}
+                  canEdit={canMove}
+                  quietAfter={quietAfter}
                   onChanged={load}
-                  onOpen={() => navigate(`/accounts/${account.id}`)}
-                  onMove={(stageId) => move(account, stageId)}
-                  onDragStart={() => setDragging(account)}
+                  onOpen={() => navigate(`/accounts/${deal.account_id}?deal=${deal.id}`)}
+                  onMove={(stageId) => startMove(deal, stageId)}
+                  onDragStart={() => setDragging(deal)}
                   onDragEnd={() => {
                     setDragging(null);
                     setDropTarget(null);
@@ -373,25 +474,55 @@ export default function Pipeline() {
       </div>
       )}
 
-      {view === 'board' && closedStages.some((s) => s.accounts.length > 0) && (
-        <div className="row wrap" style={{ gap: 8 }}>
-          {closedStages.map((stage) => (
-            <Badge key={stage.id} dot={stage.color}>
-              {stage.name}: {stage.accounts.length}
-            </Badge>
-          ))}
-          <span className="small muted">won and lost deals stay on the account, off the active board</span>
+      {view === 'board' && (board.paused.length > 0 || board.closed.some((s) => s.count > 0)) && (
+        <div className="stack-sm">
+          <div className="row wrap" style={{ gap: 8 }}>
+            {board.closed.map((stage) => (
+              <Badge key={stage.id} dot={stage.color}>
+                {stage.name}: {stage.count}
+              </Badge>
+            ))}
+            {board.paused.length > 0 && (
+              <button type="button" className={`kind-chip${showPaused ? ' is-active' : ''}`}
+                onClick={() => setShowPaused((v) => !v)}>
+                {board.paused.length} paused or nurtured
+              </button>
+            )}
+            <span className="small muted">won, lost and paused deals stay on their organization, off the live board</span>
+          </div>
+          {showPaused && (
+            <div className="stack-sm">
+              {board.paused.map((deal) => {
+                const status = OPPORTUNITY_STATUS_META[deal.status] || OPPORTUNITY_STATUS_META.ACTIVE;
+                return (
+                  <button key={deal.id} type="button" className="link-row"
+                    onClick={() => navigate(`/accounts/${deal.account_id}?deal=${deal.id}`)}>
+                    <Badge tone={status.tone}>{status.label}</Badge>
+                    <span className="grow truncate">{deal.name} <span className="muted">· {deal.account_name}</span></span>
+                    <span className="small muted">
+                      {deal.revisit_on ? `revisit ${formatDate(deal.revisit_on)}` : 'no revisit date'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
-      {settling && (
-        <SettleDialog account={settling.account} stage={settling.stage}
-          onClose={() => setSettling(null)} onDone={load} />
+      {moving && (
+        <DealMoveDialog
+          opportunity={moving.deal}
+          stages={board.all_stages}
+          initialStageId={moving.stageId}
+          onClose={() => setMoving(null)}
+          onMoved={load}
+        />
       )}
 
       {creating && (
         <AccountDialog
-          stages={openStages}
+          stages={board.all_stages.filter((s) => s.kind === 'open')}
           onClose={() => setCreating(false)}
           onSaved={(account) => navigate(`/accounts/${account.id}`)}
         />

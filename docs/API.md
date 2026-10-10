@@ -264,6 +264,66 @@ decisions and salary amounts until reopened.
 CSV text cells starting with `= + - @`, tab or carriage return are prefixed with
 `'` so spreadsheets show them as text.
 
+## B2B pipeline — progress tracking
+
+The rules behind these are in `docs/PIPELINE_PROGRESS.md`.
+
+| Method | Route | Permission | Notes |
+|---|---|---|---|
+| GET | `/opportunities/board` | signed in | One card per live deal, any kind of organization. Filters: `owner_id`, `next_owner_id`, `department_id`, `segment_id`, `account_type`, `state`, `search`, `mine=true` |
+| GET | `/opportunities/stage-rules` | signed in | The evidence rules a stage can carry, with their wording |
+| POST | `/opportunities/:id/next-action` | works on the deal | `{ next_step, next_step_owner_id, next_step_due, reason? }` — all three required, date not past |
+| POST | `/opportunities/:id/stage` | `crm.activity.log` + works on the deal | Also takes `next_step`, `next_step_owner_id`, `next_step_due`, `proposal {sent_on, amount?, title?, link?}`, `order {kind, reference?, received_on, amount?, link?}`, `override_reason` (pipeline managers) |
+| POST | `/opportunities/:id/collaborators` | works on the deal | `{ user_id, role? }` |
+| DELETE | `/opportunities/:id/collaborators/:userId` | works on the deal | |
+| GET | `/opportunities/:id/handovers` | signed in | |
+| GET | `/opportunities/handovers/mine` | signed in | Handovers waiting for the caller to confirm |
+| POST | `/opportunities/handovers/:id/acknowledge` | the person handed to, or `crm.manage.any` | |
+| GET | `/opportunities/:id/commercial` | signed in | Proposals, orders, invoices, payments and totals |
+| POST | `/opportunities/:id/proposals` | `crm.activity.log` + works on the deal | Sets the proposed value when it has an amount |
+| POST | `/opportunities/:id/proposals/:proposalId/status` | as above | `{ status: SENT\|ACCEPTED\|DECLINED\|SUPERSEDED\|WITHDRAWN }` |
+| POST | `/opportunities/:id/orders` | as above | Needs `reference` or `link`; fills a blank agreed value |
+| POST | `/opportunities/:id/orders/:orderId/cancel` | as above | `{ reason }` — kept, not deleted |
+| POST | `/opportunities/:id/invoices` | as above | `amount` required |
+| POST | `/opportunities/:id/invoices/:invoiceId/cancel` | as above | `{ reason }` |
+| POST | `/opportunities/:id/payments` | as above | `amount` > 0, `received_on` not in the future |
+| POST | `/opportunities/:id/payments/:paymentId/void` | as above | `{ reason }` |
+| GET | `/tasks/:id/completion-context` | view scope | What finishing this task should ask: `deal_task`, `deals`, `requires_next_step` |
+| POST | `/tasks/:id/progress` | edit access | `{ note, evidence_url? }` — the task stays open |
+
+"Works on the deal" means: its owner, the relationship owner, its creator, whoever
+owes its next action, its escalation point, someone named as helping, or
+`crm.manage.any`. Changing who **owns** a deal, or archiving it, is limited to the
+owner, the relationship owner, the creator and `crm.manage.any`.
+
+**Changes that need a reason** (`reason` in the body, kept on the history): the
+owner of a deal that already had one; an estimated, proposed or agreed value that
+was already set (on the deal, or the organization's "expected value").
+
+**Finishing deal work.** Moving a task linked to an organization or deal into a
+done stage (`PATCH /tasks/:id` with `status_id`, or `POST /tasks/:id/move`) also
+takes `outcome_status` (`ACHIEVED` | `NOT_ACHIEVED`), `outcome_evidence_url`,
+`confirm_intent`, and `next_step { opportunity_id?, text, owner_id, due }`. A task
+can name its deal with `opportunity_id` (its organization is filled in).
+
+**Activities** take `direction` `OUTBOUND` | `INBOUND` | `INTERNAL`; a next step
+logged with an activity needs `next_step_due` and sets the deal's next action
+(owner: `next_step_owner_id`, else whoever owes it now, else the deal owner).
+`opportunity_id: null` logs it against the organization with no deal.
+
+**Error codes** (in `details.code` of a 400):
+
+| Code | Meaning | Also in `details` |
+|---|---|---|
+| `NEXT_ACTION_REQUIRED` | A live stage, or finishing this task, needs a complete next action | `gaps`, or `opportunity_id` |
+| `NEXT_ACTION_INVALID` | The next action given is missing a part, dated in the past, or clears a live deal's | |
+| `STAGE_EVIDENCE_REQUIRED` | The move lacks evidence the stage asks for | `missing [{rule, label, hint, phase, stage}]`, `can_override` |
+| `OUTCOME_REQUIRED` | Deal work finished without an outcome, or without saying whether it achieved what was asked | `field` |
+| `OUTCOME_READS_AS_PLAN` | The outcome reads like a plan; record progress or send `confirm_intent: true` | `field` |
+| `REASON_REQUIRED` | An owner or value change that needs a reason | `field` |
+
+---
+
 ## Google Chat
 
 | Method | Route | Permission |

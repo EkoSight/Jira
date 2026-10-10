@@ -3,16 +3,24 @@ import { z } from 'zod';
 
 import { query, withTransaction } from '../db/pool.js';
 import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
+import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
+import { notify } from '../services/activity.js';
 import {
   CONTACT_ROLES, ENGAGEMENT_MODELS, FINANCIAL_STATUSES, OPPORTUNITY_STATUSES,
   REQUIREMENT_CATEGORIES, REQUIREMENT_IMPORTANCE, REQUIREMENT_STATUSES,
-  canEditOpportunity, decorateOpportunity, getOpportunity, listHistory,
-  listOpportunities, listRequirements, recordHistory, recordOwnershipChange,
-  refreshPrimaryOpportunity, syncAccountMirror, topBlocker,
+  acknowledgeHandover, canWorkOnOpportunity, dealBoard, getOpportunity, listHandovers,
+  listHistory, listOpportunities, listRequirements, mustBeActiveUser, pendingHandoversFor,
+  recordHandover, recordHistory, recordOwnershipChange, refreshPrimaryOpportunity,
+  setNextAction, syncAccountMirror, topBlocker,
 } from '../services/opportunities.js';
 import { logActivity } from '../services/crm.js';
-import { loadStageMove, moveOpportunityStage } from '../services/dealMoves.js';
+import { ORDER_KINDS, addOrder, addProposal, applyStageMove } from '../services/dealMoves.js';
+import { RULE_KEYS, STAGE_RULES, problemWithNextAction } from '../services/dealRules.js';
+import {
+  PROPOSAL_STATUSES, addInvoice, addPayment, cancelInvoice, cancelOrder, commercialRecord,
+  setProposalStatus, voidPayment,
+} from '../services/commercial.js';
 
 const router = Router();
 
@@ -27,12 +35,72 @@ async function loadOpportunity(id) {
   return rows[0] || null;
 }
 
+/**
+ * The deal, if this person may work on it: whoever owns it, owes its next
+ * move, is its escalation point, helps on it, leads the relationship, created
+ * it, or manages the pipeline.
+ */
 async function mustEdit(user, id) {
   const row = await loadOpportunity(id);
   if (!row) throw notFound('Opportunity not found');
-  if (!canEditOpportunity(user, row)) throw forbidden('You cannot change this opportunity');
+  if (!(await canWorkOnOpportunity(user, row))) throw forbidden('You cannot change this opportunity');
   return row;
 }
+
+/**
+ * Who may hand the deal itself to someone else, or archive it: its owner, the
+ * relationship owner, whoever created it, or a pipeline manager. Owing the next
+ * move, or helping, is not the same as deciding who leads.
+ */
+const mayReassign = (user, row) =>
+  hasPermission(user, 'crm.manage.any')
+  || row.owner_user_id === user.id
+  || row.relationship_owner_id === user.id
+  || row.created_by === user.id;
+
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'Use a date like 2026-10-14');
+const link = z.string().max(500).nullable().optional();
+
+const proposalInput = z.object({
+  title: z.string().max(200).nullable().optional(),
+  sent_on: day,
+  amount: z.number().min(0).nullable().optional(),
+  currency: z.string().max(8).optional(),
+  valid_until: day.nullable().optional(),
+  link,
+  notes: z.string().max(4000).nullable().optional(),
+});
+
+const orderInput = z.object({
+  kind: z.enum(ORDER_KINDS).optional(),
+  reference: z.string().max(200).nullable().optional(),
+  received_on: day,
+  amount: z.number().min(0).nullable().optional(),
+  currency: z.string().max(8).optional(),
+  link,
+  notes: z.string().max(4000).nullable().optional(),
+});
+
+const invoiceInput = z.object({
+  order_id: z.number().int().positive().nullable().optional(),
+  number: z.string().max(120).nullable().optional(),
+  issued_on: day,
+  amount: z.number().min(0),
+  currency: z.string().max(8).optional(),
+  due_on: day.nullable().optional(),
+  link,
+  notes: z.string().max(4000).nullable().optional(),
+});
+
+const paymentInput = z.object({
+  invoice_id: z.number().int().positive().nullable().optional(),
+  received_on: day,
+  amount: z.number().positive(),
+  currency: z.string().max(8).optional(),
+  reference: z.string().max(200).nullable().optional(),
+  link,
+  notes: z.string().max(4000).nullable().optional(),
+});
 
 const opportunityInput = z.object({
   account_id: z.number().int().positive(),
@@ -41,6 +109,7 @@ const opportunityInput = z.object({
   stage_id: z.number().int().positive().nullable().optional(),
   status: z.enum(OPPORTUNITY_STATUSES).optional(),
   owner_user_id: z.number().int().positive().nullable().optional(),
+  escalation_owner_id: z.number().int().positive().nullable().optional(),
 
   estimated_value: z.number().min(0).nullable().optional(),
   proposed_value: z.number().min(0).nullable().optional(),
@@ -66,6 +135,10 @@ const opportunityInput = z.object({
 
   next_step: z.string().max(2000).nullable().optional(),
   next_step_due: z.string().min(8).nullable().optional(),
+  next_step_owner_id: z.number().int().positive().nullable().optional(),
+
+  // why a value or an owner changed, kept on the deal's history
+  reason: z.string().max(2000).nullable().optional(),
 });
 
 // ---------------------------------------------------------------- list
@@ -76,6 +149,7 @@ router.get(
     const opportunities = await listOpportunities({
       accountId: req.query.account_id,
       ownerId: req.query.owner_id,
+      nextOwnerId: req.query.next_owner_id,
       stageId: req.query.stage_id,
       segmentId: req.query.segment_id,
       departmentId: req.query.department_id,
@@ -84,9 +158,54 @@ router.get(
       openOnly: req.query.open === 'true',
       closingBefore: req.query.closing_before,
       search: req.query.search,
+      involving: req.query.mine === 'true' ? req.currentUser.id : undefined,
       limit: req.query.limit,
     });
     res.json({ opportunities });
+  }),
+);
+
+/**
+ * The board: one card per live deal, for every kind of organization. A
+ * customer's second deal is on it like any lead's first.
+ */
+router.get(
+  '/board',
+  asyncHandler(async (req, res) => {
+    res.json(await dealBoard({
+      ownerId: req.query.owner_id,
+      nextOwnerId: req.query.next_owner_id,
+      departmentId: req.query.department_id,
+      segmentId: req.query.segment_id,
+      accountType: req.query.account_type,
+      state: req.query.state,
+      search: req.query.search,
+      involving: req.query.mine === 'true' ? req.currentUser.id : undefined,
+    }));
+  }),
+);
+
+/** What a stage rule means, so every screen words it the same way. */
+router.get(
+  '/stage-rules',
+  asyncHandler(async (req, res) => {
+    res.json({ rules: RULE_KEYS.map((key) => ({ key, ...STAGE_RULES[key] })) });
+  }),
+);
+
+/** Handovers waiting for the signed-in person to say they have it. */
+router.get(
+  '/handovers/mine',
+  asyncHandler(async (req, res) => {
+    res.json({ handovers: await pendingHandoversFor(req.currentUser.id) });
+  }),
+);
+
+router.post(
+  '/handovers/:handoverId/acknowledge',
+  asyncHandler(async (req, res) => {
+    const handover = await acknowledgeHandover(Number(req.params.handoverId), req.currentUser);
+    res.json({ handover });
   }),
 );
 
@@ -99,7 +218,7 @@ router.get(
     const opportunity = await getOpportunity(id);
     if (!opportunity) throw notFound('Opportunity not found');
 
-    const [requirements, history, contacts] = await Promise.all([
+    const [requirements, history, contacts, handovers, commercial] = await Promise.all([
       listRequirements(id),
       listHistory(id),
       query(
@@ -110,6 +229,8 @@ router.get(
           ORDER BY c.is_primary DESC, c.full_name`,
         [id],
       ),
+      listHandovers(id),
+      commercialRecord(id),
     ]);
 
     res.json({
@@ -119,7 +240,9 @@ router.get(
       top_blocker: topBlocker(requirements),
       history,
       contacts: contacts.rows,
-      can_edit: canEditOpportunity(req.currentUser, await loadOpportunity(id)),
+      handovers,
+      commercial,
+      can_edit: await canWorkOnOpportunity(req.currentUser, await loadOpportunity(id)),
     });
   }),
 );
@@ -135,6 +258,18 @@ router.post(
     const { rows: accountRows } = await query('SELECT * FROM accounts WHERE id = $1', [data.account_id]);
     const account = accountRows[0];
     if (!account) throw notFound('Organization not found');
+
+    // a next action is all three parts or none: half of one is a guess
+    const givesNextAction = data.next_step || data.next_step_owner_id || data.next_step_due;
+    if (givesNextAction) {
+      const problem = problemWithNextAction({
+        step: data.next_step, ownerId: data.next_step_owner_id, due: data.next_step_due,
+      });
+      if (problem) throw badRequest(problem, { code: 'NEXT_ACTION_INVALID' });
+      await mustBeActiveUser(data.next_step_owner_id);
+    }
+    if (data.owner_user_id) await mustBeActiveUser(data.owner_user_id);
+    if (data.escalation_owner_id) await mustBeActiveUser(data.escalation_owner_id);
 
     let stageId = data.stage_id;
     if (!stageId) {
@@ -182,14 +317,27 @@ router.post(
           data.win_criteria ?? null,
           data.scope_summary ?? null,
           data.scope ? JSON.stringify(data.scope) : null,
-          data.next_step ?? null,
-          data.next_step_due ?? null,
+          givesNextAction ? data.next_step.trim() : null,
+          givesNextAction ? data.next_step_due : null,
           req.currentUser.id,
           // the relationship owner leads it unless somebody else is named
           account.owner_user_id ?? req.currentUser.id,
         ],
       );
       const opportunity = rows[0];
+
+      // the parts this release added, set after the insert so the insert above
+      // stays exactly as it shipped
+      await client.query(
+        `UPDATE opportunities
+            SET next_step_owner_id = $2,
+                next_step_set_at = CASE WHEN $2::int IS NOT NULL THEN now() END,
+                next_step_set_by = CASE WHEN $2::int IS NOT NULL THEN $3::int END,
+                escalation_owner_id = $4
+          WHERE id = $1`,
+        [opportunity.id, givesNextAction ? data.next_step_owner_id : null, req.currentUser.id,
+          data.escalation_owner_id ?? null],
+      );
 
       await recordHistory(client, {
         opportunityId: opportunity.id,
@@ -201,10 +349,22 @@ router.post(
       // a second deal on an organization is worth seeing in its history
       await logActivity(client, {
         accountId: data.account_id,
+        opportunityId: opportunity.id,
         type: 'NOTE',
         actorId: req.currentUser.id,
         subject: `Opportunity opened: ${opportunity.name}`,
+        source: 'MANUAL',
       });
+
+      if (givesNextAction && data.next_step_owner_id !== req.currentUser.id) {
+        await notify(client, {
+          userId: data.next_step_owner_id,
+          type: 'crm_next_action',
+          title: `${opportunity.name}: the next move is yours`,
+          body: `${data.next_step.trim()} — by ${String(data.next_step_due).slice(0, 10)}`,
+          accountId: data.account_id,
+        });
+      }
 
       await refreshPrimaryOpportunity(client, data.account_id);
       return opportunity;
@@ -221,8 +381,18 @@ const TRACKED_FIELDS = [
   'agreed_value', 'collected_value', 'currency', 'value_basis', 'value_period',
   'value_unknown', 'probability', 'probability_reason', 'expected_close',
   'problem', 'desired_outcome', 'decision_process', 'approval_dependency',
-  'objections', 'win_criteria', 'scope_summary', 'next_step', 'next_step_due', 'status',
+  'objections', 'win_criteria', 'scope_summary', 'status', 'escalation_owner_id',
 ];
+
+const VALUE_LABELS = {
+  estimated_value: 'estimated value',
+  proposed_value: 'proposed value',
+  agreed_value: 'agreed value',
+  collected_value: 'collected amount',
+};
+
+const NEXT_ACTION_FIELDS = ['next_step', 'next_step_due', 'next_step_owner_id'];
+const amount = (value) => (value === null || value === undefined ? null : Number(value));
 
 router.patch(
   '/:id',
@@ -230,6 +400,52 @@ router.patch(
     const data = opportunityInput.partial().omit({ account_id: true }).parse(req.body);
     const id = Number(req.params.id);
     const existing = await mustEdit(req.currentUser, id);
+    const reason = data.reason?.trim() || null;
+    const live = ['ACTIVE', 'ON_HOLD', 'NURTURE'].includes(existing.status);
+
+    // ---- the changes that need a person to say why
+    const ownerChanging = data.owner_user_id !== undefined && data.owner_user_id !== existing.owner_user_id;
+    const escalationChanging = data.escalation_owner_id !== undefined
+      && data.escalation_owner_id !== existing.escalation_owner_id;
+    if ((ownerChanging || escalationChanging) && !mayReassign(req.currentUser, existing)) {
+      throw forbidden('Only the deal owner, the relationship owner or a pipeline manager can change who leads it');
+    }
+    if (ownerChanging) {
+      if (!data.owner_user_id && live) {
+        throw badRequest('A live deal needs an owner — hand it to someone rather than leaving it with nobody');
+      }
+      if (existing.owner_user_id && !reason) {
+        throw badRequest('Say why the deal is changing hands — the reason stays on its history',
+          { code: 'REASON_REQUIRED', field: 'owner_user_id' });
+      }
+      if (data.owner_user_id) await mustBeActiveUser(data.owner_user_id);
+    }
+    if (escalationChanging && data.escalation_owner_id) await mustBeActiveUser(data.escalation_owner_id);
+
+    for (const [key, label] of Object.entries(VALUE_LABELS)) {
+      if (data[key] === undefined) continue;
+      const before = amount(existing[key]);
+      // filling in a blank needs no explanation; changing a figure somebody
+      // relied on does
+      if (before !== null && before !== amount(data[key]) && !reason) {
+        throw badRequest(`Say why the ${label} changed — the reason stays on the deal's history`,
+          { code: 'REASON_REQUIRED', field: key });
+      }
+    }
+    if (data.collected_value !== undefined) {
+      const { rows } = await query(
+        'SELECT 1 FROM opportunity_payments WHERE opportunity_id = $1 LIMIT 1', [id],
+      );
+      if (rows[0]) {
+        throw badRequest('Collected is worked out from the payments recorded — record or void a payment instead');
+      }
+    }
+
+    const touchesNextAction = NEXT_ACTION_FIELDS.some((key) => data[key] !== undefined);
+    if (touchesNextAction && live && NEXT_ACTION_FIELDS.some((key) => data[key] === null || data[key] === '')) {
+      throw badRequest('A live deal always has a next action — change it rather than clearing it',
+        { code: 'NEXT_ACTION_INVALID' });
+    }
 
     await withTransaction(async (client) => {
       const fields = [];
@@ -244,6 +460,12 @@ router.patch(
         set(key, data[key] === '' ? null : data[key]);
       }
       if (data.scope !== undefined) set('scope', JSON.stringify(data.scope));
+      // a settled deal's next step is history, written as given
+      if (touchesNextAction && !live) {
+        for (const key of NEXT_ACTION_FIELDS) {
+          if (data[key] !== undefined) set(key, data[key] === '' ? null : data[key]);
+        }
+      }
 
       // a slipping close date is counted, not quietly overwritten
       if (data.expected_close !== undefined
@@ -254,38 +476,64 @@ router.patch(
         }
       }
 
-      if (!fields.length) return;
+      if (fields.length) {
+        params.push(id);
+        await client.query(
+          `UPDATE opportunities SET ${fields.join(', ')}, updated_at = now()
+            WHERE id = $${params.length}`,
+          params,
+        );
 
-      params.push(id);
-      await client.query(
-        `UPDATE opportunities SET ${fields.join(', ')}, updated_at = now()
-          WHERE id = $${params.length}`,
-        params,
-      );
-
-      for (const key of TRACKED_FIELDS) {
-        if (data[key] === undefined) continue;
-        const before = existing[key];
-        const after = data[key];
-        if (String(before ?? '') === String(after ?? '')) continue;
-        await recordHistory(client, {
-          opportunityId: id,
-          field: key,
-          from: before,
-          to: after,
-          actorId: req.currentUser.id,
-        });
+        for (const key of [...TRACKED_FIELDS, ...(live ? [] : NEXT_ACTION_FIELDS)]) {
+          if (data[key] === undefined) continue;
+          const before = existing[key];
+          const after = data[key];
+          if (String(before ?? '') === String(after ?? '')) continue;
+          await recordHistory(client, {
+            opportunityId: id,
+            field: key,
+            from: before,
+            to: after,
+            actorId: req.currentUser.id,
+            reason,
+          });
+        }
       }
 
       // handing the deal to someone else is recorded, so a reassignment cannot
-      // rewrite who was accountable last quarter
-      if (data.owner_user_id !== undefined && data.owner_user_id !== existing.owner_user_id) {
+      // rewrite who was accountable last quarter — and the new owner is told
+      if (ownerChanging) {
         await recordOwnershipChange(client, {
           entityType: 'OPPORTUNITY',
           entityId: id,
           from: existing.owner_user_id,
           to: data.owner_user_id,
           actorId: req.currentUser.id,
+          reason,
+        });
+        if (data.owner_user_id) {
+          await recordHandover(client, {
+            opportunity: existing, role: 'OWNER', fromUserId: existing.owner_user_id,
+            toUserId: data.owner_user_id, reason, owed: existing.next_step ?? null, actor: req.currentUser,
+          });
+        }
+      }
+      if (escalationChanging && data.escalation_owner_id) {
+        await recordHandover(client, {
+          opportunity: existing, role: 'ESCALATION', fromUserId: existing.escalation_owner_id,
+          toUserId: data.escalation_owner_id, reason, actor: req.currentUser,
+        });
+      }
+
+      if (touchesNextAction && live) {
+        const { rows } = await client.query('SELECT * FROM opportunities WHERE id = $1', [id]);
+        await setNextAction(client, {
+          opportunity: rows[0],
+          step: data.next_step !== undefined ? data.next_step : rows[0].next_step,
+          ownerId: data.next_step_owner_id !== undefined ? data.next_step_owner_id : rows[0].next_step_owner_id,
+          due: data.next_step_due !== undefined ? data.next_step_due : rows[0].next_step_due,
+          actor: req.currentUser,
+          reason,
         });
       }
 
@@ -293,6 +541,103 @@ router.patch(
     });
 
     res.json({ opportunity: await getOpportunity(id) });
+  }),
+);
+
+// ---------------------------------------------------------------- next action
+
+/** Sets what happens next, who owes it and by when — all three. */
+router.post(
+  '/:id/next-action',
+  asyncHandler(async (req, res) => {
+    const data = z.object({
+      next_step: z.string().max(2000),
+      next_step_owner_id: z.number().int().positive(),
+      next_step_due: day,
+      reason: z.string().max(2000).nullable().optional(),
+    }).parse(req.body);
+    const id = Number(req.params.id);
+    const existing = await mustEdit(req.currentUser, id);
+
+    await withTransaction((client) => setNextAction(client, {
+      opportunity: existing,
+      step: data.next_step,
+      ownerId: data.next_step_owner_id,
+      due: data.next_step_due,
+      actor: req.currentUser,
+      reason: data.reason?.trim() || null,
+    }));
+    res.json({ opportunity: await getOpportunity(id) });
+  }),
+);
+
+// ---------------------------------------------------------------- people
+
+router.post(
+  '/:id/collaborators',
+  asyncHandler(async (req, res) => {
+    const { user_id: userId, role } = z.object({
+      user_id: z.number().int().positive(),
+      role: z.string().max(200).nullable().optional(),
+    }).parse(req.body);
+    const id = Number(req.params.id);
+    const existing = await mustEdit(req.currentUser, id);
+    const person = await mustBeActiveUser(userId);
+
+    await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO opportunity_collaborators (opportunity_id, user_id, role, added_by)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (opportunity_id, user_id) DO UPDATE SET role = EXCLUDED.role
+         RETURNING (xmax = 0) AS inserted`,
+        [id, userId, role?.trim() || null, req.currentUser.id],
+      );
+      if (rows[0].inserted) {
+        await logActivity(client, {
+          accountId: existing.account_id, opportunityId: id, type: 'NOTE', actorId: req.currentUser.id,
+          subject: `${person.full_name} is helping on ${existing.name}`,
+          body: role?.trim() || null, source: 'MANUAL',
+        });
+        if (userId !== req.currentUser.id) {
+          await notify(client, {
+            userId, type: 'crm_collaborator',
+            title: `You are helping on ${existing.name}`,
+            body: role?.trim() || null, accountId: existing.account_id,
+          });
+        }
+      }
+    });
+    res.status(201).json({ opportunity: await getOpportunity(id) });
+  }),
+);
+
+router.delete(
+  '/:id/collaborators/:userId',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const existing = await mustEdit(req.currentUser, id);
+    const userId = Number(req.params.userId);
+    await withTransaction(async (client) => {
+      const { rowCount } = await client.query(
+        'DELETE FROM opportunity_collaborators WHERE opportunity_id = $1 AND user_id = $2', [id, userId],
+      );
+      if (rowCount) {
+        await logActivity(client, {
+          accountId: existing.account_id, opportunityId: id, type: 'NOTE', actorId: req.currentUser.id,
+          subject: 'A collaborator was taken off the deal', meta: { user_id: userId }, source: 'MANUAL',
+        });
+      }
+    });
+    res.json({ opportunity: await getOpportunity(id) });
+  }),
+);
+
+router.get(
+  '/:id/handovers',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!(await loadOpportunity(id))) throw notFound('Opportunity not found');
+    res.json({ handovers: await listHandovers(id) });
   }),
 );
 
@@ -309,6 +654,15 @@ const stageInput = z.object({
   agreement_link: z.string().max(500).optional(),
   agreed_value: z.number().min(0).nullable().optional(),
   financial_status: z.enum(FINANCIAL_STATUSES).optional(),
+  // what happens next, set in the same step as the move
+  next_step: z.string().max(2000).nullable().optional(),
+  next_step_owner_id: z.number().int().positive().nullable().optional(),
+  next_step_due: z.string().min(8).nullable().optional(),
+  // the evidence the stage asks for, recorded in the same step
+  proposal: proposalInput.optional(),
+  order: orderInput.optional(),
+  // a manager moving a deal without the evidence, and saying why
+  override_reason: z.string().max(2000).optional(),
 });
 
 router.post(
@@ -317,11 +671,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const data = stageInput.parse(req.body);
     const id = Number(req.params.id);
-    const existing = await mustEdit(req.currentUser, id);
+    await mustEdit(req.currentUser, id);
 
-    const stage = await loadStageMove(data.stage_id, existing.stage_id);
-    await withTransaction((client) => moveOpportunityStage(client, {
-      opportunity: existing, stage, data, actor: req.currentUser,
+    await withTransaction((client) => applyStageMove(client, {
+      opportunityId: id, stageId: data.stage_id, data, actor: req.currentUser,
     }));
 
     res.json({ opportunity: await getOpportunity(id) });
@@ -365,6 +718,82 @@ router.post(
     res.json({ opportunity: await getOpportunity(id) });
   }),
 );
+
+// ---------------------------------------------------------------- the commercial record
+
+router.get(
+  '/:id/commercial',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    if (!(await loadOpportunity(id))) throw notFound('Opportunity not found');
+    res.json(await commercialRecord(id));
+  }),
+);
+
+/** Records a step in the commercial record and answers with the whole record. */
+const commercialStep = (handler) => asyncHandler(async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await mustEdit(req.currentUser, id);
+  await withTransaction((client) => handler(client, existing, req));
+  res.status(201).json({ ...(await commercialRecord(id)), opportunity: await getOpportunity(id) });
+});
+
+router.post('/:id/proposals', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => addProposal(client, {
+    opportunity, proposal: proposalInput.parse(req.body), actor: req.currentUser,
+  }),
+));
+
+router.post('/:id/proposals/:proposalId/status', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => {
+    const data = z.object({
+      status: z.enum(PROPOSAL_STATUSES), notes: z.string().max(4000).nullable().optional(),
+    }).parse(req.body);
+    return setProposalStatus(client, {
+      opportunity, proposalId: Number(req.params.proposalId), status: data.status,
+      notes: data.notes?.trim() || null, actor: req.currentUser,
+    });
+  },
+));
+
+router.post('/:id/orders', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => addOrder(client, {
+    opportunity, order: orderInput.parse(req.body), actor: req.currentUser,
+  }),
+));
+
+router.post('/:id/orders/:orderId/cancel', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => cancelOrder(client, {
+    opportunity, orderId: Number(req.params.orderId),
+    reason: z.object({ reason: z.string().max(2000) }).parse(req.body).reason, actor: req.currentUser,
+  }),
+));
+
+router.post('/:id/invoices', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => addInvoice(client, {
+    opportunity, invoice: invoiceInput.parse(req.body), actor: req.currentUser,
+  }),
+));
+
+router.post('/:id/invoices/:invoiceId/cancel', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => cancelInvoice(client, {
+    opportunity, invoiceId: Number(req.params.invoiceId),
+    reason: z.object({ reason: z.string().max(2000) }).parse(req.body).reason, actor: req.currentUser,
+  }),
+));
+
+router.post('/:id/payments', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => addPayment(client, {
+    opportunity, payment: paymentInput.parse(req.body), actor: req.currentUser,
+  }),
+));
+
+router.post('/:id/payments/:paymentId/void', requirePermission('crm.activity.log'), commercialStep(
+  (client, opportunity, req) => voidPayment(client, {
+    opportunity, paymentId: Number(req.params.paymentId),
+    reason: z.object({ reason: z.string().max(2000) }).parse(req.body).reason, actor: req.currentUser,
+  }),
+));
 
 // ---------------------------------------------------------------- requirements
 
@@ -515,6 +944,9 @@ router.delete(
   asyncHandler(async (req, res) => {
     const id = Number(req.params.id);
     const existing = await mustEdit(req.currentUser, id);
+    if (!mayReassign(req.currentUser, existing)) {
+      throw forbidden('Only the deal owner, the relationship owner or a pipeline manager can archive it');
+    }
     await withTransaction(async (client) => {
       await client.query('UPDATE opportunities SET is_archived = TRUE, updated_at = now() WHERE id = $1', [id]);
       await refreshPrimaryOpportunity(client, existing.account_id);

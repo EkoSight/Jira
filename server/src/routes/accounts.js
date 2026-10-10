@@ -23,10 +23,11 @@ import { analyseAccounts } from '../services/accountInsights.js';
 import { runAccountScan } from '../jobs/accountScanner.js';
 
 import {
-  eligibleValue, listContacts, opportunitiesFor, possibleDuplicateContacts, recordOwnershipChange,
-  syncAccountMirror,
+  eligibleValue, listContacts, mustBeActiveUser, opportunitiesFor, possibleDuplicateContacts,
+  recordHistory, recordOwnershipChange, setNextAction, syncAccountMirror,
 } from '../services/opportunities.js';
-import { loadStageMove, moveOpportunityStage, wonStage } from '../services/dealMoves.js';
+import { applyStageMove, wonStage } from '../services/dealMoves.js';
+import { RULE_KEYS } from '../services/dealRules.js';
 import { describeRules, followUpRules, leadFigures } from '../services/leadFigures.js';
 import { ensureFolders } from '../services/resources.js';
 import { crmDashboard, managerSummaries, mapView, ownershipTree } from '../services/crmDashboard.js';
@@ -54,7 +55,11 @@ const accountInput = z.object({
   description: z.string().max(20000).nullable().optional(),
   next_step: z.string().max(2000).nullable().optional(),
   next_step_due: z.string().min(8).nullable().optional(),
+  // who owes the next step — it belongs to the organization's main deal
+  next_step_owner_id: z.number().int().positive().nullable().optional(),
   status: z.enum(ACCOUNT_STATUSES).optional(),
+  // why the owner or the expected value changed, kept on the history
+  reason: z.string().max(2000).nullable().optional(),
 
   // the organization dossier
   segment_id: z.number().int().positive().nullable().optional(),
@@ -150,6 +155,10 @@ router.post(
 
 // ---------------------------------------------------------------- stages
 
+// only rules the server knows how to check, each once
+const stageRules = z.array(z.enum(RULE_KEYS)).max(RULE_KEYS.length)
+  .transform((list) => [...new Set(list)]).optional();
+
 router.get(
   '/stages',
   asyncHandler(async (req, res) => {
@@ -167,15 +176,19 @@ router.post(
         kind: z.enum(STAGE_KINDS).optional(),
         color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
         position: z.number().int().optional(),
+        entry_rules: stageRules,
+        exit_rules: stageRules,
       })
       .parse(req.body);
 
     const { rows } = await query(
-      `INSERT INTO account_stages (name, slug, kind, color, position)
+      `INSERT INTO account_stages (name, slug, kind, color, position, entry_rules, exit_rules)
        VALUES ($1,$2,COALESCE($3,'open'),COALESCE($4,'#64748b'),
-               COALESCE($5,(SELECT COALESCE(MAX(position),0)+1 FROM account_stages)))
+               COALESCE($5,(SELECT COALESCE(MAX(position),0)+1 FROM account_stages)),
+               COALESCE($6::text[], '{}'), COALESCE($7::text[], '{}'))
        RETURNING *`,
-      [data.name, slugify(data.name), data.kind ?? null, data.color ?? null, data.position ?? null],
+      [data.name, slugify(data.name), data.kind ?? null, data.color ?? null, data.position ?? null,
+        data.entry_rules ?? null, data.exit_rules ?? null],
     );
     res.status(201).json({ stage: rows[0] });
   }),
@@ -192,12 +205,15 @@ router.patch(
         color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
         position: z.number().int().optional(),
         is_active: z.boolean().optional(),
+        // what the stage needs to see before a deal comes in, and before it goes on
+        entry_rules: stageRules,
+        exit_rules: stageRules,
       })
       .parse(req.body);
 
     const fields = [];
     const params = [];
-    for (const key of ['name', 'kind', 'color', 'position', 'is_active']) {
+    for (const key of ['name', 'kind', 'color', 'position', 'is_active', 'entry_rules', 'exit_rules']) {
       if (data[key] !== undefined) {
         params.push(data[key]);
         fields.push(`${key} = $${params.length}`);
@@ -312,6 +328,8 @@ router.get(
       listActivities(account.id),
       query(
         `SELECT t.id, t.ref, t.title, t.due_date, t.priority, t.assignee_id, t.progress,
+                t.opportunity_id, t.completed_at, t.completion_note, t.outcome_status,
+                t.outcome_evidence_url, t.outcome_intent_confirmed,
                 s.name AS status_name, s.stage, s.color AS status_color,
                 u.full_name AS assignee_name, u.avatar_color AS assignee_color
            FROM tasks t
@@ -437,6 +455,28 @@ router.post(
       await client.query('UPDATE accounts SET primary_opportunity_id = $1 WHERE id = $2',
         [oppRows[0].id, created.id]);
 
+      // A next step captured with the lead is owed by someone: the person named,
+      // or whoever leads the deal. A missing date is not guessed — the deal is
+      // flagged until somebody gives one.
+      if ((data.next_step || '').trim()) {
+        const nextOwner = data.next_step_owner_id ?? created.owner_user_id;
+        if (data.next_step_owner_id) await mustBeActiveUser(data.next_step_owner_id, client);
+        await client.query(
+          `UPDATE opportunities SET next_step_owner_id = $2, next_step_set_at = now(), next_step_set_by = $3
+            WHERE id = $1`,
+          [oppRows[0].id, nextOwner, req.currentUser.id],
+        );
+        if (nextOwner && nextOwner !== req.currentUser.id) {
+          await notify(client, {
+            userId: nextOwner,
+            type: 'crm_next_action',
+            title: `${created.name}: the next move is yours`,
+            body: data.next_step.trim(),
+            accountId: created.id,
+          });
+        }
+      }
+
       // the contact captured on the quick-add form becomes the first stakeholder
       if ((data.contact_name || '').trim() || (data.contact_email || '').trim()
           || (data.contact_phone || '').trim()) {
@@ -458,6 +498,7 @@ router.post(
         actorId: req.currentUser.id,
         subject: 'Lead created',
         body: data.source ? `Source: ${data.source}` : null,
+        source: 'MANUAL',
       });
       return created;
     });
@@ -488,42 +529,109 @@ router.patch(
     const existing = existingRows[0];
     if (!existing) throw notFound('Account not found');
     if (!canEditAccount(req.currentUser, existing)) throw forbidden('You cannot edit this account');
+    const reason = data.reason?.trim() || null;
+
+    const { rows: primaryRows } = existing.primary_opportunity_id
+      ? await query('SELECT * FROM opportunities WHERE id = $1', [existing.primary_opportunity_id])
+      : { rows: [] };
+    const primary = primaryRows[0] || null;
+    const primaryLive = Boolean(primary) && ['ACTIVE', 'ON_HOLD', 'NURTURE'].includes(primary.status);
+
+    // handing the relationship to someone else is recorded, with why
+    const ownerChanging = data.owner_user_id !== undefined && data.owner_user_id !== existing.owner_user_id;
+    if (ownerChanging && existing.owner_user_id && !reason) {
+      throw badRequest('Say why the relationship is changing hands — the reason stays on its history',
+        { code: 'REASON_REQUIRED', field: 'owner_user_id' });
+    }
+    if (ownerChanging && data.owner_user_id) await mustBeActiveUser(data.owner_user_id);
+
+    // the expected value is the main deal's estimate; changing one somebody
+    // relied on needs a reason, filling in a blank does not
+    if (data.value !== undefined && primary) {
+      const before = primary.estimated_value === null ? null : Number(primary.estimated_value);
+      const after = data.value === null ? null : Number(data.value);
+      if (before !== null && before !== after && !reason) {
+        throw badRequest('Say why the expected value changed — the reason stays on the deal\'s history',
+          { code: 'REASON_REQUIRED', field: 'value' });
+      }
+    }
+
+    // The next step belongs to the main deal. It used to be written only on the
+    // organization, and the next change to the deal put the old step back — the
+    // "outdated next step" the pipeline kept showing. On a live deal it is now set
+    // as a next action: what, who and by when.
+    const nextKeys = ['next_step', 'next_step_due', 'next_step_owner_id'];
+    const touchesNext = nextKeys.some((key) => data[key] !== undefined);
+    const nextOnDeal = touchesNext && primaryLive;
+    if (nextOnDeal && nextKeys.some((key) => data[key] === null || data[key] === '')) {
+      throw badRequest('A live deal always has a next action — change it rather than clearing it',
+        { code: 'NEXT_ACTION_INVALID' });
+    }
 
     const fields = [];
     const params = [];
     for (const key of TRACKED) {
       if (data[key] === undefined) continue;
+      if (nextOnDeal && (key === 'next_step' || key === 'next_step_due')) continue;
       params.push(data[key] === '' ? null : data[key]);
       fields.push(`${key} = $${params.length}`);
     }
-    if (!fields.length) throw badRequest('Nothing to update');
-    params.push(id);
+    if (!fields.length && !nextOnDeal) throw badRequest('Nothing to update');
 
     await withTransaction(async (client) => {
-      await client.query(
-        `UPDATE accounts SET ${fields.join(', ')}, updated_at = now() WHERE id = $${params.length}`,
-        params,
-      );
+      if (fields.length) {
+        params.push(id);
+        await client.query(
+          `UPDATE accounts SET ${fields.join(', ')}, updated_at = now() WHERE id = $${params.length}`,
+          params,
+        );
+      }
+
+      if (ownerChanging) {
+        await recordOwnershipChange(client, {
+          entityType: 'ACCOUNT', entityId: id, from: existing.owner_user_id,
+          to: data.owner_user_id, actorId: req.currentUser.id, reason,
+        });
+      }
 
       // "Expected revenue" on the lead is the estimate on its main deal. It used
       // to be written only to the lead's mirror column, which the next change to
       // the deal overwrote — so the number somebody typed quietly disappeared.
       // It now goes where the pipeline reads it, and the mirror follows.
-      if (data.value !== undefined && existing.primary_opportunity_id) {
+      if (data.value !== undefined && primary) {
         await client.query(
           'UPDATE opportunities SET estimated_value = $1::numeric, updated_at = now() WHERE id = $2',
-          [data.value, existing.primary_opportunity_id],
+          [data.value, primary.id],
         );
+        if (String(primary.estimated_value ?? '') !== String(data.value ?? '')) {
+          await recordHistory(client, {
+            opportunityId: primary.id, field: 'estimated_value',
+            from: primary.estimated_value, to: data.value, actorId: req.currentUser.id, reason,
+          });
+        }
         await syncAccountMirror(client, id);
+      }
+
+      if (nextOnDeal) {
+        const { rows } = await client.query('SELECT * FROM opportunities WHERE id = $1', [primary.id]);
+        await setNextAction(client, {
+          opportunity: rows[0],
+          step: data.next_step !== undefined ? data.next_step : rows[0].next_step,
+          ownerId: data.next_step_owner_id !== undefined ? data.next_step_owner_id : rows[0].next_step_owner_id,
+          due: data.next_step_due !== undefined ? data.next_step_due : rows[0].next_step_due,
+          actor: req.currentUser,
+          reason,
+        });
       }
     });
 
     // handing a lead to someone else tells them
-    if (data.owner_user_id !== undefined && data.owner_user_id !== existing.owner_user_id) {
+    if (ownerChanging && data.owner_user_id) {
       await notify(null, {
         userId: data.owner_user_id,
         type: 'crm_assigned',
         title: `You are now leading ${existing.name}`,
+        body: reason ? `Why: ${reason}` : null,
         accountId: id,
       });
     }
@@ -534,18 +642,45 @@ router.patch(
 
 // ---------------------------------------------------------------- move stage
 
+const evidenceInput = {
+  // what happens next, set in the same step as the move
+  next_step: z.string().max(2000).nullable().optional(),
+  next_step_owner_id: z.number().int().positive().nullable().optional(),
+  next_step_due: z.string().min(8).nullable().optional(),
+  // the records a stage can ask for, captured in the same step
+  proposal: z.object({
+    title: z.string().max(200).nullable().optional(),
+    sent_on: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+    amount: z.number().min(0).nullable().optional(),
+    valid_until: z.string().nullable().optional(),
+    link: z.string().max(500).nullable().optional(),
+    notes: z.string().max(4000).nullable().optional(),
+  }).optional(),
+  order: z.object({
+    kind: z.enum(['PURCHASE_ORDER', 'CONTRACT', 'WORK_ORDER', 'MOU', 'OTHER']).optional(),
+    reference: z.string().max(200).nullable().optional(),
+    received_on: z.string().regex(/^\d{4}-\d{2}-\d{2}/),
+    amount: z.number().min(0).nullable().optional(),
+    link: z.string().max(500).nullable().optional(),
+    notes: z.string().max(4000).nullable().optional(),
+  }).optional(),
+  override_reason: z.string().max(2000).optional(),
+};
+
 router.post(
   '/:id/stage',
   requirePermission('crm.activity.log'),
   asyncHandler(async (req, res) => {
-    const { stage_id: stageId, reason, agreed_value: agreedValue } = z
+    const data = z
       .object({
         stage_id: z.number().int().positive(),
         // a loss needs a reason wherever it is recorded, the board included
         reason: z.string().max(2000).optional(),
         agreed_value: z.number().min(0).nullable().optional(),
+        ...evidenceInput,
       })
       .parse(req.body);
+    const { stage_id: stageId, reason, agreed_value: agreedValue } = data;
     const id = Number(req.params.id);
 
     const { rows: existingRows } = await query('SELECT * FROM accounts WHERE id = $1', [id]);
@@ -560,20 +695,14 @@ router.post(
     const stage = stageRows[0];
     if (!stage) throw badRequest('Stage not found');
 
-    // Moving a lead moves its main deal. This used to change only the lead's
-    // mirror columns, so a lead dragged to Won never counted as won anywhere that
-    // reads deals, and the next edit to the deal quietly moved it back.
-    const { rows: primaryRows } = await query(
-      'SELECT * FROM opportunities WHERE id = $1', [existing.primary_opportunity_id],
-    );
-    const primary = primaryRows[0];
-
-    if (primary) {
-      const move = await loadStageMove(stageId, primary.stage_id);
-      await withTransaction((client) => moveOpportunityStage(client, {
-        opportunity: primary,
-        stage: move,
+    // Moving a lead moves its main deal, through the same checks as moving the
+    // deal itself: the evidence the stage asks for, and a next action.
+    if (existing.primary_opportunity_id) {
+      await withTransaction((client) => applyStageMove(client, {
+        opportunityId: existing.primary_opportunity_id,
+        stageId,
         data: {
+          ...data,
           outcome_reason: reason ?? undefined,
           agreed_value: agreedValue ?? undefined,
         },
@@ -617,6 +746,9 @@ router.post(
         agreed_value: z.number().min(0).nullable().optional(),
         agreement_date: z.string().min(8).nullable().optional(),
         agreement_type: z.string().max(120).nullable().optional(),
+        // the accepted order or contract the Won stage asks for
+        order: evidenceInput.order,
+        override_reason: evidenceInput.override_reason,
       })
       .parse(req.body);
     const { type } = data;
@@ -644,14 +776,15 @@ router.post(
 
     await withTransaction(async (client) => {
       if (wonStageId) {
-        const move = await loadStageMove(wonStageId, won.stage_id);
-        await moveOpportunityStage(client, {
-          opportunity: won,
-          stage: move,
+        await applyStageMove(client, {
+          opportunityId: won.id,
+          stageId: wonStageId,
           data: {
             agreed_value: data.agreed_value ?? undefined,
             agreement_date: data.agreement_date ?? undefined,
             agreement_type: data.agreement_type ?? undefined,
+            order: data.order,
+            override_reason: data.override_reason,
           },
           actor: req.currentUser,
         });
@@ -673,6 +806,7 @@ router.post(
         subject: type === 'CUSTOMER' ? 'Became a customer' : 'Became a partner',
         body: won ? `Signed: ${won.name}` : null,
         meta: { from: existing.type, to: type, opportunity_id: won?.id ?? null },
+        source: 'MANUAL',
       });
     });
 
@@ -716,6 +850,7 @@ router.post(
         body: z.string().max(20000).nullable().optional(),
         next_step: z.string().max(2000).nullable().optional(),
         next_step_due: z.string().min(8).nullable().optional(),
+        next_step_owner_id: z.number().int().positive().nullable().optional(),
         task_id: z.number().int().positive().nullable().optional(),
         // when it happened, which is not when it was typed in
         occurred_at: z.string().min(8).nullable().optional(),
@@ -726,7 +861,8 @@ router.post(
         meeting_id: z.number().int().positive().nullable().optional(),
         contact_id: z.number().int().positive().nullable().optional(),
         channel: z.string().max(40).nullable().optional(),
-        direction: z.enum(['OUTBOUND', 'INBOUND']).nullable().optional(),
+        // we reached out, they reached us, or it was work on our side only
+        direction: z.enum(['OUTBOUND', 'INBOUND', 'INTERNAL']).nullable().optional(),
         // an attempt, a message sent, a reply received and a conversation that
         // actually happened are four different facts
         outcome: z.enum(['ATTEMPTED', 'COMPLETED', 'SENT', 'RECEIVED',
@@ -740,6 +876,23 @@ router.post(
     const account = rows[0];
     if (!account) throw notFound('Account not found');
 
+    // not saying which deal means the main one; saying null means none in particular
+    const opportunityId = data.opportunity_id === undefined
+      ? account.primary_opportunity_id ?? null
+      : data.opportunity_id;
+    let deal = null;
+    if (opportunityId) {
+      const { rows: dealRows } = await query(
+        'SELECT * FROM opportunities WHERE id = $1 AND account_id = $2', [opportunityId, id],
+      );
+      deal = dealRows[0] || null;
+      if (!deal && data.opportunity_id) throw badRequest('That deal is not with this organization');
+    }
+    const dealLive = Boolean(deal) && ['ACTIVE', 'ON_HOLD', 'NURTURE'].includes(deal.status);
+    const givesNext = Boolean((data.next_step || '').trim());
+    // an internal note is internal whatever its type says
+    const internal = data.direction === 'INTERNAL';
+
     const activity = await withTransaction(async (client) => {
       const created = await logActivity(client, {
         accountId: id,
@@ -750,7 +903,7 @@ router.post(
         nextStep: data.next_step ?? null,
         taskId: data.task_id ?? null,
         occurredAt: data.occurred_at ?? null,
-        opportunityId: data.opportunity_id ?? account.primary_opportunity_id ?? null,
+        opportunityId: deal?.id ?? null,
         engagementId: data.engagement_id ?? null,
         meetingId: data.meeting_id ?? null,
         contactId: data.contact_id ?? null,
@@ -758,16 +911,40 @@ router.post(
         direction: data.direction ?? null,
         outcome: data.outcome ?? null,
         externalParticipants: data.external_participants ?? null,
+        ...(internal ? { isExternal: false } : {}),
+        source: 'MANUAL',
       });
-      // recording a next step with a date sets it on the account too
-      if (data.next_step_due !== undefined) {
-        await client.query('UPDATE accounts SET next_step_due = $1 WHERE id = $2', [data.next_step_due, id]);
+
+      // The next step that came out of it is the deal's next action now — what,
+      // who and by when. It used to land only on the organization, where the
+      // next change to the deal replaced it with the old one.
+      if (givesNext && dealLive) {
+        await setNextAction(client, {
+          opportunity: deal,
+          step: data.next_step,
+          // unless somebody else is named, it stays with whoever owes the deal's
+          // next move now, or the person who leads the deal
+          ownerId: data.next_step_owner_id ?? deal.next_step_owner_id ?? deal.owner_user_id,
+          due: data.next_step_due ?? null,
+          actor: req.currentUser,
+          taskId: data.task_id ?? null,
+        });
+      } else if (givesNext || data.next_step_due !== undefined) {
+        // an organization with no live deal keeps its note of what is next
+        await client.query(
+          `UPDATE accounts SET next_step = COALESCE($1, next_step),
+                  next_step_due = CASE WHEN $3 THEN $2::date ELSE next_step_due END
+            WHERE id = $4`,
+          [givesNext ? data.next_step.trim() : null, data.next_step_due ?? null,
+            data.next_step_due !== undefined, id],
+        );
       }
       return created;
     });
 
     // the follower hears about real touches on a deal they are watching
-    if (account.follower_user_id && account.follower_user_id !== req.currentUser.id && data.type !== 'NOTE') {
+    if (account.follower_user_id && account.follower_user_id !== req.currentUser.id
+        && data.type !== 'NOTE' && !internal) {
       await notify(null, {
         userId: account.follower_user_id,
         type: 'crm_activity',

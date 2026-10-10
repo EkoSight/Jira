@@ -155,9 +155,14 @@ test('expected revenue typed on a lead lands on its deal, and survives the next 
 
   // editing the deal for an unrelated reason used to rewrite the lead's value
   // from the deal — which, before, had no value — and the typed number vanished
-  await call('PATCH', `/opportunities/${deal.id}`, {
-    token: tokens.manager, body: { next_step: 'Send the price sheet' },
+  const unrelated = await call('PATCH', `/opportunities/${deal.id}`, {
+    token: tokens.manager,
+    body: {
+      next_step: 'Send the price sheet', next_step_owner_id: ids.manager,
+      next_step_due: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+    },
   });
+  assert.equal(unrelated.status, 200, JSON.stringify(unrelated.body));
   const after = await call('GET', `/accounts/${lead.id}`, { token: tokens.manager });
   assert.equal(Number(after.body.account.value), 750000, 'the typed value is still there');
   ids.gujarat = lead.id;
@@ -211,10 +216,22 @@ test('a lead moved to Won on the board counts as won on the dashboard', async (t
   const before = await call('GET', '/accounts/dashboard/b2b', { token: tokens.manager });
   const lead = await newLead({ name: 'Board Winner', value: 400000 });
 
-  const moved = await call('POST', `/accounts/${lead.id}/stage`, {
+  // a drag to Won with no order on record is refused, and says what is missing
+  const bare = await call('POST', `/accounts/${lead.id}/stage`, {
     token: tokens.manager, body: { stage_id: ids.stage_won },
   });
-  assert.equal(moved.status, 200);
+  assert.equal(bare.status, 400);
+  assert.equal(bare.body.details.code, 'STAGE_EVIDENCE_REQUIRED');
+  assert.deepEqual(bare.body.details.missing.map((m) => m.rule), ['order']);
+
+  const moved = await call('POST', `/accounts/${lead.id}/stage`, {
+    token: tokens.manager,
+    body: {
+      stage_id: ids.stage_won,
+      order: { reference: 'PO 7781', received_on: new Date().toISOString().slice(0, 10), amount: 400000 },
+    },
+  });
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
 
   // the deal moved with it — this is what used to be missed
   const detail = await call('GET', `/accounts/${lead.id}`, { token: tokens.manager });
@@ -258,9 +275,10 @@ test('marking a lead as a customer wins the deal it signed, and the month shows 
     body: {
       type: 'CUSTOMER', opportunity_id: deal.id, agreed_value: 1100000,
       agreement_type: 'Purchase order',
+      order: { reference: 'FPO/PO/2026/118', received_on: new Date().toISOString().slice(0, 10) },
     },
   });
-  assert.equal(converted.status, 200);
+  assert.equal(converted.status, 200, JSON.stringify(converted.body));
   assert.equal(converted.body.account.type, 'CUSTOMER');
 
   const won = await call('GET', `/accounts/${lead.id}`, { token: tokens.manager });

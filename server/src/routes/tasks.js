@@ -22,6 +22,10 @@ import {
   addMessage, canRaiseReview, createThread, listMessages, listThreads,
 } from '../services/threads.js';
 import { checkAssignment } from '../services/availability.js';
+import {
+  OUTCOME_STATUSES, completionContext, isDealTask, planDealCompletion, recordDealCompletion,
+  recordProgress,
+} from '../services/taskOutcomes.js';
 
 const router = Router();
 
@@ -35,6 +39,7 @@ const TASK_SELECT = `
          c.full_name AS created_by_name,
          p.ref AS parent_ref, p.title AS parent_title,
          acc.name AS account_name, acc.type AS account_type,
+         opp.name AS opportunity_name,
          (t.due_date IS NOT NULL AND t.due_date < now() AND s.stage NOT IN ('done','cancelled')) AS is_overdue,
          -- comments live in discussion threads now; counting the old table here
          -- would freeze every card's badge at its pre-upgrade number
@@ -73,6 +78,7 @@ const TASK_SELECT = `
     LEFT JOIN users c ON c.id = t.created_by
     LEFT JOIN tasks p ON p.id = t.parent_task_id
     LEFT JOIN accounts acc ON acc.id = t.account_id
+    LEFT JOIN opportunities opp ON opp.id = t.opportunity_id
 `;
 
 /**
@@ -144,6 +150,40 @@ const taskInput = z.object({
   completion_note: z.string().max(5000).nullable().optional(),
   // the lead or partner this task is helping — NULL for an ordinary task
   account_id: z.number().int().positive().nullable().optional(),
+  // and, when it is work on one particular deal, which one
+  opportunity_id: z.number().int().positive().nullable().optional(),
+});
+
+/**
+ * The deal a task names must belong to the organization it names. Naming only
+ * the deal fills in its organization, so the task still shows on that page.
+ */
+async function resolveDealLink(data, existing = {}) {
+  if (data.opportunity_id === undefined || data.opportunity_id === null) return data;
+  const { rows } = await query('SELECT id, account_id FROM opportunities WHERE id = $1', [data.opportunity_id]);
+  if (!rows[0]) throw badRequest('That deal does not exist');
+  const accountId = data.account_id !== undefined ? data.account_id : existing.account_id;
+  if (accountId && accountId !== rows[0].account_id) {
+    throw badRequest('That deal is with a different organization from the one this task is for');
+  }
+  return { ...data, account_id: rows[0].account_id };
+}
+
+/**
+ * What finishing a deal task records beyond the note: whether it achieved what
+ * was asked, the link to the proof, confirmation when the words read like a
+ * plan, and the deal's next step. Ignored for ordinary tasks.
+ */
+const dealOutcomeInput = z.object({
+  outcome_status: z.enum(OUTCOME_STATUSES).optional(),
+  outcome_evidence_url: z.string().max(1000).nullable().optional(),
+  confirm_intent: z.boolean().optional(),
+  next_step: z.object({
+    opportunity_id: z.number().int().positive().nullable().optional(),
+    text: z.string().max(2000),
+    owner_id: z.number().int().positive().nullable().optional(),
+    due: z.string().min(8).nullable().optional(),
+  }).nullable().optional(),
 });
 
 // ---------------------------------------------------------------- list
@@ -334,7 +374,7 @@ router.post(
   '/',
   requirePermission('task.create'),
   asyncHandler(async (req, res) => {
-    const data = taskInput.parse(req.body);
+    const data = await resolveDealLink(taskInput.parse(req.body));
 
     // every task must have an owner accountable for it — enforced here so the API
     // cannot create an ownerless card even if the form is bypassed
@@ -426,6 +466,10 @@ router.post(
         await client.query('UPDATE tasks SET account_id = $1 WHERE id = $2', [data.account_id, created.id]);
         created.account_id = data.account_id;
       }
+      if (data.opportunity_id) {
+        await client.query('UPDATE tasks SET opportunity_id = $1 WHERE id = $2', [data.opportunity_id, created.id]);
+        created.opportunity_id = data.opportunity_id;
+      }
 
       await logActivity(client, {
         taskId: created.id,
@@ -469,7 +513,7 @@ router.post(
 const TRACKED_FIELDS = [
   'title', 'description', 'department_id', 'status_id', 'priority', 'task_type',
   'assignee_id', 'follower_id', 'parent_task_id', 'reporter_id', 'start_date', 'due_date',
-  'estimate_hours', 'spent_hours', 'progress', 'tags', 'blocked_reason', 'account_id',
+  'estimate_hours', 'spent_hours', 'progress', 'tags', 'blocked_reason', 'account_id', 'opportunity_id',
   // recurrence was validated on update but never written, so the "Repeats"
   // dropdown did nothing on a card that already existed — you could only set a
   // cadence at creation, and only by starting the task again
@@ -479,7 +523,7 @@ const TRACKED_FIELDS = [
 router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
-    const data = taskInput.partial().parse(req.body);
+    const parsed = taskInput.partial().parse(req.body);
     const id = Number(req.params.id);
 
     const { rows: existingRows } = await query(
@@ -488,6 +532,12 @@ router.patch(
     );
     const existing = existingRows[0];
     if (!existing) throw notFound('Task not found');
+    const data = await resolveDealLink(parsed, existing);
+    // moving the task to another organization takes it off the old one's deal
+    if (data.account_id !== undefined && data.account_id !== existing.account_id
+        && data.opportunity_id === undefined && existing.opportunity_id) {
+      data.opportunity_id = null;
+    }
 
     if (!canEdit(req.currentUser, existing)) {
       // Anyone may hand work to anyone, so changing only the owner or the follower
@@ -525,6 +575,22 @@ router.patch(
         recurrence: data.recurrence ?? existing.recurrence,
         maxHorizonDays: settings.deadlines?.maxHorizonDays,
       });
+    }
+
+    // Finishing deal work says what happened, with evidence and the deal's next
+    // step. Checked before anything is written, so a refusal changes nothing.
+    const outcome = dealOutcomeInput.parse(req.body);
+    let dealPlan = null;
+    if (data.status_id !== undefined && data.status_id !== existing.status_id) {
+      const { rows: target } = await query('SELECT stage FROM workflow_statuses WHERE id = $1', [data.status_id]);
+      const merged = {
+        ...existing,
+        account_id: data.account_id !== undefined ? data.account_id : existing.account_id,
+        opportunity_id: data.opportunity_id !== undefined ? data.opportunity_id : existing.opportunity_id,
+      };
+      if (target[0]?.stage === 'done' && existing.stage !== 'done' && isDealTask(merged)) {
+        dealPlan = await planDealCompletion(merged, { ...outcome, completion_note: data.completion_note });
+      }
     }
 
     const updated = await withTransaction(async (client) => {
@@ -565,6 +631,9 @@ router.patch(
       if (leavingDone) {
         fields.push('completed_at = NULL');
         fields.push('completion_note = NULL');
+        // the outcome belonged to that completion; the history keeps it
+        fields.push('outcome_status = NULL', 'outcome_evidence_url = NULL',
+          'outcome_next_step = NULL', 'outcome_intent_confirmed = NULL');
       }
 
       if (!fields.length) return existing;
@@ -598,6 +667,7 @@ router.patch(
           action: 'completed',
           to: data.completion_note || null,
         });
+        if (dealPlan) await recordDealCompletion(client, { task, plan: dealPlan, actor: req.currentUser });
       }
       if (leavingDone) {
         await logActivity(client, { taskId: id, actorId: req.currentUser.id, action: 'reopened' });
@@ -697,6 +767,7 @@ router.post(
         completion_note: z.string().max(5000).nullable().optional(),
       })
       .parse(req.body);
+    const outcome = dealOutcomeInput.parse(req.body);
     const id = Number(req.params.id);
 
     const { rows: existingRows } = await query(
@@ -724,6 +795,11 @@ router.post(
     const enteringDone = status.stage === 'done' && existing.stage !== 'done';
     const leavingDone = existing.stage === 'done' && status.stage !== 'done';
 
+    // dragging deal work to Done asks what happened, like every other way of finishing it
+    const dealPlan = enteringDone && isDealTask(existing)
+      ? await planDealCompletion(existing, { ...outcome, completion_note: completionNote })
+      : null;
+
     await withTransaction(async (client) => {
       await client.query(
         `UPDATE tasks
@@ -732,6 +808,10 @@ router.post(
                 completed_at = CASE WHEN $3 THEN now() WHEN $4 THEN NULL ELSE completed_at END,
                 progress = CASE WHEN $3 THEN 100 ELSE progress END,
                 completion_note = CASE WHEN $3 THEN $6 WHEN $4 THEN NULL ELSE completion_note END,
+                outcome_status = CASE WHEN $4 THEN NULL ELSE outcome_status END,
+                outcome_evidence_url = CASE WHEN $4 THEN NULL ELSE outcome_evidence_url END,
+                outcome_next_step = CASE WHEN $4 THEN NULL ELSE outcome_next_step END,
+                outcome_intent_confirmed = CASE WHEN $4 THEN NULL ELSE outcome_intent_confirmed END,
                 updated_at = now()
           WHERE id = $5`,
         [status_id, position ?? null, enteringDone, leavingDone, id, completionNote || null],
@@ -745,6 +825,7 @@ router.post(
         to: enteringDone ? completionNote || null : status_id,
         meta: { to_status: status.name },
       });
+      if (dealPlan) await recordDealCompletion(client, { task: existing, plan: dealPlan, actor: req.currentUser });
     });
 
     // Everything below runs after the completion is committed, so none of it can
@@ -818,6 +899,54 @@ router.post(
   asyncHandler(async (req, res) => {
     await query('UPDATE tasks SET is_archived = FALSE, updated_at = now() WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
+  }),
+);
+
+// ---------------------------------------------------------------- finishing deal work
+
+/**
+ * What the completion screen should ask. Deal work asks for the result, the
+ * evidence and — when finishing it would leave the deal with nothing agreed
+ * next — the next step.
+ */
+router.get(
+  '/:id/completion-context',
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const params = [id];
+    const visibility = visibilityClause(req.currentUser, params);
+    const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1 AND ${visibility}`, params);
+    if (!rows[0]) throw notFound('Task not found');
+    res.json(await completionContext(rows[0]));
+  }),
+);
+
+/**
+ * Where unfinished work stands. The task stays open; the note goes on its
+ * history and, for deal work, on the organization's timeline as internal work.
+ * This is what "will send samples" is: progress on "test samples", not its end.
+ */
+router.post(
+  '/:id/progress',
+  asyncHandler(async (req, res) => {
+    const { note, evidence_url: evidenceUrl } = z.object({
+      note: z.string().max(5000),
+      evidence_url: z.string().max(1000).nullable().optional(),
+    }).parse(req.body);
+    const id = Number(req.params.id);
+    const { rows } = await query(
+      `SELECT t.*, s.stage FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id WHERE t.id = $1`, [id],
+    );
+    const task = rows[0];
+    if (!task) throw notFound('Task not found');
+    if (!canEdit(req.currentUser, task)) throw forbidden('You cannot update this task');
+    if (task.stage === 'done') throw badRequest('This task is already finished — reopen it to add progress');
+
+    await withTransaction((client) => recordProgress(client, {
+      task, note, evidenceUrl, actor: req.currentUser,
+    }));
+    const { rows: fresh } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
+    res.status(201).json({ task: fresh[0] });
   }),
 );
 

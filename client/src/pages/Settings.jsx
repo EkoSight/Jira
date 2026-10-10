@@ -6,6 +6,7 @@ import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '.
 import { PRIORITIES } from '../lib/format.js';
 import AttendanceSettings from '../components/AttendanceSettings.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
+import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
 
 const STAGES = [
   ['backlog', 'Backlog — captured, not started'],
@@ -663,6 +664,7 @@ function RecordDialog({ title, initial, onClose, onSave, children }) {
 const TABS = [
   ['departments', 'Departments'],
   ['statuses', 'Statuses & stages'],
+  ['pipeline', 'Pipeline stages', 'crm.stages.manage'],
   ['rules', 'Black mark rules'],
   ['thresholds', 'Thresholds'],
   ['attendance', 'Attendance & pay', 'attendance.policy'],
@@ -751,6 +753,7 @@ export default function Settings() {
 
       {tab === 'departments' && <DepartmentsTab onChanged={refresh} />}
       {tab === 'statuses' && <StatusesTab onChanged={refresh} />}
+      {tab === 'pipeline' && <PipelineStageSettings />}
       {tab === 'rules' && <RulesTab />}
       {tab === 'thresholds' && <ThresholdsTab onChanged={refresh} />}
       {tab === 'attendance' && <AttendanceSettings />}

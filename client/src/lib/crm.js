@@ -19,6 +19,29 @@ export const ACTIVITY_META = {
   SUMMARY: { label: 'Summary', icon: 'list', quick: true },
   STAGE_CHANGE: { label: 'Stage change', icon: 'chevron', quick: false },
   CONVERTED: { label: 'Converted', icon: 'trophy', quick: false },
+  TASK_DONE: { label: 'Task finished', icon: 'check', quick: false },
+  ORDER: { label: 'Order', icon: 'wallet', quick: false },
+  INVOICE: { label: 'Invoice', icon: 'wallet', quick: false },
+  PAYMENT: { label: 'Payment', icon: 'wallet', quick: false },
+  HANDOVER: { label: 'Handover', icon: 'user', quick: false },
+  NEXT_ACTION: { label: 'Next action', icon: 'flag', quick: false },
+};
+
+/** Which way an entry went — the difference between hearing from them and chasing them. */
+export const DIRECTION_META = {
+  INBOUND: { label: 'From them', tone: 'good', title: 'The customer reached us or replied' },
+  OUTBOUND: { label: 'To them', tone: 'brand', title: 'We reached out' },
+  INTERNAL: { label: 'Internal', tone: 'neutral', title: 'Work on our side the customer never saw' },
+};
+
+/** Where an entry came from, for the small print on the timeline. */
+export const SOURCE_LABEL = {
+  MANUAL: 'logged by hand',
+  TASK: 'from a task',
+  MEETING: 'from a meeting',
+  SYSTEM: 'recorded automatically',
+  EMAIL_IMPORT: 'from an imported email',
+  CALENDAR_IMPORT: 'from an imported calendar event',
 };
 
 /** The buttons offered on an account for logging a touch, in order. */
@@ -44,6 +67,10 @@ export const CRM_SIGNAL_META = {
   no_next_action: {
     label: 'No next action', severity: 'warning',
     action: 'Agree what happens next, and by when',
+  },
+  next_action_incomplete: {
+    label: 'Next action incomplete', severity: 'warning',
+    action: 'Name who owes it and by when',
   },
   closing_with_blockers: {
     label: 'Closing with blockers', severity: 'critical',
@@ -298,3 +325,161 @@ export function stageEntryGaps(opportunity, stage) {
   }
   return gaps;
 }
+
+// ------------------------------------------------------------ trustworthy progress
+
+/** "3 days ago", "today", "never" — for the three clocks. */
+export function agoWords(days) {
+  if (days === null || days === undefined) return 'never';
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  return `${days} days ago`;
+}
+
+/**
+ * The three clocks a deal keeps, never folded into one: when the customer last
+ * engaged, when we last reached out, and when anything was last done on our
+ * side. Tidying a record moves only the third.
+ */
+export const CLOCKS = [
+  { key: 'days_since_customer', label: 'Customer last responded', short: 'Them',
+    hint: 'A reply, a call or meeting that took place, an order received' },
+  { key: 'days_since_outbound', label: 'We last followed up', short: 'Us',
+    hint: 'Something sent, an attempt, or an exchange we were part of' },
+  { key: 'days_since_internal', label: 'Last internal update', short: 'Inside',
+    hint: 'Notes, edits, stage changes and finished tasks — never contact with them' },
+];
+
+/** How worried to be about a clock: fresh, getting old, or old. */
+export function clockTone(days, quietAfter = 7) {
+  if (days === null || days === undefined) return 'critical';
+  if (days <= Math.max(1, Math.floor(quietAfter / 2))) return 'good';
+  if (days <= quietAfter) return 'neutral';
+  return days <= quietAfter * 2 ? 'warning' : 'critical';
+}
+
+/** Today in India, as YYYY-MM-DD — the calendar every due date is read in. */
+export const todayInIndia = (now = new Date()) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(now);
+
+export const NEXT_ACTION_GAP_META = {
+  no_next_action: { label: 'No next action', short: 'what' },
+  no_next_action_owner: { label: 'Nobody named for it', short: 'who' },
+  no_next_action_due: { label: 'No date for it', short: 'when' },
+  next_action_overdue: { label: 'Next action overdue', short: 'overdue' },
+};
+
+/**
+ * What a next action is missing, worked out the way the server does: what, who
+ * and by when, and whether that date has gone. Empty for a deal that is not live.
+ */
+export function nextActionGaps(opportunity, todayDate = todayInIndia()) {
+  if (!opportunity || opportunity.status !== 'ACTIVE') return [];
+  if (opportunity.stage_kind && opportunity.stage_kind !== 'open') return [];
+  const gaps = [];
+  if (!String(opportunity.next_step || '').trim()) gaps.push('no_next_action');
+  if (!opportunity.next_step_owner_id) gaps.push('no_next_action_owner');
+  const due = opportunity.next_step_due ? String(opportunity.next_step_due).slice(0, 10) : null;
+  if (!due) gaps.push('no_next_action_due');
+  else if (due < todayDate) gaps.push('next_action_overdue');
+  return gaps;
+}
+
+/** A first name, for the tight spaces where a whole name does not fit. */
+export const firstName = (name = '') => String(name).trim().split(/\s+/)[0] || '';
+
+/** The rules a stage can carry — the same words the server uses when one is missing. */
+export const STAGE_RULE_META = {
+  proposal: {
+    label: 'A dated proposal on record',
+    hint: 'Record the proposal: the date it was sent, and its amount if it had one.',
+  },
+  order: {
+    label: 'An accepted order or contract on record',
+    hint: 'Record the purchase order, contract, work order or MoU: its date and its number or link.',
+  },
+  meeting_completed: {
+    label: 'A meeting or demo that actually happened, with its outcome recorded',
+    hint: 'Record the outcome on the meeting. A booked meeting is not one that took place.',
+  },
+  contact: {
+    label: 'Someone named at the organization for this deal',
+    hint: 'Add the person you are dealing with on the deal.',
+  },
+  value: {
+    label: 'A value, or the value marked as not yet known',
+    hint: 'Enter the estimate, or tick "not yet known" so a blank is a decision and not an oversight.',
+  },
+  close_date: { label: 'An expected close date', hint: 'Set when you expect this to be decided.' },
+  must_haves_met: {
+    label: 'Every must-have requirement met or waived',
+    hint: 'Resolve the open must-haves, or waive them with a note.',
+  },
+};
+
+export const STAGE_RULE_KEYS = Object.keys(STAGE_RULE_META);
+
+/** Whether the deal's own counts already show a rule as met (the server has the final say). */
+function ruleLooksMet(rule, opportunity) {
+  switch (rule) {
+    case 'proposal': return (opportunity.proposal_count ?? 0) > 0;
+    case 'order': return (opportunity.order_count ?? 0) > 0;
+    case 'meeting_completed': return (opportunity.completed_meetings ?? 0) > 0;
+    case 'contact': return (opportunity.contact_count ?? 0) > 0;
+    case 'value': return opportunity.value_unknown || opportunity.eligible_value !== null
+      || opportunity.eligible_basis === 'non_commercial';
+    case 'close_date': return Boolean(opportunity.expected_close);
+    case 'must_haves_met': return !opportunity.unmet_must_haves;
+    default: return false;
+  }
+}
+
+/**
+ * The evidence a move needs, in the order the server checks it: the rules for
+ * leaving the current stage, then for entering the next one. Only going
+ * forward — moving back or to Lost needs none.
+ */
+export function evidenceNeeds({ opportunity, from, to }) {
+  if (!to || to.kind === 'lost') return [];
+  const forward = !from || (to.position ?? 0) > (from.position ?? 0) || to.kind === 'won';
+  if (!forward) return [];
+  const needs = [];
+  if (from && from.id !== to.id && from.kind === 'open') {
+    for (const rule of from.exit_rules || []) {
+      needs.push({ rule, phase: 'exit', stage: from.name, met: ruleLooksMet(rule, opportunity),
+        ...(STAGE_RULE_META[rule] || { label: rule }) });
+    }
+  }
+  for (const rule of to.entry_rules || []) {
+    if (needs.some((n) => n.rule === rule)) continue;
+    needs.push({ rule, phase: 'entry', stage: to.name, met: ruleLooksMet(rule, opportunity),
+      ...(STAGE_RULE_META[rule] || { label: rule }) });
+  }
+  return needs;
+}
+
+export const ORDER_KINDS = [
+  { value: 'PURCHASE_ORDER', label: 'Purchase order' },
+  { value: 'CONTRACT', label: 'Contract' },
+  { value: 'WORK_ORDER', label: 'Work order' },
+  { value: 'MOU', label: 'MoU' },
+  { value: 'OTHER', label: 'Other signed acceptance' },
+];
+export const ORDER_KIND_LABEL = Object.fromEntries(ORDER_KINDS.map((k) => [k.value, k.label]));
+
+export const PROPOSAL_STATUS_META = {
+  SENT: { label: 'Sent', tone: 'brand' },
+  ACCEPTED: { label: 'Accepted', tone: 'good' },
+  DECLINED: { label: 'Declined', tone: 'critical' },
+  SUPERSEDED: { label: 'Replaced', tone: 'neutral' },
+  WITHDRAWN: { label: 'Withdrawn', tone: 'neutral' },
+};
+
+/** The four commercial figures, each its own claim. Never added together. */
+export const LEDGER_FIGURES = [
+  { key: 'latest_proposal', label: 'Proposed', hint: 'The latest proposal we sent' },
+  { key: 'booked', label: 'Booked', hint: 'Accepted orders and contracts — a commitment, not money' },
+  { key: 'invoiced', label: 'Invoiced', hint: 'Revenue billed and not cancelled' },
+  { key: 'cash_received', label: 'Cash received', hint: 'Payments that actually arrived, voids excluded' },
+];

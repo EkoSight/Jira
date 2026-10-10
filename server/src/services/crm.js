@@ -33,7 +33,19 @@ export const ACCOUNT_SELECT = `
            WHERE t.account_id = a.id AND t.is_archived = FALSE
              AND ws.stage NOT IN ('done', 'cancelled')) AS open_task_count,
          (SELECT COUNT(*)::int FROM objectives ob
-           WHERE ob.account_id = a.id AND ob.is_archived = FALSE) AS goal_count
+           WHERE ob.account_id = a.id AND ob.is_archived = FALSE) AS goal_count,
+         -- the organization's three clocks, kept apart (see opportunities.js)
+         (SELECT MAX(act.occurred_at) FROM account_activities act
+           WHERE act.account_id = a.id AND act.is_external = TRUE
+             AND (act.direction = 'INBOUND' OR act.outcome = 'RECEIVED'
+                  OR (act.outcome = 'COMPLETED' AND act.type IN ('CALL', 'MEETING', 'DEMO', 'IN_PERSON')))
+         ) AS last_customer_at,
+         (SELECT MAX(act.occurred_at) FROM account_activities act
+           WHERE act.account_id = a.id AND act.is_external = TRUE
+             AND act.direction IS DISTINCT FROM 'INBOUND'
+             AND act.outcome IN ('SENT', 'ATTEMPTED', 'COMPLETED')) AS last_outbound_at,
+         (SELECT MAX(act.occurred_at) FROM account_activities act
+           WHERE act.account_id = a.id AND act.is_external = FALSE) AS last_internal_at
     FROM accounts a
     LEFT JOIN users o ON o.id = a.owner_user_id
     LEFT JOIN users f ON f.id = a.follower_user_id
@@ -74,6 +86,9 @@ export function decorateAccount(row, now = Date.now()) {
     ...row,
     is_open: row.stage_kind === 'open' && row.status === 'ACTIVE',
     days_since_activity: daysSince(row.last_activity_at, now),
+    days_since_customer: daysSince(row.last_customer_at, now),
+    days_since_outbound: daysSince(row.last_outbound_at, now),
+    days_since_internal: daysSince(row.last_internal_at, now),
     days_since_stage_change: daysSince(row.stage_changed_at, now),
     next_step_overdue: row.next_step_due ? new Date(row.next_step_due).getTime() < now : false,
     // where the UI should actually fetch the image from: an upload wins over a
@@ -200,7 +215,7 @@ export async function logActivity(client, {
   taskId = null, occurredAt = null, meta = {},
   opportunityId = null, engagementId = null, meetingId = null, contactId = null,
   channel = null, direction = null, outcome = null, externalParticipants = null,
-  isExternal = null,
+  isExternal = null, source = null,
 }) {
   const runner = client || { query };
 
@@ -209,32 +224,38 @@ export async function logActivity(client, {
   const resolvedOutcome = outcome ?? DEFAULT_OUTCOME[type] ?? 'NOTED';
   // an attempt that did not connect is not engagement, whatever its type
   const countsAsEngagement = external && !['ATTEMPTED', 'CANCELLED', 'NO_SHOW', 'SCHEDULED'].includes(resolvedOutcome);
+  // work the customer never saw is labelled as such, so it can never be read
+  // as a reply — an edit is not engagement
+  const resolvedDirection = direction ?? (external ? null : 'INTERNAL');
 
   const { rows } = await runner.query(
     `INSERT INTO account_activities
        (account_id, type, actor_id, subject, body, next_step, task_id, occurred_at, meta,
         opportunity_id, engagement_id, meeting_id, contact_id, channel, direction,
-        outcome, external_participants, is_external)
+        outcome, external_participants, is_external, source)
      VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()),$9,
-             $10,$11,$12,$13,$14,$15,$16,$17,$18)
+             $10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
      RETURNING *`,
     [
       accountId, type, actorId, subject, body, nextStep, taskId, occurredAt, meta,
-      opportunityId, engagementId, meetingId, contactId, channel, direction,
-      resolvedOutcome, externalParticipants, external,
+      opportunityId, engagementId, meetingId, contactId, channel, resolvedDirection,
+      resolvedOutcome, externalParticipants, external, source ?? (type === 'STAGE_CHANGE' ? 'SYSTEM' : null),
     ],
   );
 
-  // the account is only as "worked" as its most recent real touch
+  // The account is only as "worked" as its most recent real touch. The next
+  // step is NOT written here any more: it belongs to a deal, and writing it on
+  // the organization put a step on the card that the next change to the deal
+  // silently replaced. Routes set it on the deal (setNextAction), and the
+  // organization's headline follows the deal.
   await runner.query(
     `UPDATE accounts
         SET last_activity_at = GREATEST(COALESCE(last_activity_at, to_timestamp(0)), $2),
-            last_external_at = CASE WHEN $4 THEN
+            last_external_at = CASE WHEN $3 THEN
               GREATEST(COALESCE(last_external_at, to_timestamp(0)), $2) ELSE last_external_at END,
-            next_step = COALESCE($3, next_step),
             updated_at = now()
       WHERE id = $1`,
-    [accountId, rows[0].occurred_at, nextStep, countsAsEngagement],
+    [accountId, rows[0].occurred_at, countsAsEngagement],
   );
 
   // and so is the deal it was about
@@ -255,11 +276,13 @@ export async function listActivities(accountId) {
   const { rows } = await query(
     `SELECT act.*, u.full_name AS actor_name, u.avatar_color AS actor_color,
             t.ref AS task_ref, t.title AS task_title,
-            ts.stage AS task_stage
+            ts.stage AS task_stage,
+            o.name AS opportunity_name
        FROM account_activities act
        LEFT JOIN users u ON u.id = act.actor_id
        LEFT JOIN tasks t ON t.id = act.task_id
        LEFT JOIN workflow_statuses ts ON ts.id = t.status_id
+       LEFT JOIN opportunities o ON o.id = act.opportunity_id
       WHERE act.account_id = $1
       ORDER BY act.occurred_at DESC, act.id DESC
       LIMIT 200`,

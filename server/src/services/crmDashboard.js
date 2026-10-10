@@ -12,8 +12,9 @@
  */
 
 import { query } from '../db/pool.js';
-import { decorateOpportunity, eligibleValue, probabilityOf } from './opportunities.js';
+import { decorateOpportunity } from './opportunities.js';
 import { decorateEngagement } from './engagements.js';
+import { commercialTotals } from './commercial.js';
 
 const monthBounds = (month) => {
   const anchor = month ? new Date(`${month}-01T00:00:00Z`) : new Date();
@@ -39,7 +40,12 @@ export const METRIC_DEFINITIONS = {
   became_customers: { label: 'Became customers', basis: 'month', detail: 'Leads first marked as a customer or partner inside the selected month. Counted once, on the first conversion, even if one was converted without naming a deal.' },
   lost_this_month: { label: 'Lost', basis: 'month', detail: 'Deals whose lost event happened inside the selected month.' },
   value_won: { label: 'Value won', basis: 'month', detail: 'Agreed amounts on deals won in the month. Not revenue collected.' },
-  value_collected: { label: 'Collected', basis: 'all', detail: 'Amounts recorded as actually received. Entered by hand, not from an accounting system.' },
+  value_collected: { label: 'Collected (typed on deals)', basis: 'all', detail: 'The "collected" amounts typed on deals by hand, all time. Deals with recorded payments use those instead — see Cash received.' },
+  booked: { label: 'Bookings', basis: 'month', detail: 'Accepted orders, purchase orders, contracts and MoUs, dated by when they were received. An order with no amount is counted, but adds nothing to the total, and the response says how many.' },
+  invoiced: { label: 'Invoiced', basis: 'month', detail: 'Invoices issued in the month and not cancelled. Revenue billed, not cash.' },
+  cash_received: { label: 'Cash received', basis: 'month', detail: 'Payments recorded as received in the month, by the date the money arrived, excluding voided entries.' },
+  proposals_recorded: { label: 'Proposals sent', basis: 'month', detail: 'Proposals recorded on deals with a sent date in the month.' },
+  incomplete_next_actions: { label: 'Next action incomplete', basis: 'now', detail: 'Open deals whose next action is missing who owes it or by when.' },
   demos_completed: { label: 'Demos completed', basis: 'month', detail: 'Demos whose status is COMPLETED and whose completion fell in the month. A booked demo is not counted.' },
   meetings_completed: { label: 'Meetings completed', basis: 'month', detail: 'Meetings marked completed in the month.' },
   conversations: { label: 'Conversations', basis: 'month', detail: 'Interactions logged as a completed exchange — not messages sent, and not attempts.' },
@@ -47,7 +53,7 @@ export const METRIC_DEFINITIONS = {
   closing_soon: { label: 'Closing soon', basis: 'now', detail: 'Open deals with an expected close date inside 30 days.' },
   stalled: { label: 'Stalled', basis: 'now', detail: 'Open deals with no external interaction for longer than the configured cadence.' },
   overdue_next_actions: { label: 'Overdue next actions', basis: 'now', detail: 'Open deals whose next-action date has passed.' },
-  missing_next_action: { label: 'No next action', basis: 'now', detail: 'Open deals past the qualification stage with nothing agreed as next.' },
+  missing_next_action: { label: 'No next action', basis: 'now', detail: 'Open deals with nothing agreed as the next step, at any stage.' },
   unresolved_blockers: { label: 'Unresolved blockers', basis: 'now', detail: 'Must-have requirements that are open or blocked on live deals.' },
   engagements_attention: { label: 'Delivery needing attention', basis: 'now', detail: 'Live engagements at risk, blocked, or with an overdue milestone.' },
 };
@@ -197,6 +203,14 @@ export async function crmDashboard(filters = {}) {
   );
   const engagements = engagementRows.map(decorateEngagement);
 
+  // bookings, revenue billed and cash, each counted on its own date
+  const commercial = await commercialTotals({
+    start: bounds.start.toISOString().slice(0, 10),
+    end: bounds.end.toISOString().slice(0, 10),
+    departmentId: filters.departmentId ? Number(filters.departmentId) : null,
+    ownerId: filters.ownerId ? Number(filters.ownerId) : null,
+  });
+
   const byStage = new Map();
   for (const row of open) {
     const key = row.stage_slug || 'unstaged';
@@ -226,8 +240,13 @@ export async function crmDashboard(filters = {}) {
       closing_soon: closingSoon.length,
       closing_soon_value: sum(closingSoon, (o) => o.eligible_value),
       overdue_next_actions: open.filter((o) => o.next_step_overdue).length,
+      // every live deal owes a specific move, a person and a date
       missing_next_action: open.filter(
-        (o) => !o.next_step && (o.stage_position ?? 0) >= 3,
+        (o) => o.next_action_gaps.some((gap) => gap.kind === 'no_next_action'),
+      ).length,
+      incomplete_next_actions: open.filter(
+        (o) => !o.next_action_gaps.some((gap) => gap.kind === 'no_next_action')
+          && o.next_action_gaps.some((gap) => gap.kind === 'no_next_action_owner' || gap.kind === 'no_next_action_due'),
       ).length,
       unresolved_blockers: sum(open, (o) => o.unmet_must_haves),
       engagements_live: engagements.length,
@@ -252,6 +271,14 @@ export async function crmDashboard(filters = {}) {
       conversations: activityRows[0].conversations,
       attempts: activityRows[0].attempts,
       proposals_shared: activityRows[0].proposals_shared,
+      proposals_recorded: commercial.proposals,
+      orders: commercial.orders,
+      booked: commercial.booked,
+      orders_without_amount: commercial.orders_without_amount,
+      invoices: commercial.invoices,
+      invoiced: commercial.invoiced,
+      payments: commercial.payments,
+      cash_received: commercial.cash_received,
     },
 
     by_stage: [...byStage.values()].sort((a, b) => a.position - b.position),

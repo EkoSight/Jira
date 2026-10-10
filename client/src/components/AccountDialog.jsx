@@ -2,11 +2,17 @@ import { useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Field, Modal } from './ui.jsx';
+import { NextActionFields, nextActionBody, nextActionDraft, nextActionProblem } from './DealParts.jsx';
 import { INDIAN_STATES } from '../lib/crm.js';
 
 /**
- * Adding or editing a lead. Only the name is required — a lead often starts as
- * little more than a company and a hunch, and the rest is filled in as you learn.
+ * Adding or editing a lead. A lead often starts as little more than a company
+ * and a hunch, so little is required — but its first deal starts with a next
+ * action, who owes it and by when, because a deal with nothing owed next is how
+ * a pipeline goes stale.
+ *
+ * Editing does not touch the next action: that belongs to each deal, and is
+ * changed on the deal, so there is one place it lives.
  */
 export default function AccountDialog({ account, stages = [], onClose, onSaved }) {
   const { user } = useAuth();
@@ -26,17 +32,37 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
     contact_name: account?.contact_name || '',
     contact_email: account?.contact_email || '',
     contact_phone: account?.contact_phone || '',
-    next_step: account?.next_step || '',
-    next_step_due: account?.next_step_due?.slice(0, 10) || '',
     description: account?.description || '',
     state: account?.state || '',
     hq_address: account?.hq_address || '',
   }));
+  const [next, setNext] = useState(() => ({
+    ...nextActionDraft(null, account?.owner_user_id ?? user.id),
+    next_step: 'Make first contact',
+  }));
+  const [nextError, setNextError] = useState(null);
+  const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
 
+  // a change somebody relied on — who leads it, or an expected value already
+  // set — is kept on the history with why
+  const ownerChanging = editing && account.owner_user_id
+    && String(form.owner_user_id) !== String(account.owner_user_id);
+  const valueChanging = editing && account.value !== null && account.value !== undefined
+    && String(form.value) !== String(account.value);
+  const needsReason = ownerChanging || valueChanging;
+
   const save = async () => {
     if (form.name.trim().length < 2) return toast.error('Give the lead a name');
+    if (!editing) {
+      const problem = nextActionProblem(next);
+      setNextError(problem);
+      if (problem) return undefined;
+    }
+    if (needsReason && reason.trim().length < 3) {
+      return toast.error(ownerChanging ? 'Say why it is changing hands' : 'Say why the expected value changed');
+    }
     const payload = {
       name: form.name.trim(),
       owner_user_id: form.owner_user_id ? Number(form.owner_user_id) : null,
@@ -48,13 +74,13 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
       contact_name: form.contact_name.trim() || null,
       contact_email: form.contact_email.trim() || null,
       contact_phone: form.contact_phone.trim() || null,
-      next_step: form.next_step.trim() || null,
-      next_step_due: form.next_step_due || null,
       description: form.description.trim() || null,
       state: form.state || null,
       hq_address: form.hq_address.trim() || null,
     };
     if (!editing && form.stage_id) payload.stage_id = Number(form.stage_id);
+    if (!editing) Object.assign(payload, nextActionBody(next));
+    if (needsReason) payload.reason = reason.trim();
     // The box shows the lead's headline value, which may be a proposed or signed
     // amount. Saving it untouched must not copy that into the estimate, so the
     // value is only sent when somebody actually changed it.
@@ -73,6 +99,7 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
     } finally {
       setSaving(false);
     }
+    return undefined;
   };
 
   return (
@@ -97,7 +124,13 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
 
         <div className="grid-2">
           <Field label="Leading it" hint="Accountable for moving this deal">
-            <select className="select" value={form.owner_user_id} onChange={(e) => set({ owner_user_id: e.target.value })}>
+            <select className="select" value={form.owner_user_id} onChange={(e) => {
+              const value = e.target.value;
+              if (!editing && String(next.next_step_owner_id) === String(form.owner_user_id)) {
+                setNext((c) => ({ ...c, next_step_owner_id: value }));
+              }
+              set({ owner_user_id: value });
+            }}>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>{u.full_name}</option>
               ))}
@@ -178,16 +211,22 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
           </Field>
         </div>
 
-        <div className="grid-2">
-          <Field label="Next step" hint="What moves this forward next">
-            <input className="input" value={form.next_step} onChange={(e) => set({ next_step: e.target.value })}
-              placeholder="Send the intro deck" />
+        {!editing && (
+          <NextActionFields value={next} onChange={(v) => { setNext(v); setNextError(null); }}
+            error={nextError} label="What happens next on this lead" />
+        )}
+        {editing && (
+          <div className="small muted">
+            Next actions belong to each deal — change them on the deal, under Opportunities.
+          </div>
+        )}
+
+        {needsReason && (
+          <Field label={`Why ${ownerChanging ? 'is it changing hands' : 'did the expected value change'}? *`}
+            hint="Kept on the history beside the old and new">
+            <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
-          <Field label="By when">
-            <input className="input" type="date" value={form.next_step_due}
-              onChange={(e) => set({ next_step_due: e.target.value })} />
-          </Field>
-        </div>
+        )}
 
         <Field label="Notes">
           <textarea className="textarea" rows={2} value={form.description}

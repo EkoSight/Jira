@@ -1,24 +1,34 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
-import { useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import DealMoveDialog from './DealMoveDialog.jsx';
 import {
-  ENGAGEMENT_MODELS, IMPORTANCE_META, OPPORTUNITY_STATUS_META, REQUIREMENT_CATEGORIES,
-  REQUIREMENT_STATUS_META, VALUE_BASIS_LABEL, VALUE_FIELDS,
-  describeForecast, exactMoney, formatMoney, modelLabel, stageEntryGaps,
+  Clocks, DealPeople, NextActionFields, NextActionLine, OrderFields, PersonSelect, ProposalFields,
+  emptyOrder, emptyProposal, nextActionBody, nextActionDraft, nextActionProblem, orderBody, proposalBody,
+} from './DealParts.jsx';
+import {
+  ENGAGEMENT_MODELS, IMPORTANCE_META, LEDGER_FIGURES, OPPORTUNITY_STATUS_META, ORDER_KIND_LABEL,
+  PROPOSAL_STATUS_META, REQUIREMENT_CATEGORIES, REQUIREMENT_STATUS_META, VALUE_BASIS_LABEL, VALUE_FIELDS,
+  describeForecast, exactMoney, formatMoney, modelLabel, todayInIndia,
 } from '../lib/crm.js';
-import { formatDate } from '../lib/format.js';
+import { formatDate, relativeTime } from '../lib/format.js';
 
 /**
  * The deals inside a relationship.
  *
- * Money is the thing this screen is most careful about. Four amounts are kept
- * apart — what we guessed, what we proposed, what was signed, what arrived —
- * because adding them together, or reading a blank one as zero, is how a
- * pipeline starts reporting money that does not exist.
+ * Money is the thing this screen is most careful about. The amounts are kept
+ * apart — what we guessed, what we proposed, what was signed, what was billed,
+ * what arrived — because adding them together, or reading a blank one as zero,
+ * is how a pipeline starts reporting money that does not exist.
+ *
+ * And progress is the other: every live deal shows what happens next, who owes
+ * it and by when, and when the customer last actually responded — which is not
+ * the same as when somebody last touched the record.
  */
 
-function NewOpportunityDialog({ accountId, stages, onClose, onSaved }) {
+function NewOpportunityDialog({ accountId, stages, relationshipOwnerId, onClose, onSaved }) {
+  const { user } = useAuth();
   const toast = useToast();
   const [form, setForm] = useState({
     name: '',
@@ -26,13 +36,19 @@ function NewOpportunityDialog({ accountId, stages, onClose, onSaved }) {
     stage_id: '',
     estimated_value: '',
     expected_close: '',
+    owner_user_id: String(relationshipOwnerId || user?.id || ''),
   });
+  const [next, setNext] = useState(() => nextActionDraft(null, relationshipOwnerId || user?.id));
+  const [nextError, setNextError] = useState(null);
   const [saving, setSaving] = useState(false);
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
   const model = ENGAGEMENT_MODELS.find((m) => m.value === form.engagement_model);
 
   const save = async () => {
     if (form.name.trim().length < 2) return toast.error('Give the opportunity a name');
+    const problem = nextActionProblem(next);
+    setNextError(problem);
+    if (problem) return undefined;
     setSaving(true);
     try {
       await api.createOpportunity({
@@ -42,6 +58,8 @@ function NewOpportunityDialog({ accountId, stages, onClose, onSaved }) {
         stage_id: form.stage_id ? Number(form.stage_id) : undefined,
         estimated_value: form.estimated_value === '' ? null : Number(form.estimated_value),
         expected_close: form.expected_close || null,
+        owner_user_id: form.owner_user_id ? Number(form.owner_user_id) : undefined,
+        ...nextActionBody(next),
       });
       toast.success('Opportunity added');
       onSaved();
@@ -51,6 +69,7 @@ function NewOpportunityDialog({ accountId, stages, onClose, onSaved }) {
     } finally {
       setSaving(false);
     }
+    return undefined;
   };
 
   return (
@@ -70,7 +89,7 @@ function NewOpportunityDialog({ accountId, stages, onClose, onSaved }) {
       <div className="stack">
         <div className="small muted">
           A specific agreement being pursued with this organization. It has its own stage,
-          value and outcome — winning it does not close the relationship.
+          value, owner and next action — winning it does not close the relationship.
         </div>
         <Field label="What is the opportunity? *">
           <input className="input" autoFocus value={form.name}
@@ -95,7 +114,7 @@ function NewOpportunityDialog({ accountId, stages, onClose, onSaved }) {
             <select className="select" value={form.stage_id}
               onChange={(e) => set({ stage_id: e.target.value })}>
               <option value="">First stage</option>
-              {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {stages.filter((s) => s.kind === 'open').map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </Field>
           <Field label="Expected close">
@@ -103,193 +122,61 @@ function NewOpportunityDialog({ accountId, stages, onClose, onSaved }) {
               onChange={(e) => set({ expected_close: e.target.value })} />
           </Field>
         </div>
-        <Field label="Estimated value" hint="Leave blank if it is genuinely not known — blank is not zero">
-          <input className="input" type="number" min="0" value={form.estimated_value}
-            onChange={(e) => set({ estimated_value: e.target.value })} placeholder="₹" />
-        </Field>
+        <div className="grid-2">
+          <Field label="Accountable owner" hint="One person answers for this deal">
+            <PersonSelect value={form.owner_user_id} onChange={(v) => set({ owner_user_id: v })} />
+          </Field>
+          <Field label="Estimated value (₹)" hint="Blank if genuinely not known — blank is not zero">
+            <input className="input" type="number" min="0" value={form.estimated_value}
+              onChange={(e) => set({ estimated_value: e.target.value })} />
+          </Field>
+        </div>
+        <NextActionFields value={next} onChange={(v) => { setNext(v); setNextError(null); }} error={nextError} />
       </div>
     </Modal>
   );
 }
 
-/** Moving a deal on, and settling it properly when it reaches the end. */
-function StageDialog({ opportunity, stages, onClose, onSaved }) {
-  const toast = useToast();
-  const [stageId, setStageId] = useState('');
-  const [form, setForm] = useState({
-    outcome_reason: '', revisit_on: '', agreement_type: '', agreement_date: '',
-    agreement_link: '', agreed_value: '', financial_status: 'UNPAID',
-  });
-  const [saving, setSaving] = useState(false);
-  const set = (patch) => setForm((c) => ({ ...c, ...patch }));
-
-  const target = stages.find((s) => String(s.id) === String(stageId));
-  const isWon = target?.kind === 'won';
-  const isLost = target?.kind === 'lost';
-  // what the stage being entered expects, not what the current one does
-  const entryGaps = stageEntryGaps(opportunity, target);
-
-  const save = async () => {
-    if (!stageId) return toast.error('Pick a stage');
-    if (isLost && form.outcome_reason.trim().length < 3) {
-      return toast.error('Say why it was lost — that is the only thing a closed deal can still teach anyone');
-    }
-    setSaving(true);
-    try {
-      await api.moveOpportunityStage(opportunity.id, {
-        stage_id: Number(stageId),
-        outcome_reason: form.outcome_reason.trim() || undefined,
-        revisit_on: form.revisit_on || undefined,
-        ...(isWon ? {
-          agreement_type: form.agreement_type.trim() || undefined,
-          agreement_date: form.agreement_date || undefined,
-          agreement_link: form.agreement_link.trim() || undefined,
-          agreed_value: form.agreed_value === '' ? undefined : Number(form.agreed_value),
-          financial_status: form.financial_status,
-        } : {}),
-      });
-      toast.success(`Moved to ${target.name}`);
-      onSaved();
-      onClose();
-    } catch (err) {
-      toast.error(err);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={`Move: ${opportunity.name}`}
-      size="sheet"
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? 'Saving…' : 'Move it'}
-          </button>
-        </>
-      }
-    >
-      <div className="stack">
-        <Field label="Move to">
-          <select className="select" value={stageId} autoFocus onChange={(e) => setStageId(e.target.value)}>
-            <option value="">Pick a stage…</option>
-            {stages.filter((s) => s.id !== opportunity.stage_id).map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        </Field>
-
-        {entryGaps.length > 0 && (
-          <div className="ask-banner ask-warning">
-            <Icon name="alert" size={15} />
-            <div className="grow">
-              <strong>{target.name} usually expects these first</strong>
-              <ul className="gap-list">
-                {entryGaps.map((gap) => <li key={gap.kind}>{gap.label}</li>)}
-              </ul>
-              <div className="small muted">
-                You can move it anyway. This is what the stage expects, not a lock — and it is said
-                here because now is when it matters.
-              </div>
-            </div>
-          </div>
-        )}
-        {target?.kind === 'open' && entryGaps.length === 0 && (
-          <div className="ask-banner ask-good">
-            <Icon name="check" size={15} />
-            <span className="small">Everything {target.name} expects is in place.</span>
-          </div>
-        )}
-
-        {isWon && (
-          <>
-            <div className="small muted">
-              What was actually agreed. A signed agreement is not the same as money received,
-              so those stay separate.
-            </div>
-            <div className="grid-2">
-              <Field label="Agreement type">
-                <input className="input" value={form.agreement_type}
-                  onChange={(e) => set({ agreement_type: e.target.value })}
-                  placeholder="Signed pilot agreement" />
-              </Field>
-              <Field label="Agreement date">
-                <input className="input" type="date" value={form.agreement_date}
-                  onChange={(e) => set({ agreement_date: e.target.value })} />
-              </Field>
-              <Field label="Agreed value">
-                <input className="input" type="number" min="0" value={form.agreed_value}
-                  onChange={(e) => set({ agreed_value: e.target.value })} />
-              </Field>
-              <Field label="Money status">
-                <select className="select" value={form.financial_status}
-                  onChange={(e) => set({ financial_status: e.target.value })}>
-                  <option value="NOT_APPLICABLE">No money involved</option>
-                  <option value="UNPAID">Nothing invoiced yet</option>
-                  <option value="INVOICED">Invoiced</option>
-                  <option value="PART_PAID">Part paid</option>
-                  <option value="PAID">Paid in full</option>
-                </select>
-              </Field>
-            </div>
-            <Field label="Evidence link" hint="Where the signed agreement lives">
-              <input className="input" value={form.agreement_link}
-                onChange={(e) => set({ agreement_link: e.target.value })}
-                placeholder="https://drive.example/…" />
-            </Field>
-            <Field label="Accepted scope, in a line">
-              <textarea className="textarea" rows={2} value={form.outcome_reason}
-                onChange={(e) => set({ outcome_reason: e.target.value })} />
-            </Field>
-          </>
-        )}
-
-        {isLost && (
-          <>
-            <Field label="Why was it lost? *"
-              hint="The only thing a closed deal can still teach anyone">
-              <textarea className="textarea" rows={3} value={form.outcome_reason}
-                onChange={(e) => set({ outcome_reason: e.target.value })}
-                placeholder="Budget moved to next financial year; they liked the evidence." />
-            </Field>
-            <Field label="Worth coming back to on" hint="Leave blank if there is no point">
-              <input className="input" type="date" value={form.revisit_on}
-                onChange={(e) => set({ revisit_on: e.target.value })} />
-            </Field>
-          </>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-/** The four amounts, side by side and never summed. */
-function ValuePanel({ opportunity, canEdit, onChanged }) {
+/** The amounts on the deal, side by side and never summed. Changing one somebody relied on asks why. */
+function ValuePanel({ opportunity, ledger, canEdit, onChanged }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
+  const editable = VALUE_FIELDS.filter((f) => f.key !== 'collected_value');
   const [form, setForm] = useState(() =>
-    Object.fromEntries(VALUE_FIELDS.map((f) => [f.key, opportunity[f.key] ?? ''])));
+    Object.fromEntries(editable.map((f) => [f.key, opportunity[f.key] ?? ''])));
+  const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
   const forecast = describeForecast(opportunity);
 
+  const changed = editable.filter((f) => String(form[f.key]) !== String(opportunity[f.key] ?? ''));
+  // filling in a blank needs no explanation; changing a figure somebody relied on does
+  const needsReason = changed.some((f) => opportunity[f.key] !== null && opportunity[f.key] !== undefined);
+
   const save = async () => {
+    if (!changed.length) return setEditing(false);
+    if (needsReason && reason.trim().length < 3) return toast.error('Say why the value changed — it stays on the history');
     setSaving(true);
     try {
-      await api.updateOpportunity(opportunity.id, Object.fromEntries(
-        VALUE_FIELDS.map((f) => [f.key, form[f.key] === '' ? null : Number(form[f.key])]),
-      ));
+      await api.updateOpportunity(opportunity.id, {
+        ...Object.fromEntries(changed.map((f) => [f.key, form[f.key] === '' ? null : Number(form[f.key])])),
+        ...(needsReason ? { reason: reason.trim() } : {}),
+      });
       toast.success('Values updated');
       setEditing(false);
+      setReason('');
       onChanged();
     } catch (err) {
       toast.error(err);
     } finally {
       setSaving(false);
     }
+    return undefined;
   };
+
+  // what has actually arrived comes from the payments recorded; a figure typed
+  // before the ledger existed is shown as exactly that
+  const cash = ledger?.totals?.cash_received ?? opportunity.cash_received ?? null;
+  const typedCollected = opportunity.collected_value;
 
   return (
     <div className="value-panel">
@@ -305,13 +192,19 @@ function ValuePanel({ opportunity, canEdit, onChanged }) {
       {editing ? (
         <div className="stack-sm">
           <div className="grid-2">
-            {VALUE_FIELDS.map((field) => (
+            {editable.map((field) => (
               <Field key={field.key} label={field.label} hint={field.hint}>
                 <input className="input" type="number" min="0" value={form[field.key]}
                   onChange={(e) => setForm((c) => ({ ...c, [field.key]: e.target.value }))} />
               </Field>
             ))}
           </div>
+          {needsReason && (
+            <Field label="Why did it change? *" hint="Kept on the deal's history beside the old and new figures">
+              <input className="input" value={reason} onChange={(e) => setReason(e.target.value)}
+                placeholder="They added two more districts to the scope" />
+            </Field>
+          )}
           <div className="small muted">Leave a box empty if the number is not known. Empty is not zero.</div>
           <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>
             {saving ? 'Saving…' : 'Save amounts'}
@@ -320,7 +213,7 @@ function ValuePanel({ opportunity, canEdit, onChanged }) {
       ) : (
         <>
           <div className="value-grid">
-            {VALUE_FIELDS.map((field) => {
+            {editable.map((field) => {
               const amount = opportunity[field.key];
               return (
                 <div key={field.key} className="value-cell" title={field.hint}>
@@ -334,6 +227,17 @@ function ValuePanel({ opportunity, canEdit, onChanged }) {
                 </div>
               );
             })}
+            <div className="value-cell" title="Payments recorded as received, voids excluded">
+              <div className="value-cell-label">Cash received</div>
+              <div className={`value-cell-amount tnum${cash === null ? ' is-unknown' : ''}`}>
+                {cash === null ? 'none recorded' : formatMoney(cash, opportunity.currency)}
+              </div>
+              {cash === null && typedCollected !== null && typedCollected !== undefined && (
+                <div className="value-cell-exact" title="Typed on the deal before payments were recorded one by one">
+                  {exactMoney(typedCollected, opportunity.currency)} typed by hand, no payment on record
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="forecast-line">
@@ -350,6 +254,520 @@ function ValuePanel({ opportunity, canEdit, onChanged }) {
             )}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+/** What happens next, who owes it and by when — and changing it. */
+function NextActionPanel({ opportunity, canEdit, onChanged }) {
+  const { user } = useAuth();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [next, setNext] = useState(() => nextActionDraft(opportunity, user?.id));
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const live = ['ACTIVE', 'ON_HOLD', 'NURTURE'].includes(opportunity.status);
+
+  const start = () => {
+    setNext(nextActionDraft(opportunity, user?.id));
+    setReason('');
+    setError(null);
+    setEditing(true);
+  };
+
+  const save = async () => {
+    const problem = nextActionProblem(next);
+    setError(problem);
+    if (problem) return;
+    setSaving(true);
+    try {
+      await api.setNextAction(opportunity.id, { ...nextActionBody(next), reason: reason.trim() || null });
+      toast.success('Next action set');
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const ownerChanging = editing && opportunity.next_step_owner_id
+    && String(opportunity.next_step_owner_id) !== String(next.next_step_owner_id);
+
+  return (
+    <div className="stack-sm">
+      <div className="row-between wrap">
+        <span className="stat-label">Next action</span>
+        {canEdit && live && !editing && (
+          <button type="button" className="btn-link small" onClick={start}>
+            {opportunity.next_step ? 'Change' : 'Set it'}
+          </button>
+        )}
+      </div>
+      {editing ? (
+        <div className="stack-sm">
+          <NextActionFields value={next} onChange={(v) => { setNext(v); setError(null); }} error={error} label="What happens next" />
+          <Field label={ownerChanging ? 'Why is it moving to someone else?' : 'Note (optional)'}
+            hint={ownerChanging ? 'They are told, and asked to confirm they have it' : undefined}>
+            <input className="input" value={reason} onChange={(e) => setReason(e.target.value)}
+              placeholder={ownerChanging ? 'Rupendra is travelling this week' : ''} />
+          </Field>
+          <div className="row" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : 'Save next action'}
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <NextActionLine opportunity={opportunity} />
+          {opportunity.next_step && opportunity.next_step_age_days !== null && opportunity.next_step_age_days > 14 && (
+            <div className="small muted">Agreed {opportunity.next_step_age_days} days ago — is it still what happens next?</div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** One accountable owner, the person owing the next move, the escalation point, and the helpers. */
+function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
+  const { user } = useAuth();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ owner_user_id: '', escalation_owner_id: '', reason: '' });
+  const [helper, setHelper] = useState({ user_id: '', role: '' });
+  const [saving, setSaving] = useState(false);
+
+  const pendingForMe = (handovers || []).filter((h) => !h.acknowledged_at && h.to_user_id === user?.id);
+  const pendingOthers = (handovers || []).filter((h) => !h.acknowledged_at && h.to_user_id !== user?.id);
+
+  const start = () => {
+    setForm({
+      owner_user_id: String(opportunity.owner_user_id || ''),
+      escalation_owner_id: String(opportunity.escalation_owner_id || ''),
+      reason: '',
+    });
+    setEditing(true);
+  };
+
+  const ownerChanging = editing && opportunity.owner_user_id
+    && String(opportunity.owner_user_id) !== form.owner_user_id;
+
+  const save = async () => {
+    const body = {};
+    if (form.owner_user_id !== String(opportunity.owner_user_id || '')) body.owner_user_id = Number(form.owner_user_id);
+    if (form.escalation_owner_id !== String(opportunity.escalation_owner_id || '')) {
+      body.escalation_owner_id = form.escalation_owner_id ? Number(form.escalation_owner_id) : null;
+    }
+    if (!Object.keys(body).length) return setEditing(false);
+    if (ownerChanging && form.reason.trim().length < 3) return toast.error('Say why the deal is changing hands');
+    if (form.reason.trim()) body.reason = form.reason.trim();
+    setSaving(true);
+    try {
+      await api.updateOpportunity(opportunity.id, body);
+      toast.success('Saved — anyone newly named has been told');
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setSaving(false);
+    }
+    return undefined;
+  };
+
+  const addHelper = async () => {
+    if (!helper.user_id) return;
+    try {
+      await api.addDealCollaborator(opportunity.id, { user_id: Number(helper.user_id), role: helper.role.trim() || null });
+      setHelper({ user_id: '', role: '' });
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  const removeHelper = async (userId) => {
+    try {
+      await api.removeDealCollaborator(opportunity.id, userId);
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  const acknowledge = async (handover) => {
+    try {
+      await api.acknowledgeHandover(handover.id);
+      toast.success('Confirmed — it is with you');
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    }
+  };
+
+  const ROLE = { OWNER: 'the deal', NEXT_ACTION: 'the next move', ESCALATION: 'escalations' };
+
+  return (
+    <div className="stack-sm">
+      <div className="row-between wrap">
+        <span className="stat-label">People</span>
+        {canEdit && !editing && (
+          <button type="button" className="btn-link small" onClick={start}>Change owner or escalation</button>
+        )}
+      </div>
+
+      {pendingForMe.map((h) => (
+        <div key={h.id} className="ask-banner ask-info">
+          <Icon name="user" size={15} />
+          <div className="grow small">
+            <strong>{ROLE[h.role]} {h.role === 'OWNER' ? 'was' : 'were'} handed to you</strong>
+            {h.from_name ? ` by ${h.handed_by_name || h.from_name}` : ''}
+            {h.owed ? ` · owed next: ${h.owed}` : ''}{h.reason ? ` · why: ${h.reason}` : ''}
+          </div>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => acknowledge(h)}>I have it</button>
+        </div>
+      ))}
+      {pendingOthers.map((h) => (
+        <div key={h.id} className="small muted">
+          Handed to {h.to_name} ({ROLE[h.role]}) {relativeTime(h.created_at)} — not yet confirmed.
+        </div>
+      ))}
+
+      {editing ? (
+        <div className="stack-sm">
+          <div className="grid-2">
+            <Field label="Accountable owner" hint="One person answers for this deal">
+              <PersonSelect value={form.owner_user_id} onChange={(v) => setForm((c) => ({ ...c, owner_user_id: v }))} />
+            </Field>
+            <Field label="Escalate to" hint="Who to go to when it is stuck">
+              <PersonSelect value={form.escalation_owner_id} allowNone placeholder="Nobody named"
+                onChange={(v) => setForm((c) => ({ ...c, escalation_owner_id: v }))} />
+            </Field>
+          </div>
+          <Field label={ownerChanging ? 'Why is it changing hands? *' : 'Note (optional)'}
+            hint="Kept on the history; the people newly named are told and asked to confirm">
+            <input className="input" value={form.reason} onChange={(e) => setForm((c) => ({ ...c, reason: e.target.value }))} />
+          </Field>
+          <div className="row" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setEditing(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <DealPeople opportunity={opportunity} />
+      )}
+
+      {canEdit && (
+        <div className="row wrap helper-add" style={{ gap: 6 }}>
+          <PersonSelect value={helper.user_id} placeholder="Add someone helping…" allowNone
+            onChange={(v) => setHelper((c) => ({ ...c, user_id: v }))} />
+          <input className="input" style={{ maxWidth: 200 }} value={helper.role} placeholder="Helping with…"
+            onChange={(e) => setHelper((c) => ({ ...c, role: e.target.value }))} />
+          <button type="button" className="btn btn-sm" onClick={addHelper} disabled={!helper.user_id}>Add</button>
+          {(opportunity.collaborators || []).map((c) => (
+            <button key={c.user_id} type="button" className="kind-chip"
+              title="Take them off the deal" onClick={() => removeHelper(c.user_id)}>
+              {c.name} <Icon name="close" size={10} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const LEDGER_FORMS = {
+  proposal: 'Record a proposal',
+  order: 'Record an order or contract',
+  invoice: 'Record an invoice',
+  payment: 'Record a payment received',
+};
+
+/**
+ * The commercial record: proposals, orders, invoices and payments, each a
+ * different claim. A mistake is withdrawn, cancelled or voided with a reason —
+ * nothing here is ever deleted.
+ */
+function CommercialPanel({ opportunity, ledger, canEdit, onChanged }) {
+  const toast = useToast();
+  const [adding, setAdding] = useState(null);
+  const [proposal, setProposal] = useState(emptyProposal);
+  const [order, setOrder] = useState(emptyOrder);
+  const [invoice, setInvoice] = useState({ number: '', issued_on: todayInIndia(), amount: '', due_on: '', link: '', order_id: '' });
+  const [payment, setPayment] = useState({ received_on: todayInIndia(), amount: '', reference: '', link: '', invoice_id: '' });
+  const [saving, setSaving] = useState(false);
+
+  if (!ledger) return <Spinner label="Loading the commercial record" />;
+
+  const run = async (call, message) => {
+    setSaving(true);
+    try {
+      await call();
+      toast.success(message);
+      setAdding(null);
+      setProposal(emptyProposal());
+      setOrder(emptyOrder());
+      onChanged();
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const save = () => {
+    if (adding === 'proposal') return run(() => api.addProposal(opportunity.id, proposalBody(proposal)), 'Proposal recorded');
+    if (adding === 'order') return run(() => api.addOrder(opportunity.id, orderBody(order)), 'Order recorded');
+    if (adding === 'invoice') {
+      return run(() => api.addInvoice(opportunity.id, {
+        number: invoice.number.trim() || null,
+        issued_on: invoice.issued_on,
+        amount: invoice.amount === '' ? undefined : Number(invoice.amount),
+        due_on: invoice.due_on || null,
+        link: invoice.link.trim() || null,
+        order_id: invoice.order_id ? Number(invoice.order_id) : null,
+      }), 'Invoice recorded');
+    }
+    return run(() => api.addPayment(opportunity.id, {
+      received_on: payment.received_on,
+      amount: payment.amount === '' ? undefined : Number(payment.amount),
+      reference: payment.reference.trim() || null,
+      link: payment.link.trim() || null,
+      invoice_id: payment.invoice_id ? Number(payment.invoice_id) : null,
+    }), 'Payment recorded');
+  };
+
+  const withReason = (label, call) => {
+    const reason = window.prompt(`${label} — why? (the record stays, with your reason)`);
+    if (!reason || !reason.trim()) return;
+    run(() => call(reason.trim()), 'Recorded');
+  };
+
+  const { totals } = ledger;
+  const money = (value) => (value === null || value === undefined ? null : formatMoney(value, opportunity.currency));
+
+  return (
+    <div className="stack-sm">
+      <div className="row-between wrap">
+        <span className="stat-label">Commercial record</span>
+        {canEdit && (
+          <span className="row wrap" style={{ gap: 6 }}>
+            {Object.entries(LEDGER_FORMS).map(([key, label]) => (
+              <button key={key} type="button" className={`kind-chip${adding === key ? ' is-active' : ''}`}
+                onClick={() => setAdding(adding === key ? null : key)}>
+                <Icon name="plus" size={10} /> {label.replace('Record ', '')}
+              </button>
+            ))}
+          </span>
+        )}
+      </div>
+
+      <div className="value-grid">
+        {LEDGER_FIGURES.map((figure) => (
+          <div key={figure.key} className="value-cell" title={figure.hint}>
+            <div className="value-cell-label">{figure.label}</div>
+            <div className={`value-cell-amount tnum${totals[figure.key] === null ? ' is-unknown' : ''}`}>
+              {money(totals[figure.key]) || 'none recorded'}
+            </div>
+            {figure.key === 'booked' && totals.booked_incomplete && (
+              <div className="value-cell-exact">an order has no amount</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {adding && (
+        <div className="evidence-form">
+          <div className="small" style={{ fontWeight: 650 }}>{LEDGER_FORMS[adding]}</div>
+          {adding === 'proposal' && <ProposalFields value={proposal} onChange={setProposal} />}
+          {adding === 'order' && <OrderFields value={order} onChange={setOrder} />}
+          {adding === 'invoice' && (
+            <div className="stack-sm">
+              <div className="grid-2">
+                <Field label="Invoice number">
+                  <input className="input" value={invoice.number} onChange={(e) => setInvoice((c) => ({ ...c, number: e.target.value }))} />
+                </Field>
+                <Field label="Issued on *">
+                  <input className="input" type="date" max={todayInIndia()} value={invoice.issued_on}
+                    onChange={(e) => setInvoice((c) => ({ ...c, issued_on: e.target.value }))} />
+                </Field>
+                <Field label="Amount (₹) *">
+                  <input className="input" type="number" min="0" value={invoice.amount}
+                    onChange={(e) => setInvoice((c) => ({ ...c, amount: e.target.value }))} />
+                </Field>
+                <Field label="Payment due">
+                  <input className="input" type="date" value={invoice.due_on}
+                    onChange={(e) => setInvoice((c) => ({ ...c, due_on: e.target.value }))} />
+                </Field>
+              </div>
+              <div className="grid-2">
+                <Field label="Against order">
+                  <select className="select" value={invoice.order_id} onChange={(e) => setInvoice((c) => ({ ...c, order_id: e.target.value }))}>
+                    <option value="">Not linked</option>
+                    {ledger.orders.filter((o) => o.status === 'ACCEPTED').map((o) => (
+                      <option key={o.id} value={o.id}>{o.reference || ORDER_KIND_LABEL[o.kind]} · {formatDate(o.received_on)}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Link">
+                  <input className="input" value={invoice.link} onChange={(e) => setInvoice((c) => ({ ...c, link: e.target.value }))} />
+                </Field>
+              </div>
+            </div>
+          )}
+          {adding === 'payment' && (
+            <div className="stack-sm">
+              <div className="grid-2">
+                <Field label="Received on *" hint="The day the money arrived, not when it was promised">
+                  <input className="input" type="date" max={todayInIndia()} value={payment.received_on}
+                    onChange={(e) => setPayment((c) => ({ ...c, received_on: e.target.value }))} />
+                </Field>
+                <Field label="Amount (₹) *">
+                  <input className="input" type="number" min="1" value={payment.amount}
+                    onChange={(e) => setPayment((c) => ({ ...c, amount: e.target.value }))} />
+                </Field>
+                <Field label="Bank reference" hint="UTR or cheque number">
+                  <input className="input" value={payment.reference} onChange={(e) => setPayment((c) => ({ ...c, reference: e.target.value }))} />
+                </Field>
+                <Field label="Against invoice">
+                  <select className="select" value={payment.invoice_id} onChange={(e) => setPayment((c) => ({ ...c, invoice_id: e.target.value }))}>
+                    <option value="">Not linked</option>
+                    {ledger.invoices.filter((i) => i.status === 'ISSUED').map((i) => (
+                      <option key={i.id} value={i.id}>{i.number || `Invoice ${i.id}`} · {formatMoney(i.amount, i.currency)}</option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+            </div>
+          )}
+          <div className="row" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button type="button" className="btn btn-sm" onClick={() => setAdding(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {[...ledger.proposals.map((p) => ({ ...p, kind_of: 'proposal', on: p.sent_on })),
+        ...ledger.orders.map((o) => ({ ...o, kind_of: 'order', on: o.received_on })),
+        ...ledger.invoices.map((i) => ({ ...i, kind_of: 'invoice', on: i.issued_on })),
+        ...ledger.payments.map((p) => ({ ...p, kind_of: 'payment', on: p.received_on }))]
+        .sort((a, b) => String(b.on).localeCompare(String(a.on)) || b.id - a.id)
+        .map((row) => {
+          const struck = (row.kind_of === 'order' && row.status === 'CANCELLED')
+            || (row.kind_of === 'invoice' && row.status === 'CANCELLED')
+            || (row.kind_of === 'payment' && row.is_void)
+            || (row.kind_of === 'proposal' && row.status === 'WITHDRAWN');
+          return (
+            <div key={`${row.kind_of}-${row.id}`} className={`ledger-row${struck ? ' is-struck' : ''}`}>
+              <span className="ledger-kind">{row.kind_of === 'order' ? ORDER_KIND_LABEL[row.kind] : row.kind_of}</span>
+              <span className="grow small">
+                {row.kind_of === 'proposal' && (row.title || 'Proposal')}
+                {row.kind_of === 'order' && (row.reference || 'no number')}
+                {row.kind_of === 'invoice' && (row.number || 'no number')}
+                {row.kind_of === 'payment' && (row.reference || 'no reference')}
+                {row.link && <> · <a className="btn-link" href={row.link} target="_blank" rel="noopener noreferrer">open</a></>}
+                {row.kind_of === 'proposal' && (
+                  <> · <Badge tone={PROPOSAL_STATUS_META[row.status]?.tone}>{PROPOSAL_STATUS_META[row.status]?.label}</Badge></>
+                )}
+                {row.kind_of === 'invoice' && row.paid !== null && row.paid !== undefined && (
+                  <span className="muted"> · {formatMoney(row.paid, row.currency)} paid</span>
+                )}
+                {struck && (row.cancel_reason || row.void_reason) && (
+                  <span className="muted"> · {row.cancel_reason || row.void_reason}</span>
+                )}
+              </span>
+              <span className="small muted">{formatDate(row.on)}</span>
+              <span className="small tnum" style={{ minWidth: 70, textAlign: 'right' }}>
+                {row.amount === null ? <span className="muted">no amount</span> : formatMoney(row.amount, row.currency)}
+              </span>
+              {canEdit && !struck && row.kind_of === 'proposal' && (
+                <select className="select" style={{ width: 'auto' }} value=""
+                  onChange={(e) => e.target.value && run(
+                    () => api.setProposalStatus(opportunity.id, row.id, { status: e.target.value }), 'Proposal updated',
+                  )}>
+                  <option value="">Mark…</option>
+                  {Object.entries(PROPOSAL_STATUS_META).filter(([k]) => k !== row.status).map(([k, meta]) => (
+                    <option key={k} value={k}>{meta.label}</option>
+                  ))}
+                </select>
+              )}
+              {canEdit && !struck && row.kind_of === 'order' && (
+                <button type="button" className="btn-link small"
+                  onClick={() => withReason('Cancel this order', (reason) => api.cancelOrder(opportunity.id, row.id, reason))}>cancel</button>
+              )}
+              {canEdit && !struck && row.kind_of === 'invoice' && (
+                <button type="button" className="btn-link small"
+                  onClick={() => withReason('Cancel this invoice', (reason) => api.cancelInvoice(opportunity.id, row.id, reason))}>cancel</button>
+              )}
+              {canEdit && !struck && row.kind_of === 'payment' && (
+                <button type="button" className="btn-link small"
+                  onClick={() => withReason('Void this payment', (reason) => api.voidPayment(opportunity.id, row.id, reason))}>void</button>
+              )}
+            </div>
+          );
+        })}
+      {ledger.proposals.length + ledger.orders.length + ledger.invoices.length + ledger.payments.length === 0 && (
+        <div className="small muted">
+          Nothing recorded yet. A proposal, an order, an invoice and a payment are four different
+          facts — record each when it happens, and the totals above stay honest.
+        </div>
+      )}
+    </div>
+  );
+}
+
+const HISTORY_FIELD = {
+  stage: 'Stage', status: 'Status', owner_user_id: 'Owner', escalation_owner_id: 'Escalation',
+  next_step: 'Next action', next_step_due: 'Next action date', next_step_owner_id: 'Next action owner',
+  estimated_value: 'Estimated value', proposed_value: 'Proposed value', agreed_value: 'Agreed value',
+  collected_value: 'Collected (typed)', expected_close: 'Expected close', financial_status: 'Money status',
+  created: 'Created', name: 'Name', probability: 'Probability',
+};
+
+/** Who changed what, from what, to what — and why. */
+function HistoryPanel({ history }) {
+  const { userById } = useRefData();
+  const [all, setAll] = useState(false);
+  if (!history?.length) return null;
+  const shown = all ? history : history.slice(0, 6);
+  // people by name and money as money, so a change reads the way it was meant
+  const person = (field, value) => {
+    if (value === null || value === undefined) return value;
+    if (/_id$/.test(field)) return userById[Number(value)]?.full_name || `#${value}`;
+    if (/_value$/.test(field) && !Number.isNaN(Number(value))) return formatMoney(Number(value)) || value;
+    return value;
+  };
+  return (
+    <div className="stack-sm">
+      <span className="stat-label">What changed</span>
+      {shown.map((h) => (
+        <div key={h.id} className="history-row small">
+          <span className="history-what">
+            <strong>{HISTORY_FIELD[h.field] || h.field.replaceAll('_', ' ')}</strong>
+            {h.field !== 'created' && (
+              <> {h.from_value !== null ? <span className="muted">{person(h.field, h.from_value)} → </span> : ''}{person(h.field, h.to_value) ?? 'cleared'}</>
+            )}
+            {h.is_reversal && <Badge tone="warning">moved back</Badge>}
+            {h.evidence_missing?.length > 0 && <Badge tone="critical">moved without evidence</Badge>}
+          </span>
+          {h.reason && <span className="history-why">“{h.reason}”</span>}
+          <span className="muted">{h.actor_name || 'Someone'} · {relativeTime(h.created_at)}</span>
+        </div>
+      ))}
+      {history.length > 6 && (
+        <button type="button" className="btn-link small" onClick={() => setAll((v) => !v)}>
+          {all ? 'Show less' : `Show all ${history.length}`}
+        </button>
       )}
     </div>
   );
@@ -613,12 +1031,76 @@ function RequirementsPanel({ opportunity, canEdit, onChanged }) {
   );
 }
 
+/** One deal, opened: everything about it that decides what happens next. */
+function DealBody({ summary, canEditList, onChanged, onMove }) {
+  const [detail, setDetail] = useState(null);
+  const toast = useToast();
+
+  const load = useCallback(() => {
+    api.opportunity(summary.id).then(setDetail).catch((err) => toast.error(err));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [summary.id]);
+  useEffect(load, [load, summary]);
+
+  const opportunity = detail?.opportunity || summary;
+  const canEdit = detail ? detail.can_edit : canEditList;
+  const changed = () => {
+    load();
+    onChanged();
+  };
+
+  return (
+    <div className="opportunity-body">
+      <div className="deal-top">
+        <NextActionPanel opportunity={opportunity} canEdit={canEdit} onChanged={changed} />
+        <div className="stack-sm">
+          <span className="stat-label">Last heard, last chased, last touched</span>
+          <Clocks opportunity={opportunity} />
+        </div>
+      </div>
+      <hr className="divider" />
+      <PeoplePanel opportunity={opportunity} handovers={detail?.handovers} canEdit={canEdit} onChanged={changed} />
+      <hr className="divider" />
+      <ValuePanel opportunity={opportunity} ledger={detail?.commercial} canEdit={canEdit} onChanged={changed} />
+      <hr className="divider" />
+      <CommercialPanel opportunity={opportunity} ledger={detail?.commercial} canEdit={canEdit} onChanged={changed} />
+      <hr className="divider" />
+      <ScopePanel opportunity={opportunity} template={summary.segmentTemplate || []}
+        segmentName={summary.segmentName} canEdit={canEdit} onChanged={changed} />
+      <hr className="divider" />
+      <RequirementsPanel opportunity={opportunity} canEdit={canEdit} onChanged={changed} />
+      {detail?.history?.length > 0 && (
+        <>
+          <hr className="divider" />
+          <HistoryPanel history={detail.history} />
+        </>
+      )}
+      {canEdit && (
+        <div className="row wrap">
+          <button type="button" className="btn btn-sm" onClick={() => onMove(opportunity)}>
+            Move stage
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CrmOpportunities({
   accountId, opportunities, stages, canEdit, onChanged, segmentTemplate = [], segmentName = null,
+  relationshipOwnerId = null, focusId = null,
 }) {
   const [adding, setAdding] = useState(false);
   const [moving, setMoving] = useState(null);
-  const [open, setOpen] = useState(() => opportunities[0]?.id ?? null);
+  const [open, setOpen] = useState(() => focusId ?? opportunities[0]?.id ?? null);
+
+  useEffect(() => {
+    if (!focusId) return;
+    setOpen(focusId);
+    // the board sent us to one deal; bring it into view
+    const node = document.getElementById(`deal-${focusId}`);
+    if (node) node.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [focusId]);
 
   return (
     <section className="card card-pad stack">
@@ -626,7 +1108,7 @@ export default function CrmOpportunities({
         <div>
           <h2>Opportunities & scope</h2>
           <div className="small muted">
-            Each deal has its own stage, value and outcome. Winning one does not end the relationship.
+            Each deal has its own stage, value, owner and next action. Winning one does not end the relationship.
           </div>
         </div>
         {canEdit && (
@@ -645,9 +1127,10 @@ export default function CrmOpportunities({
           {opportunities.map((opportunity) => {
             const status = OPPORTUNITY_STATUS_META[opportunity.status] || OPPORTUNITY_STATUS_META.ACTIVE;
             const expanded = open === opportunity.id;
+            const live = opportunity.status === 'ACTIVE';
             return (
-              <div key={opportunity.id}
-                className={`opportunity${opportunity.status === 'ACTIVE' ? '' : ' is-settled'}`}>
+              <div key={opportunity.id} id={`deal-${opportunity.id}`}
+                className={`opportunity${live ? '' : ' is-settled'}`}>
                 <button type="button" className="opportunity-head"
                   onClick={() => setOpen(expanded ? null : opportunity.id)}>
                   <span className="opportunity-rail" style={{ background: opportunity.stage_color }} />
@@ -658,6 +1141,7 @@ export default function CrmOpportunities({
                       {opportunity.stage_name && (
                         <Badge dot={opportunity.stage_color}>{opportunity.stage_name}</Badge>
                       )}
+                      {live && <Clocks opportunity={opportunity} compact />}
                     </span>
                     <span className="small muted row wrap" style={{ gap: 6, marginTop: 2 }}>
                       <span>{modelLabel(opportunity.engagement_model)}</span>
@@ -674,11 +1158,14 @@ export default function CrmOpportunities({
                         <><span>·</span><span>{opportunity.owner_name}</span></>
                       )}
                     </span>
+                    {live && <NextActionLine opportunity={opportunity} compact />}
                     {opportunity.gaps?.length > 0 && (
                       <span className="row wrap" style={{ gap: 4, marginTop: 4 }}>
-                        {opportunity.gaps.map((gap) => (
-                          <span key={gap.kind} className="kr-flag kr-flag-warning">{gap.label}</span>
-                        ))}
+                        {opportunity.gaps
+                          .filter((gap) => gap.kind !== 'no_next_step' && gap.kind !== 'no_next_step_date')
+                          .map((gap) => (
+                            <span key={gap.kind} className="kr-flag kr-flag-warning">{gap.label}</span>
+                          ))}
                       </span>
                     )}
                   </span>
@@ -687,21 +1174,12 @@ export default function CrmOpportunities({
                 </button>
 
                 {expanded && (
-                  <div className="opportunity-body">
-                    <ValuePanel opportunity={opportunity} canEdit={canEdit} onChanged={onChanged} />
-                    <hr className="divider" />
-                    <ScopePanel opportunity={opportunity} template={segmentTemplate}
-                      segmentName={segmentName} canEdit={canEdit} onChanged={onChanged} />
-                    <hr className="divider" />
-                    <RequirementsPanel opportunity={opportunity} canEdit={canEdit} onChanged={onChanged} />
-                    {canEdit && (
-                      <div className="row wrap">
-                        <button type="button" className="btn btn-sm" onClick={() => setMoving(opportunity)}>
-                          Move stage
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <DealBody
+                    summary={{ ...opportunity, segmentTemplate, segmentName }}
+                    canEditList={canEdit}
+                    onChanged={onChanged}
+                    onMove={setMoving}
+                  />
                 )}
               </div>
             );
@@ -710,12 +1188,12 @@ export default function CrmOpportunities({
       )}
 
       {adding && (
-        <NewOpportunityDialog accountId={accountId} stages={stages}
+        <NewOpportunityDialog accountId={accountId} stages={stages} relationshipOwnerId={relationshipOwnerId}
           onClose={() => setAdding(false)} onSaved={onChanged} />
       )}
       {moving && (
-        <StageDialog opportunity={moving} stages={stages}
-          onClose={() => setMoving(null)} onSaved={onChanged} />
+        <DealMoveDialog opportunity={moving} stages={stages}
+          onClose={() => setMoving(null)} onMoved={onChanged} />
       )}
     </section>
   );

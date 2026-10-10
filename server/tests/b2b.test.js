@@ -254,6 +254,8 @@ test('winning one deal does not close the relationship or the other deal', async
       agreement_date: dateOnly(0),
       agreed_value: 420000,
       financial_status: 'INVOICED',
+      // Won needs the accepted contract on record, captured in the same step
+      order: { kind: 'CONTRACT', reference: 'KVF-PILOT-01', received_on: dateOnly(0), amount: 420000 },
     },
   });
   assert.equal(won.status, 200);
@@ -313,12 +315,22 @@ test('losing a deal needs a reason', async (t) => {
 test('a move backwards down the pipeline is recorded as a reversal', async (t) => {
   if (skipIfUnavailable(t)) return;
 
-  await call('POST', `/opportunities/${ids.secondOpportunity}/stage`, {
-    token: tokens.manager, body: { stage_id: ids.stage_proposal },
+  const forward = await call('POST', `/opportunities/${ids.secondOpportunity}/stage`, {
+    token: tokens.manager,
+    body: {
+      stage_id: ids.stage_proposal,
+      proposal: { sent_on: dateOnly(0), title: 'Bulk testing rates', amount: 1800000 },
+      next_step: 'Walk them through the proposal',
+      next_step_owner_id: ids.manager,
+      next_step_due: dateOnly(3),
+    },
   });
-  await call('POST', `/opportunities/${ids.secondOpportunity}/stage`, {
+  assert.equal(forward.status, 200, JSON.stringify(forward.body));
+  // backwards needs no evidence — correcting an optimistic stage is never harder than leaving it
+  const back = await call('POST', `/opportunities/${ids.secondOpportunity}/stage`, {
     token: tokens.manager, body: { stage_id: ids.stage_discovery, reason: 'They reopened the requirements' },
   });
+  assert.equal(back.status, 200, JSON.stringify(back.body));
 
   const detail = await call('GET', `/opportunities/${ids.secondOpportunity}`, { token: tokens.manager });
   const reversal = detail.body.history.find((h) => h.is_reversal);
@@ -563,9 +575,17 @@ test('someone who neither owns the deal nor the relationship cannot change it', 
 test('the relationship owner can hand a deal to someone else, and it is recorded', async (t) => {
   if (skipIfUnavailable(t)) return;
 
-  const handed = await call('PATCH', `/opportunities/${ids.secondOpportunity}`, {
+  // a deal that was somebody's changes hands only with a reason
+  const unexplained = await call('PATCH', `/opportunities/${ids.secondOpportunity}`, {
     token: tokens.manager,
     body: { owner_user_id: ids.member },
+  });
+  assert.equal(unexplained.status, 400);
+  assert.equal(unexplained.body.details.code, 'REASON_REQUIRED');
+
+  const handed = await call('PATCH', `/opportunities/${ids.secondOpportunity}`, {
+    token: tokens.manager,
+    body: { owner_user_id: ids.member, reason: 'Testing contracts now sit with the field team' },
   });
   assert.equal(handed.status, 200);
   assert.equal(handed.body.opportunity.owner_user_id, ids.member);
@@ -583,6 +603,18 @@ test('the relationship owner can hand a deal to someone else, and it is recorded
   assert.equal(rows.length, 1);
   assert.equal(rows[0].from_user_id, ids.manager);
   assert.equal(rows[0].to_user_id, ids.member);
+  assert.equal(rows[0].reason, 'Testing contracts now sit with the field team');
+
+  // the handover is explicit: the new owner is told, and asked to confirm
+  const handovers = await call('GET', '/opportunities/handovers/mine', { token: tokens.member });
+  const handover = handovers.body.handovers.find((h) => h.opportunity_id === ids.secondOpportunity);
+  assert.ok(handover, 'the new owner sees it waiting for them');
+  assert.equal(handover.role, 'OWNER');
+  const inbox = await call('GET', '/notifications', { token: tokens.member });
+  assert.ok(inbox.body.notifications.some((n) => n.type === 'crm_handover'));
+  const confirmed = await call('POST', `/opportunities/handovers/${handover.id}/acknowledge`, { token: tokens.member });
+  assert.equal(confirmed.status, 200);
+  assert.ok(confirmed.body.handover.acknowledged_at);
 
   // the new owner can now work it
   const asMember = await call('PATCH', `/opportunities/${ids.secondOpportunity}`, {

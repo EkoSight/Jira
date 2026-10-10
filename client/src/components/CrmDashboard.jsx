@@ -187,6 +187,10 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
           <Metric id="missing_next_action" definitions={definitions}
             value={portfolio.missing_next_action}
             tone={portfolio.missing_next_action > 0 ? 'warning' : undefined} />
+          <Metric id="incomplete_next_actions" definitions={definitions}
+            value={portfolio.incomplete_next_actions ?? 0}
+            sub="missing who owes it or by when"
+            tone={portfolio.incomplete_next_actions > 0 ? 'warning' : undefined} />
           <Metric id="unresolved_blockers" definitions={definitions}
             value={portfolio.unresolved_blockers}
             tone={portfolio.unresolved_blockers > 0 ? 'warning' : undefined} />
@@ -219,9 +223,22 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
           <Metric id="value_won" definitions={definitions}
             value={formatMoney(activity.value_won) || '—'}
             sub="signed, not collected" />
+          <Metric id="booked" definitions={definitions}
+            value={activity.booked === null || activity.booked === undefined ? '—' : formatMoney(activity.booked)}
+            sub={activity.orders
+              ? `${activity.orders} order${activity.orders === 1 ? '' : 's'} accepted${activity.orders_without_amount ? ` · ${activity.orders_without_amount} with no amount` : ''}`
+              : 'no orders received'}
+            tone={activity.orders > 0 ? 'good' : undefined} />
+          <Metric id="invoiced" definitions={definitions}
+            value={activity.invoiced === null || activity.invoiced === undefined ? '—' : formatMoney(activity.invoiced)}
+            sub={activity.invoices ? `${activity.invoices} invoice${activity.invoices === 1 ? '' : 's'} — billed, not received` : 'nothing invoiced'} />
+          <Metric id="cash_received" definitions={definitions}
+            value={activity.cash_received === null || activity.cash_received === undefined ? '—' : formatMoney(activity.cash_received)}
+            sub={activity.payments ? `${activity.payments} payment${activity.payments === 1 ? '' : 's'} by the date the money arrived` : 'no payments recorded'}
+            tone={activity.cash_received > 0 ? 'good' : undefined} />
           <Metric id="value_collected" definitions={definitions}
             value={formatMoney(activity.value_collected) || '—'}
-            sub="entered by hand — TaskFlow has no accounting feed" />
+            sub="typed on deals by hand, all time — not the payments above" />
           <Metric id="demos_completed" definitions={definitions} value={activity.demos_completed}
             sub={activity.meetings_awaiting_outcome > 0
               ? `${activity.meetings_awaiting_outcome} meeting${activity.meetings_awaiting_outcome === 1 ? '' : 's'} still with no outcome recorded`
@@ -233,8 +250,10 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
             sub={activity.attempts > 0
               ? `${activity.attempts} attempt${activity.attempts === 1 ? '' : 's'} that did not connect — counted apart`
               : 'no unanswered attempts'} />
+          <Metric id="proposals_recorded" definitions={definitions} value={activity.proposals_recorded ?? 0}
+            sub="proposals recorded on deals, by the date sent" />
           <Metric id="proposals_shared" definitions={definitions} value={activity.proposals_shared}
-            sub="recorded as sent by a person" />
+            sub="library documents recorded as sent" />
         </div>
       </section>
 

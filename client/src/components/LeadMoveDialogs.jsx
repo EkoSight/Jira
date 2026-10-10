@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Field, Modal, Spinner } from './ui.jsx';
+import { Field, Icon, Modal, Spinner } from './ui.jsx';
+import { OrderFields, emptyOrder, orderBody } from './DealParts.jsx';
 import { exactMoney, formatMoney } from '../lib/crm.js';
 
 /**
- * The two moments a lead's outcome is decided from the board or its header.
+ * The moment a lead becomes a customer or partner.
  *
- * Both used to be one click that changed a label and nothing else, so a lead
- * marked as a customer never showed up as a win. Each now asks the one question
- * that makes the record true — which deal did they sign, or why did we lose it —
- * and nothing more.
+ * It used to be one click that changed a label and nothing else, so a lead
+ * marked as a customer never showed up as a win. It now asks what makes the
+ * record true: which deal did they sign — and, because Won needs it, the
+ * accepted order or contract itself. (Moving a deal to Won or Lost from the
+ * board goes through the deal move dialog, with the same checks.)
  */
 
 /** Marking a lead as a customer (or partner), and naming the deal they signed. */
@@ -21,6 +23,10 @@ export function ConvertDialog({ account, type = 'CUSTOMER', onClose, onDone }) {
   const [agreed, setAgreed] = useState('');
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [agreementType, setAgreementType] = useState('');
+  const [order, setOrder] = useState(emptyOrder);
+  const [missing, setMissing] = useState(null);
+  const [override, setOverride] = useState('');
+  const [canOverride, setCanOverride] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -40,6 +46,8 @@ export function ConvertDialog({ account, type = 'CUSTOMER', onClose, onDone }) {
   }, [account.id]);
 
   const chosen = deals?.find((d) => String(d.id) === dealId);
+  // the Won stage asks for the accepted order; one already on the deal will do
+  const needsOrder = Boolean(chosen) && !(chosen.order_count > 0);
 
   const save = async () => {
     setSaving(true);
@@ -49,6 +57,8 @@ export function ConvertDialog({ account, type = 'CUSTOMER', onClose, onDone }) {
         agreed_value: dealId && agreed !== '' ? Number(agreed) : null,
         agreement_date: dealId ? date || null : null,
         agreement_type: dealId ? agreementType.trim() || null : null,
+        ...(needsOrder ? { order: orderBody({ ...order, amount: order.amount === '' ? agreed : order.amount }) } : {}),
+        ...(override.trim() ? { override_reason: override.trim() } : {}),
       });
       toast.success(dealId
         ? `${account.name} is a ${type === 'CUSTOMER' ? 'customer' : 'partner'} — counted as won this month`
@@ -56,7 +66,12 @@ export function ConvertDialog({ account, type = 'CUSTOMER', onClose, onDone }) {
       onDone();
       onClose();
     } catch (err) {
-      toast.error(err);
+      if (err.details?.code === 'STAGE_EVIDENCE_REQUIRED') {
+        setMissing(err.details.missing || []);
+        setCanOverride(Boolean(err.details.can_override));
+      } else {
+        toast.error(err);
+      }
     } finally {
       setSaving(false);
     }
@@ -113,6 +128,31 @@ export function ConvertDialog({ account, type = 'CUSTOMER', onClose, onDone }) {
                   Recorded as {exactMoney(Number(agreed), chosen.currency)} agreed on “{chosen.name}”.
                 </div>
               )}
+              {needsOrder ? (
+                <div className="evidence-form">
+                  <div className="small" style={{ fontWeight: 650 }}>The accepted order or contract</div>
+                  <div className="small muted">Won needs it on record — its date, and its number or a link.</div>
+                  <OrderFields value={order} onChange={setOrder} />
+                </div>
+              ) : chosen && (
+                <div className="small muted"><Icon name="check" size={12} /> The order for this deal is already on record.</div>
+              )}
+              {missing && missing.length > 0 && (
+                <div className="ask-banner ask-critical">
+                  <Icon name="alert" size={15} />
+                  <div className="grow">
+                    <strong>Won needs this first</strong>
+                    <ul className="gap-list">
+                      {missing.map((m) => <li key={`${m.phase}-${m.rule}`}>{m.label}{m.hint ? ` — ${m.hint}` : ''}</li>)}
+                    </ul>
+                    {canOverride && (
+                      <Field label="Mark it won anyway — say why" hint="Kept on the deal's history as a move made without evidence">
+                        <textarea className="textarea" rows={2} value={override} onChange={(e) => setOverride(e.target.value)} />
+                      </Field>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="callout is-quiet small">
@@ -120,70 +160,6 @@ export function ConvertDialog({ account, type = 'CUSTOMER', onClose, onDone }) {
               Use this only when the deal really is not in TaskFlow.
             </div>
           )}
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-/**
- * Moving a lead into Won or Lost from the board or its header.
- * A loss needs a reason; a win can carry what was agreed.
- */
-export function SettleDialog({ account, stage, onClose, onDone }) {
-  const toast = useToast();
-  const lost = stage.kind === 'lost';
-  const [reason, setReason] = useState('');
-  const [agreed, setAgreed] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    if (lost && reason.trim().length < 3) {
-      return toast.error('Say why it was lost — that is the only thing a closed deal can still teach anyone');
-    }
-    setSaving(true);
-    try {
-      await api.moveAccountStage(account.id, stage.id, lost
-        ? { reason: reason.trim() }
-        : { agreed_value: agreed === '' ? null : Number(agreed) });
-      toast.success(`Moved to ${stage.name}`);
-      onDone();
-      onClose();
-    } catch (err) {
-      toast.error(err);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={`${account.name}: ${stage.name}`}
-      onClose={onClose}
-      footer={
-        <>
-          <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? 'Saving…' : `Move to ${stage.name}`}
-          </button>
-        </>
-      }
-    >
-      {lost ? (
-        <Field label="Why was it lost? *" hint="The only thing a closed deal can still teach anyone">
-          <textarea className="textarea" rows={3} autoFocus value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Budget moved to next financial year; they liked the evidence." />
-        </Field>
-      ) : (
-        <div className="stack">
-          <div className="small muted">
-            Their main deal is marked won today and counts in this month's Won figure.
-          </div>
-          <Field label="Agreed amount (₹)" hint="Leave blank if it is not settled yet">
-            <input className="input" type="number" min="0" autoFocus value={agreed}
-              onChange={(e) => setAgreed(e.target.value)} />
-          </Field>
         </div>
       )}
     </Modal>

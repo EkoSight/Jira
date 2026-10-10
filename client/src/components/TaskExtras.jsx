@@ -555,6 +555,12 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
       await api.moveTask(subtask.id, { status_id: target.id });
       onChanged();
     } catch (err) {
+      // a sub task that is deal work asks what happened, like any other — open it
+      if (err.details?.code === 'OUTCOME_REQUIRED' && onOpen) {
+        toast.error('This is deal work — open it and say what happened');
+        onOpen(subtask.id);
+        return;
+      }
       toast.error(err);
     }
   };

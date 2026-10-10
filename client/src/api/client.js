@@ -125,6 +125,9 @@ export const api = {
   createTask: (data) => request('POST', '/tasks', data),
   updateTask: (id, data) => request('PATCH', `/tasks/${id}`, data),
   moveTask: (id, data) => request('POST', `/tasks/${id}/move`, data),
+  // finishing deal work: what to ask, and progress on work that is not finished
+  taskCompletionContext: (id) => request('GET', `/tasks/${id}/completion-context`),
+  taskProgress: (id, data) => request('POST', `/tasks/${id}/progress`, data),
   archiveTask: (id) => request('DELETE', `/tasks/${id}`),
   deleteTask: (id) => request('DELETE', `/tasks/${id}?permanent=true`),
   restoreTask: (id) => request('POST', `/tasks/${id}/restore`),
@@ -197,6 +200,26 @@ export const api = {
   moveOpportunityStage: (id, data) => request('POST', `/opportunities/${id}/stage`, data),
   setOpportunityStatus: (id, data) => request('POST', `/opportunities/${id}/status`, data),
   archiveOpportunity: (id) => request('DELETE', `/opportunities/${id}`),
+  dealBoard: (params) => request('GET', `/opportunities/board${qs(params)}`),
+  stageRules: () => request('GET', '/opportunities/stage-rules'),
+  setNextAction: (id, data) => request('POST', `/opportunities/${id}/next-action`, data),
+  addDealCollaborator: (id, data) => request('POST', `/opportunities/${id}/collaborators`, data),
+  removeDealCollaborator: (id, userId) => request('DELETE', `/opportunities/${id}/collaborators/${userId}`),
+  myHandovers: () => request('GET', '/opportunities/handovers/mine'),
+  acknowledgeHandover: (id) => request('POST', `/opportunities/handovers/${id}/acknowledge`),
+  dealCommercial: (id) => request('GET', `/opportunities/${id}/commercial`),
+  addProposal: (id, data) => request('POST', `/opportunities/${id}/proposals`, data),
+  setProposalStatus: (id, proposalId, data) =>
+    request('POST', `/opportunities/${id}/proposals/${proposalId}/status`, data),
+  addOrder: (id, data) => request('POST', `/opportunities/${id}/orders`, data),
+  cancelOrder: (id, orderId, reason) =>
+    request('POST', `/opportunities/${id}/orders/${orderId}/cancel`, { reason }),
+  addInvoice: (id, data) => request('POST', `/opportunities/${id}/invoices`, data),
+  cancelInvoice: (id, invoiceId, reason) =>
+    request('POST', `/opportunities/${id}/invoices/${invoiceId}/cancel`, { reason }),
+  addPayment: (id, data) => request('POST', `/opportunities/${id}/payments`, data),
+  voidPayment: (id, paymentId, reason) =>
+    request('POST', `/opportunities/${id}/payments/${paymentId}/void`, { reason }),
   opportunityRequirements: (id) => request('GET', `/opportunities/${id}/requirements`),
   addRequirement: (id, data) => request('POST', `/opportunities/${id}/requirements`, data),
   updateRequirement: (opportunityId, requirementId, data) =>

@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner } from './ui.jsx';
-import { FOLLOW_UP_META, POTENTIAL_META, formatMoney, freshnessLabel } from '../lib/crm.js';
+import {
+  FOLLOW_UP_META, POTENTIAL_META, agoWords, clockTone, formatMoney,
+} from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
 
 /**
@@ -17,26 +19,25 @@ import { formatDate } from '../lib/format.js';
 // ---------------------------------------------------------------- list
 
 const COLUMNS = [
-  { key: 'name', label: 'Organization', get: (a) => a.name },
-  { key: 'stage_name', label: 'Stage', get: (a) => a.stage_name || '' },
-  { key: 'state', label: 'State', get: (a) => a.state || '' },
-  { key: 'eligible_value', label: 'Expected', get: (a) => a.eligible_value ?? -1, numeric: true },
-  { key: 'owner_name', label: 'Leading it', get: (a) => a.owner_name || '' },
-  { key: 'days_since_activity', label: 'Last worked', get: (a) => a.days_since_activity ?? 9999, numeric: true },
-  { key: 'next_step_due', label: 'Next action', get: (a) => a.next_step_due || '' },
+  { key: 'name', label: 'Deal', get: (d) => `${d.name} ${d.account_name}` },
+  { key: 'stage_name', label: 'Stage', get: (d) => d.stage_position ?? 99, numeric: true },
+  { key: 'eligible_value', label: 'Expected', get: (d) => d.eligible_value ?? -1, numeric: true },
+  { key: 'owner_name', label: 'Owner', get: (d) => d.owner_name || '' },
+  { key: 'next_step_due', label: 'Next action', get: (d) => d.next_step_due || '9999' },
+  { key: 'days_since_customer', label: 'Customer last responded', get: (d) => d.days_since_customer ?? 9999, numeric: true },
+  { key: 'days_since_outbound', label: 'We last followed up', get: (d) => d.days_since_outbound ?? 9999, numeric: true },
 ];
 
+/** Every live deal as a row — sortable, searchable, the same deals the board shows. */
 export function ListView({ board, search }) {
-  const [sort, setSort] = useState({ key: 'days_since_activity', dir: 'desc' });
+  const [sort, setSort] = useState({ key: 'next_step_due', dir: 'asc' });
 
   const rows = useMemo(() => {
-    const all = board.stages.flatMap((stage) =>
-      stage.accounts.map((a) => ({ ...a, stage_name: a.stage_name || stage.name })));
+    const all = board.stages.flatMap((stage) => stage.deals);
     const term = search.trim().toLowerCase();
     const filtered = term
-      ? all.filter((a) => a.name.toLowerCase().includes(term)
-        || (a.owner_name || '').toLowerCase().includes(term)
-        || (a.next_step || '').toLowerCase().includes(term))
+      ? all.filter((d) => [d.name, d.account_name, d.owner_name, d.next_step, d.next_step_owner_name]
+        .some((v) => (v || '').toLowerCase().includes(term)))
       : all;
     const column = COLUMNS.find((c) => c.key === sort.key) || COLUMNS[0];
     return [...filtered].sort((a, b) => {
@@ -55,7 +56,7 @@ export function ListView({ board, search }) {
       : { key, dir: 'asc' });
 
   if (rows.length === 0) {
-    return <EmptyState title={search ? 'Nothing matches' : 'No organizations'} />;
+    return <EmptyState title={search ? 'Nothing matches' : 'No live deals'} />;
   }
 
   return (
@@ -77,51 +78,54 @@ export function ListView({ board, search }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((account) => {
-            const fresh = freshnessLabel(account.days_since_activity);
+          {rows.map((deal) => {
+            const overdue = deal.next_action_gaps.some((g) => g.kind === 'next_action_overdue');
             return (
-              <tr key={account.id}>
+              <tr key={deal.id}>
                 <td>
                   <span className="row" style={{ gap: 9, alignItems: 'center' }}>
-                    <CompanyLogo src={account.logo_src} name={account.name} size={30} />
+                    <CompanyLogo src={deal.account_logo_src} name={deal.account_name} size={30} />
                     <span style={{ minWidth: 0 }}>
-                      <Link to={`/accounts/${account.id}`} className="btn-link">{account.name}</Link>
-                      {account.segment_name && (
-                        <div className="small muted">{account.segment_name}</div>
-                      )}
+                      <Link to={`/accounts/${deal.account_id}?deal=${deal.id}`} className="btn-link">{deal.name}</Link>
+                      <div className="small muted">
+                        {deal.account_name}{deal.account_kind !== 'LEAD' ? ` · ${deal.account_kind.toLowerCase()}` : ''}
+                      </div>
                     </span>
                   </span>
                 </td>
-                <td><Badge dot={account.stage_color}>{account.stage_name}</Badge></td>
-                <td className="small">{account.state || <span className="muted">not recorded</span>}</td>
+                <td><Badge dot={deal.stage_color}>{deal.stage_name}</Badge></td>
                 <td className="tnum">
-                  {formatMoney(account.eligible_value, account.currency)
-                    || <span className="muted small">{account.deals_without_value ? 'no value yet' : '—'}</span>}
-                  {account.open_blockers > 0 && (
-                    <div><Badge tone="critical">{account.open_blockers === 1 ? 'blocker' : `${account.open_blockers} blockers`}</Badge></div>
+                  {formatMoney(deal.eligible_value, deal.currency)
+                    || <span className="muted small">{deal.eligible_basis === 'none' ? 'no value yet' : '—'}</span>}
+                  {deal.open_blockers > 0 && (
+                    <div><Badge tone="critical">{deal.open_blockers === 1 ? 'blocker' : `${deal.open_blockers} blockers`}</Badge></div>
                   )}
                 </td>
                 <td>
-                  {account.owner_name ? (
+                  {deal.owner_name ? (
                     <span className="row" style={{ gap: 5 }}>
-                      <Avatar name={account.owner_name} color={account.owner_color} size={20} />
-                      <span className="small">{account.owner_name}</span>
+                      <Avatar name={deal.owner_name} color={deal.owner_color} size={20} />
+                      <span className="small">{deal.owner_name}</span>
                     </span>
-                  ) : <span className="small muted">Unowned</span>}
+                  ) : <span className="kr-flag kr-flag-warning">nobody</span>}
                 </td>
-                <td><Badge tone={fresh.tone}>{fresh.text}</Badge></td>
                 <td>
-                  {account.next_step ? (
+                  {deal.next_step ? (
                     <>
-                      <div className="small truncate" style={{ maxWidth: 220 }}>{account.next_step}</div>
-                      {account.next_step_due && (
-                        <Badge tone={account.next_step_overdue ? 'critical' : 'neutral'}>
-                          {formatDate(account.next_step_due)}
-                        </Badge>
-                      )}
+                      <div className="small truncate" style={{ maxWidth: 240 }}>{deal.next_step}</div>
+                      <div className="row wrap" style={{ gap: 4 }}>
+                        {deal.next_step_owner_name
+                          ? <span className="small muted">{deal.next_step_owner_name}</span>
+                          : <span className="kr-flag kr-flag-warning">who?</span>}
+                        {deal.next_step_due
+                          ? <Badge tone={overdue ? 'critical' : 'neutral'}>{formatDate(deal.next_step_due)}</Badge>
+                          : <span className="kr-flag kr-flag-warning">when?</span>}
+                      </div>
                     </>
-                  ) : <span className="small muted">none set</span>}
+                  ) : <span className="kr-flag kr-flag-warning">none set</span>}
                 </td>
+                <td><Badge tone={clockTone(deal.days_since_customer)}>{agoWords(deal.days_since_customer)}</Badge></td>
+                <td><Badge tone={clockTone(deal.days_since_outbound)}>{agoWords(deal.days_since_outbound)}</Badge></td>
               </tr>
             );
           })}
