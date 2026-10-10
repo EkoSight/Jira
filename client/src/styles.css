@@ -3516,3 +3516,142 @@ th.cal-person {
   .review-grid { grid-template-columns: 1fr; }
   .week-columns { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------------------
+   Reporting and controls: data quality, workload, investor summary, audit
+   ------------------------------------------------------------------ */
+
+/* data quality: one card per check, its severity on the edge */
+.dq-summary { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+.dq-score { display: flex; flex-direction: column; min-width: 150px; }
+.dq-score-value { font-size: 30px; font-weight: 720; letter-spacing: -0.02em; line-height: 1.1; }
+.dq-check { overflow: hidden; border-left: 3px solid var(--border-strong); }
+.dq-check.dq-critical { border-left-color: var(--critical); }
+.dq-check.dq-warning { border-left-color: var(--warning); }
+.dq-check.dq-pass { border-left-color: var(--good); }
+.dq-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 13px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dq-head:disabled { cursor: default; }
+.dq-head:hover:not(:disabled) { background: var(--surface-2); }
+.dq-head:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.dq-title { display: block; font-weight: 650; font-size: 13.5px; }
+.dq-why { display: block; margin-top: 1px; }
+.dq-body { padding: 0 13px 12px; }
+.dq-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.dq-item .btn-link { overflow-wrap: anywhere; text-align: left; }
+.dq-owner { white-space: nowrap; }
+
+/* workload: what each person owes, by when */
+.load-counts { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.work-late { color: var(--critical-text); }
+.work-blocked { color: var(--warning-text); }
+.work-item {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.work-item.is-late { border-left: 2px solid var(--critical); padding-left: 7px; }
+.work-kind {
+  min-width: 96px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-muted);
+}
+.work-title { font-size: 13px; margin-right: 6px; overflow-wrap: anywhere; text-align: left; }
+.escalation-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.escalation-row.is-cover .work-item { border-left: 2px solid var(--warning); padding-left: 7px; }
+.away-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--warning-wash);
+  color: var(--warning-text);
+  flex-wrap: wrap;
+}
+
+/* the investor summary: a document, printable */
+.investor-doc { display: flex; flex-direction: column; gap: 18px; }
+.investor-head { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; align-items: flex-end; }
+.investor-head h2 { font-size: 20px; margin-top: 2px; }
+.investor-note { max-width: 320px; text-align: right; }
+.investor-section { display: flex; flex-direction: column; gap: 8px; }
+.investor-section h3 { font-size: 14px; }
+.investor-table td, .investor-table th { white-space: nowrap; }
+.investor-total td { font-weight: 700; border-top: 2px solid var(--border-strong); }
+.estimate-tag {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warning-wash);
+  color: var(--warning-text);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.estimate-cell { color: var(--ink-2); font-style: italic; }
+.investor-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.investor-defs { display: grid; gap: 6px; margin: 0; }
+.investor-defs dt { font-weight: 650; text-transform: capitalize; }
+.investor-defs dd { margin: 0; color: var(--ink-2); }
+
+/* the audit trail */
+.audit-list { overflow: hidden; }
+.audit-row {
+  display: flex;
+  gap: 12px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.audit-row:last-child { border-bottom: 0; }
+.audit-when { min-width: 132px; }
+.audit-what { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 13px; }
+
+@media (max-width: 640px) {
+  .investor-note { text-align: left; }
+  .work-kind { min-width: 0; }
+  .audit-when { min-width: 0; width: 100%; }
+  .dq-owner { white-space: normal; }
+}
+
+/* printing the investor summary: only the document, in ink on paper */
+@media print {
+  body.print-investor { background: #fff; }
+  body.print-investor * { visibility: hidden; }
+  body.print-investor .investor-doc,
+  body.print-investor .investor-doc * { visibility: visible; color: #111 !important; }
+  body.print-investor .investor-doc {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    border: 0;
+    box-shadow: none;
+    background: #fff;
+  }
+  body.print-investor .metric { background: #fff; border-color: #bbb; }
+  body.print-investor .table-scroll { overflow: visible; }
+}

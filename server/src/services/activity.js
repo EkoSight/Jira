@@ -15,6 +15,18 @@ export async function notify(
 ) {
   if (!userId) return;
   const runner = client || { query };
+  // the same notice to the same person moments apart is one notice: a double
+  // submit, or two paths reporting one event, must not ping them twice
+  const { rows: recent } = await runner.query(
+    `SELECT 1 FROM notifications
+      WHERE user_id = $1 AND type = $2 AND title = $3 AND body IS NOT DISTINCT FROM $4
+        AND task_id IS NOT DISTINCT FROM $5 AND objective_id IS NOT DISTINCT FROM $6
+        AND account_id IS NOT DISTINCT FROM $7
+        AND created_at > now() - interval '10 minutes'
+      LIMIT 1`,
+    [userId, type, title, body, taskId, objectiveId, accountId],
+  );
+  if (recent.length) return;
   await runner.query(
     `INSERT INTO notifications (user_id, type, title, body, task_id, objective_id, account_id)
      VALUES ($1, $2, $3, $4, $5, $6, $7)`,

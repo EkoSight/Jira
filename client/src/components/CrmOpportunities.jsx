@@ -3,6 +3,7 @@ import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import DealMoveDialog from './DealMoveDialog.jsx';
+import EscalateDialog from './EscalateDialog.jsx';
 import {
   Clocks, DealPeople, NextActionFields, NextActionLine, OrderFields, PersonSelect, ProposalFields,
   dayFromToday, emptyOrder, emptyProposal, nextActionBody, nextActionDraft, nextActionProblem, orderBody,
@@ -344,6 +345,7 @@ function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
   const [form, setForm] = useState({ owner_user_id: '', escalation_owner_id: '', reason: '' });
   const [helper, setHelper] = useState({ user_id: '', role: '' });
   const [saving, setSaving] = useState(false);
+  const [escalating, setEscalating] = useState(false);
 
   const pendingForMe = (handovers || []).filter((h) => !h.acknowledged_at && h.to_user_id === user?.id);
   const pendingOthers = (handovers || []).filter((h) => !h.acknowledged_at && h.to_user_id !== user?.id);
@@ -420,9 +422,20 @@ function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
       <div className="row-between wrap">
         <span className="stat-label">People</span>
         {canEdit && !editing && (
-          <button type="button" className="btn-link small" onClick={start}>Change owner or escalation</button>
+          <span className="row wrap" style={{ gap: 12 }}>
+            {['ACTIVE', 'ON_HOLD', 'NURTURE'].includes(opportunity.status) && (
+              <button type="button" className="btn-link small" onClick={() => setEscalating(true)}
+                title="Take it to the escalation point, with what needs deciding">
+                Escalate…
+              </button>
+            )}
+            <button type="button" className="btn-link small" onClick={start}>Change owner or escalation</button>
+          </span>
         )}
       </div>
+      {escalating && (
+        <EscalateDialog deal={opportunity} onClose={() => setEscalating(false)} onDone={onChanged} />
+      )}
 
       {pendingForMe.map((h) => (
         <div key={h.id} className="ask-banner ask-info">
@@ -733,7 +746,8 @@ const HISTORY_FIELD = {
   next_step: 'Next action', next_step_due: 'Next action date', next_step_owner_id: 'Next action owner',
   estimated_value: 'Estimated value', proposed_value: 'Proposed value', agreed_value: 'Agreed value',
   collected_value: 'Collected (typed)', expected_close: 'Expected close', financial_status: 'Money status',
-  created: 'Created', name: 'Name', probability: 'Probability',
+  created: 'Created', name: 'Name', probability: 'Probability', waiting: 'Waiting',
+  archived: 'Archived', escalated_to_user_id: 'Escalated to',
 };
 
 /** Who changed what, from what, to what — and why. */

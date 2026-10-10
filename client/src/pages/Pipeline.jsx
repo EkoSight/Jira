@@ -10,6 +10,7 @@ import DealMoveDialog from '../components/DealMoveDialog.jsx';
 import { Clocks, NextActionLine } from '../components/DealParts.jsx';
 import { ListView, MapView, TreeView } from '../components/CrmViews.jsx';
 import { Correspondence, TeamReviews, WeekRecord, WeeklyReview } from '../components/CrmWeekly.jsx';
+import CrmControls from '../components/CrmControls.jsx';
 import {
   ACCOUNT_TYPE_META, INDIAN_STATES, OPPORTUNITY_STATUS_META, VALUE_BASIS_LABEL, formatMoney, waitingWords,
 } from '../lib/crm.js';
@@ -245,7 +246,8 @@ export default function Pipeline() {
   const [view, setView] = useState('board');
   const [reviewScope, setReviewScope] = useState('mine');
   const [pending, setPending] = useState(0);
-  const weekly = view === 'week' || view === 'review' || view === 'inbox';
+  // these have their own controls; the board's filters do not apply to them
+  const weekly = view === 'week' || view === 'review' || view === 'inbox' || view === 'controls';
   const canSeeTeam = can('crm.manage.any') || can('report.view');
 
   useEffect(() => {
@@ -398,6 +400,7 @@ export default function Pipeline() {
           ['week', 'This week'],
           ['review', 'Weekly review'],
           ['inbox', pending ? `Correspondence (${pending})` : 'Correspondence'],
+          ['controls', 'Controls'],
         ].map(([key, label]) => (
           <button
             key={key}
@@ -441,6 +444,7 @@ export default function Pipeline() {
         </div>
       )}
       {view === 'inbox' && <Correspondence onCount={setPending} />}
+      {view === 'controls' && <CrmControls />}
 
       {view !== 'board' && view !== 'dashboard' && !weekly && (
         <CrmNudges departmentId={departmentFilter} />

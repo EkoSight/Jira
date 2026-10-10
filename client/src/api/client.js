@@ -257,6 +257,21 @@ export const api = {
   setMailboxSync: (data) => request('PUT', '/crm/mailbox-sync', data),
   runMailboxSync: () => request('POST', '/crm/mailbox-sync/run'),
 
+  // reporting and controls: data quality, who owes what, the investor summary,
+  // the audit trail, and each person's reminders
+  dataQuality: (params) => request('GET', `/crm/data-quality${qs(params)}`),
+  dismissDuplicate: (accountIds, reason) =>
+    request('POST', '/crm/data-quality/duplicates/dismiss', { account_ids: accountIds, reason }),
+  pipelineWorkload: (params) => request('GET', `/crm/workload${qs(params)}`),
+  escalateDeal: (id, data) => request('POST', `/opportunities/${id}/escalate`, data),
+  investorSummary: (params) => request('GET', `/crm/investor-summary${qs(params)}`),
+  investorSummaryCsvUrl: (params) => `${BASE}/crm/investor-summary.csv${qs(params)}`,
+  investorSummaryPrinted: (data) => request('POST', '/crm/investor-summary/printed', data),
+  auditLog: (params) => request('GET', `/crm/audit${qs(params)}`),
+  auditCsvUrl: (params) => `${BASE}/crm/audit.csv${qs(params)}`,
+  myReminders: () => request('GET', '/crm/reminders/mine'),
+  setMyReminders: (data) => request('PUT', '/crm/reminders/mine', data),
+
   // meetings and demos — scheduled is not completed, and the API keeps them apart
   meetings: (params) => request('GET', `/meetings${qs(params)}`),
   meeting: (id) => request('GET', `/meetings/${id}`),

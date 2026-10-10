@@ -367,6 +367,38 @@ said they would do, recorded with the activity.
 
 ---
 
+## B2B pipeline — reporting and controls
+
+The rules are in `docs/PIPELINE_PROGRESS.md` (phase 3). Every route here needs
+`crm.view` and the B2B module switched on.
+
+| Method | Route | Permission | Notes |
+|---|---|---|---|
+| GET | `/crm/data-quality?mine=&owner_id=&department_id=&task_days=` | signed in | Every check with its count and items (`entity_type`, `entity_id`, `account_id`, `opportunity_id`, `title`, `detail`, `owner_name`) and `summary.clean_percent` |
+| POST | `/crm/data-quality/duplicates/dismiss` | `crm.manage.any` | `{ account_ids: [a, b], reason }` — kept apart from then on; audited. Nothing is merged |
+| GET | `/crm/workload?department_id=` | signed in | Per person: `due {overdue, today, this_week, later, undated}`, `blocked`, `away_today`, `leave_ahead`, `capacity`, `moved_forward_this_week`; and `escalations` |
+| POST | `/opportunities/:id/escalate` | `crm.activity.log` + works on the deal, or `crm.manage.any` | `{ reason, to_user_id? }` — to the deal's escalation point unless someone is named; once a day per person; on the history |
+| GET | `/crm/investor-summary?from=&to=&anonymise=true` | `crm.manage.any` or `report.view` | Verified figures, open pipeline by supported stage (proposed and estimate apart), customers, exclusions, definitions. No contact details or staff names |
+| GET | `/crm/investor-summary.csv` | as above | The same as rows; the download is recorded on the audit trail |
+| POST | `/crm/investor-summary/printed` | as above | `{ from, to, anonymise }` — records a print on the audit trail |
+| GET | `/crm/audit?group=&actor_id=&account_id=&opportunity_id=&from=&to=&search=&limit=&offset=` | `crm.manage.any` or `report.view` | `group`: `stage`, `status`, `owner`, `value`, `close_date`, `next_action`, `escalation`, `other`. Entries carry `no_reason`, `without_evidence`, `moved_back` |
+| GET | `/crm/audit.csv` | as above | Up to 1000 rows |
+| GET / PUT | `/crm/reminders/mine` | signed in | `{ digest_time: "HH:MM", digest_days: [1..7], paused_until?, pause_reason?, cover_while_away? }` — a pause is at most 30 days and needs a reason; GET also returns the defaults and recent reminders |
+
+**Archiving** — `DELETE /opportunities/:id` and `DELETE /accounts/:id` take an
+optional `reason` (body or `?reason=`); both are recorded.
+
+**Workload status** (`/reports/workload`, `/reports/dashboard`) can now be
+`unknown`: open work not all estimated, with nothing measured showing the person
+busy. `load_basis` can be `hours_partial` (only the estimated part counted, as a
+floor); rows carry `unestimated_tasks`.
+
+**History tables are append-only:** `opportunity_history`,
+`crm_ownership_history`, `crm_audit_events` and `pipeline_snapshots` refuse
+`UPDATE` and `DELETE`.
+
+---
+
 ## Google Chat
 
 | Method | Route | Permission |

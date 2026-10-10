@@ -631,7 +631,7 @@ test('the dashboard reports overdue, critical and unassigned counts', async (t) 
 
   const memberRow = dashboard.body.workload.find((w) => w.id === ids.member);
   assert.ok(memberRow.open_tasks > 0);
-  assert.ok(['idle', 'available', 'busy', 'overloaded', 'stalled'].includes(memberRow.status));
+  assert.ok(['idle', 'available', 'unknown', 'busy', 'overloaded', 'stalled'].includes(memberRow.status));
 });
 
 test('workload reports the basis it measured load from, so the meter caption matches', async (t) => {

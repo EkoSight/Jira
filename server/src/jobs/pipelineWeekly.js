@@ -1,7 +1,7 @@
 import { query } from '../db/pool.js';
 import { hasPermission } from '../lib/permissions.js';
 import { getSettings } from '../services/settings.js';
-import { dateIn } from '../services/availability.js';
+import { dateIn, statusOn } from '../services/availability.js';
 import { previousWeek, storeWeek, weekOf } from '../services/weekly.js';
 import { runMailboxSync } from '../services/mailboxSync.js';
 
@@ -90,7 +90,11 @@ export async function runPipelineWeekly({ now = new Date() } = {}) {
                            WHERE r.user_id = u.id AND r.week_start = $1 AND r.status = 'SUBMITTED')`,
       [week.start],
     );
+    // nobody is chased while they are on leave
+    const away = await statusOn(today);
     for (const owner of owners) {
+      const absence = away.get(owner.id);
+      if (absence && absence.status !== 'HALF_DAY') continue;
       const sent = await notifyOnce({
         key: `weekly_review:${week.start}:${owner.id}`,
         userId: owner.id,

@@ -575,3 +575,29 @@ export function effortWords(counts = {}) {
     })
     .join(', ');
 }
+
+/**
+ * A reporting period in India's financial year (April to March; quarters start
+ * in April, July, October and January): 'year' and 'quarter' run to today,
+ * 'last_quarter' and 'last_year' are whole.
+ */
+export function financialPeriod(preset, todayDate = todayInIndia()) {
+  const [y, m] = todayDate.split('-').map(Number);
+  const pad = (n) => String(n).padStart(2, '0');
+  const lastDay = (year, month) => new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const fyStart = m >= 4 ? y : y - 1;
+  const quarterMonth = m >= 10 ? 10 : m >= 7 ? 7 : m >= 4 ? 4 : 1;
+  switch (preset) {
+    case 'quarter':
+      return { from: `${y}-${pad(quarterMonth)}-01`, to: todayDate };
+    case 'last_quarter': {
+      const month = quarterMonth === 1 ? 10 : quarterMonth - 3;
+      const year = quarterMonth === 1 ? y - 1 : y;
+      return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month + 2)}-${pad(lastDay(year, month + 2))}` };
+    }
+    case 'last_year':
+      return { from: `${fyStart - 1}-04-01`, to: `${fyStart}-03-31` };
+    default:
+      return { from: `${fyStart}-04-01`, to: todayDate };
+  }
+}

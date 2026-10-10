@@ -26,6 +26,8 @@ export const WORKLOAD_STATUS = {
   busy: { label: 'Busy', tone: 'warning', note: 'Near capacity' },
   overloaded: { label: 'Overloaded', tone: 'critical', note: 'Over capacity' },
   stalled: { label: 'Stalled', tone: 'serious', note: 'No recent movement' },
+  // open work nobody has sized is not spare time
+  unknown: { label: 'Capacity not known', tone: 'neutral', note: 'Some open work has no estimate' },
 };
 
 /**
@@ -37,14 +39,20 @@ export function loadSummary(load) {
   if (!load) return '';
   if (!load.open_tasks) return 'No open work';
 
+  const unsized = Number(load.unestimated_tasks) || 0;
+  const unsizedNote = unsized ? ` · ${unsized} without an estimate` : '';
   if (load.load_basis === 'hours') {
     // committed (planned) hours against weekly capacity
     return `${load.committed_hours}h planned of ${load.capacity_hours}h`;
   }
+  if (load.load_basis === 'hours_partial') {
+    // the sized part only: a floor, never the whole load
+    return `at least ${load.committed_hours}h of ${load.capacity_hours}h${unsizedNote}`;
+  }
 
   const max = Number(load.max_concurrent_tasks) || 0;
   const plural = load.open_tasks === 1 ? '' : 's';
-  return max > 0 ? `${load.open_tasks} of ${max} tasks` : `${load.open_tasks} open task${plural}`;
+  return `${max > 0 ? `${load.open_tasks} of ${max} tasks` : `${load.open_tasks} open task${plural}`}${unsizedNote}`;
 }
 
 const dayMs = 86400000;

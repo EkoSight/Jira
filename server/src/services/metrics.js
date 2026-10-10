@@ -141,6 +141,9 @@ export async function workload(scope = {}) {
               WHERE s.stage = 'done' AND t.completed_at >= now() - interval '30 days'
             )::int                                                                           AS completed_30d,
             COALESCE(SUM(t.estimate_hours) FILTER (WHERE s.stage NOT IN ('done','cancelled')), 0) AS committed_hours,
+            COUNT(t.id) FILTER (
+              WHERE s.stage NOT IN ('done','cancelled') AND COALESCE(t.estimate_hours, 0) <= 0
+            )::int                                                                           AS unestimated_tasks,
             MAX(t.updated_at)                                                                AS last_task_update,
             -- NULL (rather than a huge number) when the member has never done anything yet
             CASE
@@ -173,18 +176,27 @@ export async function workload(scope = {}) {
       ? Math.round((r.open_tasks / r.max_concurrent_tasks) * 100)
       : null;
 
-    // Load is measured in hours only when the open work actually has estimates;
-    // otherwise it is measured in task count. Whichever drives the status is also
-    // what the client shows, so the meter and its caption never disagree (no more
-    // "0h of 40h" sitting next to "Busy").
-    const useHours = committed > 0 && hoursLoad !== null;
-    const loadPercent = useHours ? hoursLoad : countLoad;
-    const loadBasis = useHours ? 'hours' : 'tasks';
+    // Load is measured in hours only when every open task has an estimate;
+    // otherwise by task count, where a comfortable count is set. Whichever drives
+    // the status is also what the client shows, so the meter and its caption
+    // never disagree (no more "0h of 40h" sitting next to "Busy").
+    //
+    // A task with no estimate is not zero hours. When some open work has no
+    // estimate, what can be measured — hours on the sized part, or a count — is
+    // enough to say someone is busy, never enough to say they have room. With
+    // nothing measured at all, capacity is reported as not known, not as spare.
+    const unestimated = Number(r.unestimated_tasks) || 0;
+    const fullySized = r.open_tasks > 0 && unestimated === 0;
+    const useHours = fullySized && committed > 0 && hoursLoad !== null;
+    const partialHours = !useHours && countLoad === null && committed > 0 && hoursLoad !== null;
+    const loadPercent = useHours || partialHours ? hoursLoad : countLoad;
+    const loadBasis = useHours ? 'hours' : partialHours ? 'hours_partial' : 'tasks';
 
     let status = 'available';
     if (r.open_tasks === 0) status = 'idle';
     else if (loadPercent !== null && loadPercent >= overloadedPct) status = 'overloaded';
     else if (loadPercent !== null && loadPercent >= 70) status = 'busy';
+    else if (loadPercent === null || !fullySized) status = 'unknown';
     if (r.open_tasks > 0 && r.days_since_activity !== null && r.days_since_activity >= idleDays) {
       status = 'stalled';
     }
@@ -192,6 +204,7 @@ export async function workload(scope = {}) {
     return {
       ...r,
       committed_hours: committed,
+      unestimated_tasks: unestimated,
       load_percent: loadPercent,
       load_basis: loadBasis,
       capacity_hours: capacityHours,

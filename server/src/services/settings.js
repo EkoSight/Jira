@@ -148,6 +148,20 @@ export const DEFAULT_SETTINGS = {
       enabled: false,
       lookbackDays: 3,
     },
+    // each person's pipeline digest: when it arrives, unless they choose otherwise
+    reminders: {
+      digestTime: '09:30',
+      // null: the organization's working days
+      digestDays: null,
+      // an unchanged digest is not sent again for this many days
+      repeatSameDays: 3,
+      // a reminder pause can be at most this long
+      maxPauseDays: 30,
+    },
+    // when something owed is late enough to take to the deal's escalation point
+    escalation: {
+      afterDays: 3,
+    },
   },
   googleChat: {
     // off until an admin has sent a test message and switched it on

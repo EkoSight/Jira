@@ -83,6 +83,31 @@ export async function dealEvidence(opportunityId, runner = { query }) {
   };
 }
 
+/** The same evidence for many deals at once: a map of deal id to its counts. */
+export async function evidenceFor(opportunityIds, runner = { query }) {
+  const map = new Map();
+  if (!opportunityIds.length) return map;
+  const { rows } = await runner.query(
+    `SELECT o.id,
+       (SELECT COUNT(*)::int FROM opportunity_proposals p
+         WHERE p.opportunity_id = o.id AND p.status <> 'WITHDRAWN') AS proposals,
+       (SELECT COUNT(*)::int FROM opportunity_orders r
+         WHERE r.opportunity_id = o.id AND r.status = 'ACCEPTED') AS accepted_orders,
+       (SELECT COUNT(*)::int FROM crm_meetings m
+         WHERE m.status = 'COMPLETED'
+           AND (m.opportunity_id = o.id
+                OR (m.opportunity_id IS NULL AND m.account_id = o.account_id))) AS completed_meetings,
+       (SELECT COUNT(*)::int FROM opportunity_contacts oc WHERE oc.opportunity_id = o.id) AS contacts,
+       (SELECT COUNT(*)::int FROM opportunity_requirements q
+         WHERE q.opportunity_id = o.id AND q.importance = 'MUST_HAVE'
+           AND q.status NOT IN ('MET', 'WAIVED')) AS unmet_must_haves
+       FROM opportunities o WHERE o.id = ANY($1::int[])`,
+    [opportunityIds],
+  );
+  for (const row of rows) map.set(row.id, row);
+  return map;
+}
+
 /** Whether one rule holds for a deal, given its evidence. */
 export function ruleHolds(rule, opportunity, evidence) {
   switch (rule) {

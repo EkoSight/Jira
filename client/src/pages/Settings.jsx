@@ -7,6 +7,7 @@ import { PRIORITIES } from '../lib/format.js';
 import AttendanceSettings from '../components/AttendanceSettings.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
+import ReminderSettings from '../components/ReminderSettings.jsx';
 
 const STAGES = [
   ['backlog', 'Backlog — captured, not started'],
@@ -673,7 +674,7 @@ const TABS = [
 ];
 
 function AccountTab() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
   const toast = useToast();
   const [current, setCurrent] = useState('');
   const [next, setNext] = useState('');
@@ -708,6 +709,8 @@ function AccountTab() {
       </div>
 
       <ChatPreferencesCard />
+
+      {can('crm.view') && <ReminderSettings />}
 
       <div className="card">
         <div className="card-head"><h2>Change password</h2></div>

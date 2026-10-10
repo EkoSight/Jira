@@ -6,7 +6,8 @@ pipeline still showed outdated stages and next steps.
 
 This report covers what was built, why each rule is shaped the way it is, what was
 tested, and what was not. It is written in phases: **phase 1, items 1–7 ("Must
-build first")**, then **phase 2, items 8–12 ("Weekly visibility")** further down.
+build first")**, then **phase 2, items 8–12 ("Weekly visibility")** and **phase 3,
+items 13–16 ("Reporting and controls")** further down.
 
 ---
 
@@ -381,4 +382,192 @@ Four kinds of fact, never added together:
 - The Monday and Friday timings were tested with a simulated clock, not observed
   on a running server across a real week.
 - The weekly schedule times have no Settings screen yet.
-- Phase 3 (items 13–16) follows.
+
+---
+
+# Phase 3 — reporting and controls (items 13–16)
+
+All four live under **B2B Pipeline → Controls**; each person's reminder
+schedule is under **Settings → My account**.
+
+## What changed in the database
+
+`022_reporting_controls.sql`, additive; the migration safety suite passes.
+
+| Change | Existing data |
+|---|---|
+| `reminder_preferences` | New, empty: everyone starts on the organization's default. |
+| `crm_reminder_log` — one row per reminder sent, unique per person, kind and day | New, empty. |
+| `crm_duplicate_dismissals` — pairs of organizations confirmed as different | New, empty. Nothing is ever merged. |
+| `crm_audit_events` — archives, investor-summary exports, duplicates dismissed | New, empty. |
+| **Append-only guards** on `opportunity_history`, `crm_ownership_history`, `crm_audit_events` and `pipeline_snapshots` | Every existing row is kept exactly as it is; from now on none can be edited or removed. |
+
+The guards are database triggers: an `UPDATE` or `DELETE` on those tables is
+refused, by the application or by hand. Removing a deal outright would remove
+its history with it, so that is refused too — deals and organizations are
+archived, never deleted, and the application never deletes them. (Users are
+deactivated, never deleted, so nothing in the application touches these rows.)
+Anyone with direct database access who genuinely needs to change one of those
+rows has to disable the trigger explicitly first.
+
+## The rules, item by item
+
+### 13. Data quality
+
+**Controls → Data quality.** Each check lists the exact deals, organizations or
+tasks behind its count, says why it matters and how to fix it, and opens the
+record where it can be fixed. Nothing on this screen changes data.
+
+| Check | Flags |
+|---|---|
+| Deals nobody is accountable for | live or paused deals with no owner |
+| Organizations nobody leads | leads, or organizations with live deals, with no lead |
+| Live deals without a complete next action | missing what, who or when, or overdue |
+| Live deals with no value | no estimate, proposal or agreed amount, and not marked "not yet known" |
+| Deals far along with no expected close date | from the fourth stage on (the rule the deal card already used) |
+| Live deals past their expected close date | the date has gone and the deal is still open |
+| Live deals with nobody named at the organization | the organization has no active contact at all |
+| Stages the record does not support | e.g. in Proposal with no proposal, Won with no accepted order |
+| Status and stage disagree | live in a closed stage (or none); won or lost in an open stage |
+| Paused deals with no date to look again | on hold or nurture with no revisit date |
+| Organizations that may be the same | alike names (suffixes like "Pvt Ltd" ignored; short names must match exactly), the same website, a shared company email domain, or the same phone |
+| Finished deal tasks with no outcome or evidence | done with no outcome, or "achieved" with no evidence link (last 90 days by default) |
+
+- A score: the share of live deals with nothing missing.
+- **What I can fix** narrows it to deals someone owns or owes the next move on,
+  organizations they lead and tasks assigned to them.
+- **Duplicates are never merged.** A pipeline manager can mark two
+  organizations as different, with how they know; that pair is then kept apart,
+  and the decision is on the audit trail.
+
+### 14. Workload and escalation
+
+**Controls → Workload & escalations.**
+
+- **Per person:** next actions they owe, their deal tasks, meetings waiting for
+  an outcome, handovers waiting for them to confirm, customer commitments on
+  their deals, and the blockers they are responsible for — overdue, today, later
+  this week — plus blocked work, whether they are away (and their leave ahead),
+  their capacity, and how many of their deals moved forward this week.
+- **People are listed by name, never ranked by load**, and the screen says
+  counts are not a measure of performance — outcomes are on This week.
+- **Missing estimates are not spare capacity.** This also changes the existing
+  Team page and Dashboard: a person whose open work is not all estimated is
+  shown as **Capacity not known** (not "Has capacity") unless what can be
+  measured already shows them busy or overloaded. When some tasks are
+  estimated and no task-count comfort level is set, the hours shown are a floor
+  ("at least 4h of 40h · 5 without an estimate").
+- **Needs taking higher:** next actions and customer commitments 3+ days late
+  (setting `crm.escalation.afterDays`), blockers past their date, handovers not
+  confirmed, and work falling due while its owner is on leave — each with who it
+  escalates to (the deal's escalation point), or "no escalation point set".
+- **Escalate…** (on the list, or on any deal's People panel) tells the person
+  once a day at most, and records who escalated it, to whom and why on the
+  deal's history and timeline.
+- **Leave on next actions:** choosing a next-action owner who is away on the due
+  date says so, and offers the day they are back. It never blocks the save.
+
+### 15. Investor summary
+
+**Controls → Investor summary** (pipeline managers and people with reports
+access). Presets for this financial year (April–March), this or last quarter,
+last financial year, or custom dates; never future days.
+
+- **Verified in the period:** bookings (accepted orders, by date received; an
+  order with no amount is counted but not totalled), invoiced, collections (cash
+  that arrived), receivable as of the date (invoiced less collected, from records
+  only), wins backed by an accepted order, and stage moves made with their
+  evidence.
+- **Open pipeline as of the date,** by stage — only deals whose stage the record
+  supports. The latest proposal sent is shown as **Proposed**; our own figure on
+  deals with no proposal is shown apart as **Estimate — unverified**. Neither is
+  added to bookings.
+- **Left out, and counted:** moves made without evidence, "won" deals with no
+  order, deals at unsupported stages, unpriced orders, and hand-typed "collected"
+  figures with no payment behind them.
+- **Never included:** contact names, emails or phone numbers, internal notes,
+  next actions, or our staff's names. **Hide organization names** replaces them
+  with "Organization A, B…".
+- **Download CSV** or **Print or save as PDF** (only the summary is printed).
+  Each download or print is recorded on the audit trail with who, when, the
+  period and the headline figures.
+
+### 16. Audit history and reminder controls
+
+**Controls → Audit history** (pipeline managers and people with reports access):
+every change to a deal's stage, status, owner, next-action owner, escalation
+point, values, close date and next action — and organization leads, archives,
+duplicates dismissed and summary exports — with who, when, from what, to what
+and why. Filters by kind of change, person, dates and text; CSV download.
+
+- A change that replaced a value without a reason (allowed before reasons were
+  required) is marked **no reason given**; a stage move made without its
+  evidence is marked **without evidence**.
+- **Archiving** a deal or an organization is now recorded, with an optional
+  reason.
+- **History only grows** (see the append-only guards above).
+
+**Reminders** (Settings → My account → Pipeline reminders):
+
+- **Per-person schedule:** the time (India) and days the pipeline digest
+  arrives. Default 09:30 on the organization's working days (setting
+  `crm.reminders`). Previously the digest went out whenever the scanner first ran
+  after its 24-hour cooldown.
+- **Leave-aware:** nobody gets a digest on a day they are on leave (a half day
+  does not count), and the Friday weekly-review reminder skips people on leave.
+  With "while I am on leave…" ticked (the default), next actions owed by the
+  person that fall due before they are back go to each deal's escalation point
+  as a **covering for** digest.
+- **No duplicates:** at most one digest a day each (enforced by the database, so
+  two servers cannot both send), the older 24-hour minimum still applies, and a
+  digest identical to the last one is not repeated for 3 days
+  (`crm.reminders.repeatSameDays`). Across the whole application, the same
+  notice to the same person within 10 minutes is now sent once.
+- **Pause:** a dated pause of at most 30 days, with a reason. Leave stops
+  reminders by itself.
+- An administrator's **run the scan now** ignores each person's time of day,
+  but still respects leave and pauses.
+
+## Tested (phase 3)
+
+- **Server: 388 passing, 0 skipped**, including 16 new tests in
+  `server/tests/controls.test.js`: history rows refused on update and delete
+  (and deleting a deal outright refused); name, website and phone matching;
+  every data-quality check on deliberately incomplete records, including
+  clearing when fixed, "what I can fix", duplicates never merged and dismissals
+  audited; capacity "unknown" for unestimated work in all three shapes;
+  the workload view's items, blocked work, escalations and name ordering;
+  escalation permissions, once-a-day, notification and history; the investor
+  summary's figures, exclusions, estimates, anonymising, absence of contact
+  details and staff names, future dates refused, permissions, CSV, and the
+  export recorded; the audit trail's groups, reasons, "no reason given",
+  archives, CSV and permissions; the reminder schedule (time, day, pause,
+  leave, manual runs), once a day, "nothing new" and "something new", cover
+  for someone on leave (once), the weekly reminder skipping leave, and the
+  10-minute duplicate guard. One existing test's list of allowed workload
+  statuses gained "unknown".
+- **Client: 69 passing**, including the financial-year periods and the
+  capacity wording.
+- **Browser** (Chromium via Playwright; 1400 px and 390 px; light and dark) on a
+  fresh database filled through the API: the data-quality checks with their
+  items (a legacy Proposal deal, a likely FarMart duplicate, a task with no
+  outcome); the workload view with an escalation going to the deal's escalation
+  point and Saumya shown away; escalating FarMart from the deal (history updated);
+  the away-on-due-date note offering the day she is back; the investor summary,
+  with names hidden, the print view showing only the document, and the CSV
+  download; the audit trail with a "no reason given" entry; saving a reminder
+  schedule; a member seeing only Data quality and Workload; no sideways
+  scrolling on a phone on any of the four views.
+
+## Not done, or not claimed (phase 3)
+
+- **Not deployed.**
+- **No merging of organizations.** Duplicates are found and can be marked
+  different; moving deals and contacts from one record to another stays a
+  deliberate, manual act.
+- The reminder schedule was tested with a simulated clock; it has not been
+  observed sending on a running server across real days.
+- The append-only guards were tested on the test database; on the live
+  database they apply from the moment migration 022 runs.
+- The investor summary has not been reviewed by anyone outside the team; it
+  states its definitions and exclusions so it can be.

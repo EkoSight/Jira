@@ -23,6 +23,7 @@ import {
 } from '../services/commercial.js';
 import { WAITING_ON, clearWaiting, problemWithRevisit, setWaiting } from '../services/dealPauses.js';
 import { COMMITMENT_OUTCOMES, addCommitment, listCommitments, resolveCommitment } from '../services/commitments.js';
+import { escalateDeal, mustBeAbleToEscalate } from '../services/pipelineWorkload.js';
 
 const router = Router();
 
@@ -1058,11 +1059,43 @@ router.delete(
     if (!mayReassign(req.currentUser, existing)) {
       throw forbidden('Only the deal owner, the relationship owner or a pipeline manager can archive it');
     }
+    // why, if given (the body or ?reason=); the archive is on the deal's history either way
+    const reason = String(req.body?.reason ?? req.query.reason ?? '').trim().slice(0, 2000) || null;
     await withTransaction(async (client) => {
       await client.query('UPDATE opportunities SET is_archived = TRUE, updated_at = now() WHERE id = $1', [id]);
+      await recordHistory(client, {
+        opportunityId: id, field: 'archived', from: existing.status, to: 'archived',
+        reason, actorId: req.currentUser.id,
+      });
       await refreshPrimaryOpportunity(client, existing.account_id);
     });
     res.json({ ok: true, archived: true });
+  }),
+);
+
+// ---------------------------------------------------------------- escalation
+
+/**
+ * Takes a deal to its escalation point, or someone named: they are told (once a
+ * day at most), and the history records who escalated it, to whom and why.
+ */
+router.post(
+  '/:id/escalate',
+  requirePermission('crm.activity.log'),
+  asyncHandler(async (req, res) => {
+    const data = z.object({
+      reason: z.string().max(2000),
+      to_user_id: z.number().int().positive().nullable().optional(),
+    }).parse(req.body);
+    const id = Number(req.params.id);
+    const existing = await loadOpportunity(id);
+    if (!existing) throw notFound('Opportunity not found');
+    mustBeAbleToEscalate(req.currentUser, await canWorkOnOpportunity(req.currentUser, existing));
+    if (existing.is_archived) throw badRequest('This deal is archived');
+    const result = await withTransaction((client) => escalateDeal(client, {
+      opportunity: existing, toUserId: data.to_user_id ?? null, reason: data.reason, actor: req.currentUser,
+    }));
+    res.json({ ...result, opportunity: await getOpportunity(id) });
   }),
 );
 

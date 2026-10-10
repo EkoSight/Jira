@@ -23,7 +23,7 @@ import { addCommitment } from './commitments.js';
 import { setNextAction } from './opportunities.js';
 
 // a domain anyone can have proves nothing about which organization wrote
-const WEBMAIL = new Set([
+export const WEBMAIL = new Set([
   'gmail.com', 'googlemail.com', 'yahoo.com', 'yahoo.co.in', 'outlook.com', 'hotmail.com', 'live.com',
   'rediffmail.com', 'icloud.com', 'me.com', 'aol.com', 'protonmail.com', 'proton.me', 'zoho.com', 'ymail.com',
 ]);

@@ -1,5 +1,8 @@
+import { useEffect, useState } from 'react';
+import { api } from '../api/client.js';
 import { useRefData } from '../state/AppState.jsx';
-import { Avatar, Badge, Field } from './ui.jsx';
+import { Avatar, Badge, Field, Icon } from './ui.jsx';
+import { dayLabel, describeConflict } from '../lib/availability.js';
 import {
   CLOCKS, NEXT_ACTION_GAP_META, ORDER_KINDS, agoWords, clockTone, firstName, nextActionGaps,
   todayInIndia,
@@ -61,6 +64,35 @@ export function PersonSelect({ value, onChange, placeholder = 'Pick someone', al
   );
 }
 
+/**
+ * Said, never blocking: whoever owes it is away on the day it is due, and the
+ * day they are back.
+ */
+function AwayOnDue({ ownerId, due, onMove }) {
+  const [conflict, setConflict] = useState(null);
+  useEffect(() => {
+    if (!ownerId || !due) { setConflict(null); return undefined; }
+    let cancelled = false;
+    api.checkAvailability(ownerId, `${due}T12:00:00+05:30`)
+      .then((r) => !cancelled && setConflict(r.conflict))
+      .catch(() => !cancelled && setConflict(null));
+    return () => { cancelled = true; };
+  }, [ownerId, due]);
+  const message = describeConflict(conflict);
+  if (!message || !conflict?.on_due_date) return null;
+  return (
+    <div className="away-note small" role="status">
+      <Icon name="clock" size={12} />
+      <span className="grow">{message.headline}</span>
+      {conflict.suggested_due_date && (
+        <button type="button" className="btn-link small" onClick={() => onMove(conflict.suggested_due_date)}>
+          Make it {dayLabel(conflict.suggested_due_date)}, when they are back
+        </button>
+      )}
+    </div>
+  );
+}
+
 /** What happens next, who owes it, and by when — always all three. */
 export function NextActionFields({ value, onChange, error, label = 'What happens next' }) {
   const set = (patch) => onChange({ ...value, ...patch });
@@ -80,6 +112,8 @@ export function NextActionFields({ value, onChange, error, label = 'What happens
             onChange={(e) => set({ next_step_due: e.target.value })} />
         </Field>
       </div>
+      <AwayOnDue ownerId={value.next_step_owner_id} due={value.next_step_due}
+        onMove={(date) => set({ next_step_due: date })} />
     </div>
   );
 }

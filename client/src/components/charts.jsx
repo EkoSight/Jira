@@ -181,7 +181,7 @@ export function LoadMeter({ percent, status }) {
     status === 'overloaded' ? STATUS_COLOR.critical
     : status === 'busy' ? STATUS_COLOR.warning
     : status === 'stalled' ? STATUS_COLOR.serious
-    : status === 'idle' ? STATUS_COLOR.neutral
+    : status === 'idle' || status === 'unknown' ? STATUS_COLOR.neutral
     : STATUS_COLOR.good;
 
   return (

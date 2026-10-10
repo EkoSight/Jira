@@ -29,6 +29,7 @@ import {
 import { applyStageMove, wonStage } from '../services/dealMoves.js';
 import { RULE_KEYS } from '../services/dealRules.js';
 import { addCommitment, listCommitments } from '../services/commitments.js';
+import { recordAuditEvent } from '../services/audit.js';
 import { describeRules, followUpRules, leadFigures } from '../services/leadFigures.js';
 import { ensureFolders } from '../services/resources.js';
 import { crmDashboard, managerSummaries, mapView, ownershipTree } from '../services/crmDashboard.js';
@@ -150,7 +151,8 @@ router.post(
     if (!hasPermission(req.currentUser, 'settings.manage')) {
       throw forbidden('Only an administrator can run the scan');
     }
-    res.json(await runAccountScan({ force: req.body?.force === true }));
+    // run now: each person's time of day is set aside, their leave and pauses are not
+    res.json(await runAccountScan({ force: req.body?.force === true, manual: true }));
   }),
 );
 
@@ -830,7 +832,15 @@ router.delete(
     if (!rows[0]) throw notFound('Account not found');
     if (!canEditAccount(req.currentUser, rows[0])) throw forbidden('You cannot archive this account');
 
-    await query('UPDATE accounts SET is_archived = TRUE, updated_at = now() WHERE id = $1', [req.params.id]);
+    const reason = String(req.body?.reason ?? req.query.reason ?? '').trim().slice(0, 2000) || null;
+    await withTransaction(async (client) => {
+      await client.query('UPDATE accounts SET is_archived = TRUE, updated_at = now() WHERE id = $1', [req.params.id]);
+      // the audit trail keeps who archived it, and why if they said
+      await recordAuditEvent(client, {
+        action: 'account_archived', entityType: 'ACCOUNT', entityId: rows[0].id,
+        summary: `${rows[0].name} archived`, detail: { type: rows[0].type }, reason, actorId: req.currentUser.id,
+      });
+    });
     res.json({ ok: true, archived: true });
   }),
 );
