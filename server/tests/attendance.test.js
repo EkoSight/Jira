@@ -622,9 +622,11 @@ test('payroll: drafts say what is missing; a clean month moves to locked; change
   const blocked = await call('POST', `/payroll/${month}/people/${ids.payee}/submit`, { token: tokens.admin });
   assert.equal(blocked.status, 409);
 
-  // the admin settles the open decisions and accepts the policy
+  // the admin settles the open decisions and accepts the policy. This company
+  // has a reviewer count extra time before it offsets anything (the default
+  // counts it automatically; that is tested at the end)
   const policyId = (await call('GET', '/attendance/policy', { token: tokens.admin })).body.versions[0].id;
-  await call('PATCH', `/attendance/policy/${policyId}`, { token: tokens.admin, body: { config: { breaksConfirmed: true, payroll: { methodConfirmed: true } } } });
+  await call('PATCH', `/attendance/policy/${policyId}`, { token: tokens.admin, body: { config: { breaksConfirmed: true, extraRequiresReview: true, payroll: { methodConfirmed: true } } } });
   assert.equal((await call('POST', `/attendance/policy/${policyId}/accept`, { token: tokens.admin })).status, 200);
   const salary = await call('POST', `/payroll/salary/${ids.payee}`, { token: tokens.admin, body: { effective_from: '2025-01-01', attendance_sensitive: 30000, fixed_components: 2000 } });
   assert.equal(salary.status, 201, JSON.stringify(salary.body));
@@ -887,4 +889,75 @@ test('time before office hours is recorded, reviewed and counted; a review made 
   assert.equal(line[17], '1:00', 'after hours only');
   assert.deepEqual(header.slice(-2), ['Arrived early by (HH:MM)', 'Extra before hours (HH:MM)']);
   assert.deepEqual(line.slice(-2), ['0:20', '0:20']);
+});
+
+// ---------------------------------------------------------------- counted automatically
+
+test('extra time counts automatically: nothing waits for approval, and a reviewer can still say a day does not count', async (t) => {
+  if (skip(t)) return;
+  const first = firstOfPrevMonth();
+  const month = first.slice(0, 7);
+  const workdays = [];
+  for (let d = first; d <= lastOf(first); d = addDays(d, 1)) if (weekday(d) !== 0) workdays.push(d);
+  const [early, late, after, overnight] = workdays.slice(8, 12);
+  const insert = (date, from, to, toDate = date) => query(
+    `INSERT INTO attendance_sessions (user_id, work_date, status, check_in_at, check_out_at, check_in_source, check_out_source)
+     VALUES ($1, $2, 'COMPLETED', $3, $4, 'DEVICE_LOCATION', 'DEVICE_LOCATION')`,
+    [ids.lead, date, at(date, from), at(toDate, to)],
+  );
+  await insert(early, '08:30', '18:00'); // 30 minutes before office hours
+  await insert(late, '09:45', '18:00'); // 45 minutes late
+  await insert(after, '09:00', '19:00'); // an hour after
+  await insert(overnight, '09:00', '01:30', addDays(overnight, 1)); // 16½ hours: probably a forgotten check-out
+
+  // the company's choice: no approval needed
+  const defaults = await call('GET', '/attendance/policy', { token: tokens.admin });
+  assert.equal(defaults.body.defaults.extraRequiresReview, false, 'counted automatically unless a company chooses otherwise');
+  assert.ok(!defaults.body.proposed_keys.includes('extraRequiresReview'), 'confirmed by the company, not a proposal');
+  const version = await call('POST', '/attendance/policy', {
+    token: tokens.admin, body: { effective_from: first, config: { extraRequiresReview: false }, note: 'Extra time counts automatically' },
+  });
+  assert.equal(version.status, 201, JSON.stringify(version.body));
+
+  const ledger = await call('GET', `/attendance/people/${ids.lead}?month=${month}`, { token: tokens.admin });
+  const dayOf = (body, date) => body.days.find((d) => d.date === date);
+  assert.equal(dayOf(ledger.body, early).E_eligible, 30 * 60, 'before office hours, counted with no one approving it');
+  assert.equal(dayOf(ledger.body, after).E_eligible, 60 * 60, 'after office hours, the same');
+  for (const date of [early, after]) {
+    assert.equal(dayOf(ledger.body, date).E_pending, 0);
+    assert.equal(dayOf(ledger.body, date).extra_review, null, 'no approval was needed or recorded');
+  }
+  const long = dayOf(ledger.body, overnight);
+  assert.ok(long.flags.includes('LONG_SESSION'));
+  assert.equal(long.E_pending, 7.5 * 3600, 'an implausibly long day still waits for a person');
+  // the late morning is made up from the early start and the evening
+  assert.deepEqual(ledger.body.allocations.filter((a) => a.target_date === late), [
+    { source_date: early, target_date: late, seconds: 30 * 60 },
+    { source_date: after, target_date: late, seconds: 15 * 60 },
+  ]);
+
+  // so the approvals list holds only the long day
+  const queue = await call('GET', `/attendance/review-queue?month=${month}`, { token: tokens.admin });
+  assert.equal(queue.body.policy.extra_requires_review, false);
+  assert.equal(queue.body.policy.max_session_hours, 14);
+  const waiting = queue.body.items.filter((i) => i.user.id === ids.lead && i.kind === 'EXTRA_PENDING');
+  assert.deepEqual(waiting.map((i) => i.date), [overnight]);
+  assert.equal(waiting[0].long_session, true);
+
+  // a reviewer can still say a day's time does not count, with a reason
+  const refused = await call('POST', '/attendance/reviews/extra', {
+    token: tokens.admin, body: { user_id: ids.lead, work_date: after, status: 'REJECTED', reason: 'Stayed for a personal call' },
+  });
+  assert.equal(refused.status, 200, JSON.stringify(refused.body));
+  const counted = await call('POST', '/attendance/reviews/extra', {
+    token: tokens.admin, body: { user_id: ids.lead, work_date: overnight, status: 'ELIGIBLE', eligible_seconds: 2 * 3600 },
+  });
+  assert.equal(counted.status, 200, JSON.stringify(counted.body));
+  const again = await call('GET', `/attendance/people/${ids.lead}?month=${month}`, { token: tokens.admin });
+  assert.equal(dayOf(again.body, after).E_eligible, 0);
+  assert.equal(dayOf(again.body, after).E_rejected, 60 * 60);
+  assert.equal(dayOf(again.body, after).extra_review.reason, 'Stayed for a personal call');
+  assert.equal(dayOf(again.body, overnight).E_eligible, 2 * 3600);
+  assert.equal(dayOf(again.body, overnight).E_pending, 0);
+  assert.equal(again.body.totals.extra_pending, 0);
 });

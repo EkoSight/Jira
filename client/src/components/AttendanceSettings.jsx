@@ -118,6 +118,7 @@ function PolicySection() {
         <NumberField label="Paid leave days a month" min={0} max={10} step={0.5} {...field('leave.monthlyPaidDays')} />
         <NumberField label="Notice for planned leave (hours)" min={0} max={720} {...field('leave.noticeHours')} />
         <SelectField label="Time before office hours" {...field('creditBeforeStart')} boolean options={[[true, 'Counts as extra time'], [false, 'Recorded, not counted']]} />
+        <SelectField label="Extra time" {...field('extraRequiresReview')} boolean options={[[false, 'Counts automatically'], [true, 'Counts once a reviewer approves it']]} />
         <Field label="Working days">
           <div className="att-weekdays">
             {WEEKDAYS.map((name, i) => (
@@ -140,7 +141,6 @@ function PolicySection() {
           ['FORGIVE_FIRST', 'The first minutes of the window are always forgiven, even when later'],
           ['NONE', 'No grace credit at all'],
         ]} />
-        <SelectField label="Time outside office hours" {...field('extraRequiresReview')} boolean options={[[true, 'Offsets only once a reviewer counts it'], [false, 'Offsets automatically']]} />
         <SelectField label="Paid leave allowance" {...field('leave.allowanceMode')} options={[['POOLED', 'One pool for casual, sick and other'], ['SPLIT', 'Split equally between casual and sick']]} />
         <SelectField label="Allowance starts" {...field('leave.eligibility')} options={[['JOINED_BEFORE_MONTH', 'From the first full month after joining'], ['IMMEDIATE', 'From the joining month']]} />
       </PolicyGroup>

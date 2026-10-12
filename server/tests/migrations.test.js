@@ -449,7 +449,11 @@ test('time before office hours: a new policy version, never an edit, and earlier
   const policiesBefore = (await query('SELECT * FROM attendance_policies ORDER BY id')).rows;
   const reviewsBefore = (await query('SELECT * FROM extra_time_reviews ORDER BY work_date')).rows;
 
-  assert.ok(await runMigrations({ verbose: false }) >= 1);
+  // 023 on its own first, as a deploy between the two changes would apply it
+  const file023 = files.find((f) => f.startsWith('023'));
+  const file024 = files.find((f) => f.startsWith('024'));
+  await query(await fs.readFile(path.join(migrationsDir, file023), 'utf8'));
+  await query('INSERT INTO schema_migrations (name) VALUES ($1)', [file023]);
 
   // every earlier version is exactly as it was: nothing edited, nothing unaccepted
   const policiesAfter = (await query('SELECT * FROM attendance_policies ORDER BY id')).rows;
@@ -475,30 +479,54 @@ test('time before office hours: a new policy version, never an edit, and earlier
   assert.deepEqual(reviewsAfter.map(({ covers_before_start: _, ...rest }) => rest), reviewsBefore);
 
   // run again by hand, the change neither repeats nor reinterprets the reviews
-  await query(await fs.readFile(path.join(migrationsDir, files.find((f) => f.startsWith('023'))), 'utf8'));
+  await query(await fs.readFile(path.join(migrationsDir, file023), 'utf8'));
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM attendance_policies')).rows[0].n, policiesAfter.length);
   assert.deepEqual((await query('SELECT * FROM extra_time_reviews ORDER BY work_date')).rows, reviewsAfter);
+
+  // then 024: extra time counts automatically, as one more version on top
+  assert.ok(await runMigrations({ verbose: false }) >= 1);
+  const withAuto = (await query('SELECT * FROM attendance_policies ORDER BY id')).rows;
+  assert.deepEqual(withAuto.slice(0, policiesAfter.length), policiesAfter, 'every earlier version, 023’s included, untouched');
+  assert.equal(withAuto.length, policiesAfter.length + 1);
+  const auto = withAuto[withAuto.length - 1];
+  assert.equal(auto.effective_from, '2026-10-01');
+  assert.deepEqual(auto.config, { ...office, creditBeforeStart: true, extraRequiresReview: false }, 'both changes, nothing else');
+  assert.equal(auto.accepted_at, null, 'waiting for an administrator to accept it');
+  assert.match(auto.note, /counts automatically/i);
+  const { rows: trail024 } = await query(`SELECT * FROM attendance_audit WHERE entity_type = 'POLICY' AND source = 'MIGRATION 024'`);
+  assert.deepEqual(trail024.map((r) => r.entity_id), [String(auto.id)]);
+  assert.deepEqual((await query('SELECT * FROM extra_time_reviews ORDER BY work_date')).rows, reviewsAfter, 'every review stands as decided');
+
+  // neither repeats when run again
+  await query(await fs.readFile(path.join(migrationsDir, file023), 'utf8'));
+  await query(await fs.readFile(path.join(migrationsDir, file024), 'utf8'));
+  assert.equal((await query('SELECT COUNT(*)::int AS n FROM attendance_policies')).rows[0].n, withAuto.length);
   assert.equal(await runMigrations({ verbose: false }), 0);
 
-  // had October already been closed under a version without early time, the
-  // new one would start after it — a closed month never changes underneath
+  // had October already been closed under a version without either change,
+  // the new versions would start after it — a closed month never changes underneath
   const october = await version('2026-10-20', { ...office, creditBeforeStart: false }, true);
   await query(
     `INSERT INTO payroll_results (month, user_id, status, policy_id, snapshot) VALUES ('2026-10-01', $1, 'APPROVED', $2, '{}'::jsonb)`,
     [nikita, october],
   );
-  await query(await fs.readFile(path.join(migrationsDir, files.find((f) => f.startsWith('023'))), 'utf8'));
-  const { rows: latest } = await query('SELECT effective_from, config FROM attendance_policies ORDER BY id DESC LIMIT 1');
-  assert.equal(latest[0].effective_from, '2026-11-01');
+  await query(await fs.readFile(path.join(migrationsDir, file023), 'utf8'));
+  await query(await fs.readFile(path.join(migrationsDir, file024), 'utf8'));
+  const { rows: latest } = await query('SELECT effective_from, config FROM attendance_policies ORDER BY id DESC LIMIT 2');
+  assert.deepEqual(latest.map((v) => v.effective_from), ['2026-11-01', '2026-11-01']);
   assert.equal(latest[0].config.creditBeforeStart, true);
+  assert.equal(latest[0].config.extraRequiresReview, false);
 });
 
-test('time before office hours: a fresh install starts with it counted, and with no version to copy, none is added', async (t) => {
+test('a fresh install starts with early time counted and extra time automatic, and with no version to copy, none is added', async (t) => {
   if (skipIfUnavailable(t)) return;
   await query(`DROP SCHEMA IF EXISTS "${config.db.schema}" CASCADE`);
   assert.ok(await runMigrations({ verbose: false }) >= 1);
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM attendance_policies')).rows[0].n, 0);
   const { DEFAULT_POLICY, PROPOSED_KEYS } = await import('../src/services/attendancePolicy.js');
   assert.equal(DEFAULT_POLICY.creditBeforeStart, true);
-  assert.ok(!PROPOSED_KEYS.includes('creditBeforeStart'), 'confirmed by the company, not a proposal');
+  assert.equal(DEFAULT_POLICY.extraRequiresReview, false, 'extra time counts with no one approving it');
+  for (const key of ['creditBeforeStart', 'extraRequiresReview']) {
+    assert.ok(!PROPOSED_KEYS.includes(key), `${key} is confirmed by the company, not a proposal`);
+  }
 });

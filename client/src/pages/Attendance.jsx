@@ -9,8 +9,8 @@ import {
   MonthLedger, TodayAttendanceCard,
 } from '../components/Attendance.jsx';
 import {
-  BLOCKER_LABEL, clockIn, dayMeta, dayName, earlierDecisionWords, extraReviewFacts, hhmm, monthName, outsideHoursWords,
-  shiftMonth, todayIn, words,
+  BLOCKER_LABEL, clockIn, currentExtraWords, dayMeta, dayName, earlierDecisionWords, extraReviewFacts, hhmm, monthName,
+  outsideHoursWords, shiftMonth, todayIn, words,
 } from '../lib/attendance.js';
 
 /**
@@ -383,24 +383,27 @@ function PersonMonth({ user, initialMonth, onClose }) {
 
 function ExtraDialog({ user, day, onClose, onSaved }) {
   const toast = useToast();
-  const { before, after, earlyOnly, earlier } = extraReviewFacts(day);
+  const facts = extraReviewFacts(day);
+  const { before, after, earlier } = facts;
   const date = day.date || day.work_date;
+  // time that already counts (automatically, or by an earlier decision) is changed for the whole day
+  const changing = day.kind !== 'EXTRA_PENDING' && !(day.E_pending > 0);
+  const earlyOnly = facts.earlyOnly && !changing;
+  const recorded = outsideHoursWords(before, after) || `${words(after)} after office hours`;
+  let summary = `Recorded: ${recorded}.`;
+  if (changing) summary = `Recorded: ${recorded}. ${currentExtraWords(day)} Your decision replaces that for the whole day.`;
+  else if (earlyOnly) {
+    summary = `${words(before)} before office hours is waiting for a decision. The ${words(after)} after office hours was already ${earlierDecisionWords(earlier, after)} — that stays as it is.`;
+  }
   return (
     <DecisionDialog
       title={`Extra time · ${user.full_name} · ${dayName(date)}`}
-      summary={(
-        <p className="small">
-          {earlyOnly
-            ? `${words(before)} before office hours is waiting for a decision. The ${words(after)} after office hours was already ${earlierDecisionWords(earlier, after)} — that stays as it is.`
-            : `Recorded: ${outsideHoursWords(before, after) || `${words(after)} after office hours`}.`}
-          {' '}Eligible time can offset a shortfall elsewhere in the same month; it is never paid as overtime.
-        </p>
-      )}
+      summary={<p className="small">{summary} Counted time can offset a shortfall elsewhere in the same month; it is never paid as overtime.</p>}
       options={earlyOnly ? [
         { value: 'ELIGIBLE', label: 'Count the early time', hint: 'may offset a shortfall' },
         { value: 'REJECTED', label: 'Do not count the early time', needsNote: true, danger: true },
       ] : [
-        { value: 'ELIGIBLE', label: 'Count it', hint: 'may offset a shortfall' },
+        { value: 'ELIGIBLE', label: changing ? 'Count all of it' : 'Count it', hint: 'may offset a shortfall' },
         { value: 'REJECTED', label: 'Do not count it', needsNote: true, danger: true },
       ]}
       onClose={onClose}
@@ -422,6 +425,7 @@ function ApprovalsTab() {
   const [leave, setLeave] = useState(null);
   const [corrections, setCorrections] = useState(null);
   const [queue, setQueue] = useState(null);
+  const [queuePolicy, setQueuePolicy] = useState(null);
   const [month, setMonth] = useState(todayIn().slice(0, 7));
   const [deciding, setDeciding] = useState(null);
   const [extraFor, setExtraFor] = useState(null);
@@ -430,11 +434,16 @@ function ApprovalsTab() {
   const load = useCallback(() => {
     if (can('leave.approve')) api.teamLeave({ status: 'pending' }).then((d) => setLeave(d.requests)).catch(toast.error);
     if (can('attendance.approve')) api.corrections({ scope: 'team', status: 'PENDING' }).then((d) => setCorrections(d.corrections)).catch(toast.error);
-    if (can('attendance.approve') || can('attendance.extra.review')) api.reviewQueue(month).then((d) => setQueue(d.items)).catch(toast.error);
+    if (can('attendance.approve') || can('attendance.extra.review')) {
+      api.reviewQueue(month).then((d) => { setQueue(d.items); setQueuePolicy(d.policy || null); }).catch(toast.error);
+    }
   }, [can, toast, month]);
   useEffect(load, [load]);
 
   const extras = (queue || []).filter((i) => i.kind === 'EXTRA_PENDING');
+  // with extra time counted automatically, only an unusually long session waits here
+  const automatic = queuePolicy?.extra_requires_review === false;
+  const bulkable = extras.filter((i) => !i.long_session);
   const unrecorded = (queue || []).filter((i) => i.kind === 'UNRECORDED');
   const missing = (queue || []).filter((i) => i.kind === 'MISSING_CHECKOUT');
 
@@ -464,11 +473,13 @@ function ApprovalsTab() {
                 <>
                   <QueueGroup
                     title="Extra time outside office hours"
-                    note="Captured automatically, before office hours and after them; it only offsets a shortfall once you count it."
+                    note={automatic
+                      ? `Counted automatically, before and after office hours — nothing to approve. Only a session longer than ${queuePolicy.max_session_hours} hours waits here, in case a check-out was forgotten. To stop a day’s time counting, open the person’s month under Team.`
+                      : 'Captured automatically, before office hours and after them; it only offsets a shortfall once you count it.'}
                     items={extras}
                     render={(i) => <ExtraQueueLine item={i} />}
                     action={can('attendance.extra.review') ? (i) => <button type="button" className="btn btn-sm" onClick={() => setExtraFor(i)}>Review</button> : null}
-                    bulk={can('attendance.extra.review') && extras.length > 1 && (
+                    bulk={can('attendance.extra.review') && bulkable.length > 1 && (
                       <button
                         type="button"
                         className="btn btn-sm"
@@ -476,7 +487,7 @@ function ApprovalsTab() {
                           try {
                             // a day whose time after hours was already decided gets only its early part counted
                             const res = await api.reviewExtra({
-                              items: extras.filter((i) => !i.long_session).map((i) => ({
+                              items: bulkable.map((i) => ({
                                 user_id: i.user.id, work_date: i.date, status: 'ELIGIBLE',
                                 ...(i.pending_part === 'BEFORE_START' ? { part: 'BEFORE_START' } : {}),
                               })),

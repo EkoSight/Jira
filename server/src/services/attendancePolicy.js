@@ -35,9 +35,11 @@ export const DEFAULT_POLICY = {
   // CONFIRMED (12 October 2026): time before 09:00 counts as extra time, like
   // time after 18:00 — people who arrive before office hours have it counted
   creditBeforeStart: true,
-  // PROPOSED: time outside office hours is captured automatically but only
-  // offsets once a reviewer counts it
-  extraRequiresReview: true,
+  // CONFIRMED (12 October 2026): time outside office hours counts by itself —
+  // nobody has to approve it. A reviewer can still mark a day's time as not
+  // counted, and a session longer than maxSessionHours (usually a forgotten
+  // check-out) is still held for a person to look at.
+  extraRequiresReview: false,
   offsetWindow: 'SAME_MONTH',
 
   // NOT SUPPLIED: no break is assumed; drafts say so; finalising needs a decision
@@ -91,7 +93,7 @@ export const SETUP_ITEMS = [
 
 /** Which settings are proposed interpretations, shown as such in Settings. */
 export const PROPOSED_KEYS = [
-  'graceMode', 'extraRequiresReview', 'offsetWindow',
+  'graceMode', 'offsetWindow',
   'leave.allowanceMode', 'leave.eligibility', 'leave.noticeMode', 'payroll.method',
 ];
 

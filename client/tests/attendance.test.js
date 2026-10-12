@@ -10,7 +10,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DAY_META, FLAG_LABEL, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayExtraState, dayMeta, dayName, earlierDecisionWords,
+  DAY_META, FLAG_LABEL, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, currentExtraWords, dayExtraState, dayMeta, dayName,
+  earlierDecisionWords,
   earlyArrivalNote, extraBreakdown, extraReviewFacts, hhmm, mapsLink, money, newRequestId, outsideHoursWords, readLocation,
   shiftMonth, words,
 } from '../src/lib/attendance.js';
@@ -248,4 +249,33 @@ test('a reviewer sees what is being decided: the whole day, or only the early pa
 
   // an older list item without the split reads as time after hours
   assert.deepEqual(extraReviewFacts({ extra_seconds: 45 * 60 }), { before: 0, after: 45 * 60, earlyOnly: false, earlier: null });
+});
+
+test('a reviewer changing a day sees where its extra time stands now', () => {
+  const day = { E_recorded: 80 * 60, E_eligible: 80 * 60, E_rejected: 0, extra_review: null };
+  assert.equal(currentExtraWords(day), 'It counts automatically.');
+  const by = { status: 'ELIGIBLE', reviewer_name: 'Dhiraj Kumar' };
+  assert.equal(currentExtraWords({ ...day, extra_review: by }), 'All of it counts (decided by Dhiraj).');
+  assert.equal(currentExtraWords({ ...day, E_eligible: 0, E_rejected: 80 * 60, extra_review: { ...by, status: 'REJECTED' } }), 'None of it counts (decided by Dhiraj).');
+  assert.equal(currentExtraWords({ ...day, E_eligible: 20 * 60, E_rejected: 60 * 60, extra_review: by }), '0:20 of it counts and 1:00 does not (decided by Dhiraj).');
+  // once extra time counts automatically, the early note says so without waiting for a review
+  assert.equal(
+    earlyArrivalNote({ early_arrival: 15 * 60, counts_before_start: true }, { reviewRequired: false }),
+    'You started 15 min before office hours. It counts as extra time, the same as time after office hours.',
+  );
+});
+
+test('a day decided before early time counted is not credited to its reviewer alone', () => {
+  // the hour after office hours was refused; the 20 minutes before counted automatically
+  const day = {
+    E_recorded: 80 * 60, E_before: 20 * 60, E_after: 60 * 60, E_eligible: 20 * 60, E_pending: 0, E_rejected: 60 * 60, E_untracked: 0,
+    extra_review: { status: 'REJECTED', reviewer_name: 'Meera Rao', reason: 'Not agreed in advance', covers_before_start: false },
+  };
+  const state = dayExtraState(day, 20 * 60);
+  assert.equal(state.text, '0:20 of it counted · 0:20 used');
+  assert.equal(state.title, 'After office hours: not counted by Meera (Not agreed in advance). Before office hours: counted automatically.');
+  // a review that covered both sides is credited as before
+  const whole = dayExtraState({ ...day, extra_review: { ...day.extra_review, status: 'ELIGIBLE', covers_before_start: true }, E_eligible: 80 * 60, E_rejected: 0 });
+  assert.equal(whole.text, 'counted by Meera · not needed');
+  assert.equal(whole.title, undefined);
 });

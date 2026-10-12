@@ -709,6 +709,10 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
                     {s?.has_check_in_location && onLocation && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onLocation(s.id)}>Location</button>}
                     {onCorrect && d.classification !== 'UPCOMING' && d.R + d.duration > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCorrect(d)}>Correct</button>}
                     {onReviewExtra && d.E_pending > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onReviewExtra(d)}>Review extra</button>}
+                    {/* counted already (automatically or by a decision): a reviewer can still change it */}
+                    {onReviewExtra && !d.E_pending && d.E_recorded > 0 && !d.E_untracked && (
+                      <button type="button" className="btn btn-ghost btn-sm" onClick={() => onReviewExtra(d)}>Change extra</button>
+                    )}
                     {onReviewDay && d.blockers.includes('UNRECORDED') && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onReviewDay(d)}>Review day</button>}
                   </td>
                 </tr>

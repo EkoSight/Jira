@@ -210,7 +210,13 @@ day's cutoff (default 04:00) passes. No time is guessed — a correction supplie
 in before office hours began, flagged `EARLY_ARRIVAL`) whatever the policy says.
 Extra time `E_recorded` is `E_after` (after office hours) plus `E_before` (the early
 arrival, only where the day's policy has `creditBeforeStart`; the day says so in
-`counts_before_start`). Both go through the same review. A review records whether
+`counts_before_start`). Both are treated alike: counted automatically when the
+policy's `extraRequiresReview` is false (the default since 12 October 2026), or
+held for a reviewer when it is true. A session longer than `maxSessionHours` is
+always held. `/attendance/review-queue` returns `policy: { extra_requires_review,
+max_session_hours }` so a screen can say which applies. `/attendance/reviews/extra`
+can be posted for any day at any time, including to mark time that counted
+automatically as not counted (`REJECTED` needs a reason). A review records whether
 it covered time before office hours (`extra_review.covers_before_start`); one
 made before early time counted decided only `E_after`, and the early part waits
 for its own decision. The review queue marks such a day `pending_part:

@@ -83,8 +83,9 @@ integer seconds). It implements §15 of the brief:
 - Morning leave moves the expected arrival time and gives no second grace.
 - Lateness beyond grace counts from 09:00.
 - Extra time outside office hours — after 18:00, and before 09:00 since 12
-  October 2026 — is captured automatically. It can offset a shortfall only once
-  a reviewer counts it.
+  October 2026 — is captured automatically. Since 12 October 2026 it also counts
+  automatically (see below). A company can switch back to counting it only once
+  a reviewer approves it.
 - Offsets are allocated within the month in date order, so the result is
   deterministic.
 - Durations show as H:MM (8 h 30 m is “8:30”). Exports also give exact decimal
@@ -104,9 +105,8 @@ in before 09:00 and that time should count).
 
 - Every check-in before office hours is recorded: the day is flagged *Arrived
   early* and shows how early. This happens whatever the policy says.
-- It counts as extra time, the same way as time after 18:00: it goes through the
-  same review, and once counted it makes up a shortfall in the same month. It is
-  never paid as overtime.
+- It counts as extra time, the same way as time after 18:00, and makes up a
+  shortfall in the same month. It is never paid as overtime.
 - It is measured from check-in to the start of that person's own office hours, or
   to their check-out if they left before office hours began. Nothing counts until
   the day is checked out.
@@ -130,9 +130,33 @@ Migration `023_early_arrival_counts.sql` is additive:
 
 Reviews made before this change decided only the time after office hours. That
 decision stands exactly: what was counted still counts, and what was refused
-stays refused. The early part of the same day goes into the review list as its
-own item. Deciding it (one at a time, or with *Count all*) keeps the earlier
-decision.
+stays refused. The early part of the same day is treated like any other time
+not yet decided. It now counts automatically. Where a company has reviews
+switched on, it goes into the review list as its own item, and deciding it (one
+at a time, or with *Count all*) keeps the earlier decision.
+
+**Extra time counts automatically** (added 12 October 2026, so that nobody has
+to approve every person's extra time).
+
+- Time before and after office hours counts as soon as the day is checked out.
+  Nothing waits for an approval, and the month can close without one.
+- A session longer than 14 hours (*Flag sessions longer than* in Settings) is
+  still held for a person to look at. That is usually a forgotten check-out, and
+  counting it automatically would bank hours nobody worked. It is the only kind
+  of extra time left in *Approvals*.
+- A reviewer can still stop a day's time counting. In the person's month, *Change
+  extra* lets them mark it as not counted, with a reason, or count it again.
+- Every decision already made stands as it was.
+- The setting moved from *Proposed* to *Confirmed by the company* as *Extra time:
+  Counts automatically*. Choosing *Counts once a reviewer approves it* brings
+  reviews back.
+
+Migration `024_extra_time_counts_automatically.sql` adds one new policy version,
+copied from the one in force with only this setting changed. Its start date
+follows the same rule as 023's (1 October 2026, or after the last closed month),
+and it waits for an administrator to accept it. Nothing existing is edited.
+Deployed together with 023, the newest version carries both changes, so one
+acceptance covers both.
 
 **Unrecorded days** read *Unrecorded — needs review* until a reviewer confirms an
 unapproved absence with a note. Nothing is assumed absent.
@@ -214,17 +238,18 @@ amounts, payroll transitions, exports and location views all go to
 
 Drafts run without these items and show them as assumptions:
 
-1. **Accept the policy version.** Since 12 October 2026 there is a new version,
-   from October, that counts time before office hours (see above). Accepting it
-   also accepts the proposed interpretations:
+1. **Accept the policy version.** Since 12 October 2026 the newest version, from
+   October, counts time before office hours and counts extra time automatically
+   (see above). Accepting it also accepts the remaining proposed
+   interpretations:
    - grace credit inside the 20-minute window, with lateness counted from 09:00
      after it;
-   - time outside office hours (before 09:00 or after 18:00) offsets only after
-     review, within the same month;
+   - extra time offsets shortfalls only within the same month;
    - one pooled allowance of two paid days, from the first full month after
      joining.
 
-   Counting time before 09:00 is no longer a proposal. The company asked for it.
+   Counting time before 09:00, and counting extra time without approval, are no
+   longer proposals. The company asked for both.
 2. **Breaks.** Which lunch or rest breaks exist and whether each is paid. This
    was not supplied, so currently none is deducted.
 3. **Salary method.** HR or payroll must confirm attendance-sensitive amount ×
@@ -292,6 +317,24 @@ offsetting is not a legal exemption.
   day whose later hour had been refused, *Count all*, and the person's own Today
   card and month on a phone in light and dark. There were no page errors and no
   sideways scrolling.
+
+**For extra time counted automatically (12 October 2026):**
+
+- Server: **406 passing, 0 skipped**. This includes migration 024 run over
+  live-style data, both on its own after 023 and together with it. Earlier
+  versions and reviews were unchanged, the newest version came out with both
+  changes, a closed month pushed the start later, and running it again did
+  nothing. An API test checks that time before and after office hours counts
+  with no approval, the late morning is made up from it, only a 16½-hour day
+  waits in the approvals list, and a reviewer can still mark a day as not
+  counted or count part of the long day.
+- Client: **74 passing**.
+- Browser: Chromium via Playwright, on data set up like the live site with 023
+  and 024 applied. Walked through the settings (both choices under *Confirmed*),
+  the approvals list showing only the 14½-hour day with no *Count all*, a
+  person's month showing *counted automatically*, *Change extra* to stop a day
+  counting with a reason, and the person's Today card on a phone. There were no
+  page errors and no sideways scrolling.
 
 ## Not done, or not claimed
 

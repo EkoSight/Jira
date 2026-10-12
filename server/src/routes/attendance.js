@@ -514,7 +514,12 @@ router.get(
         }
       }
     }
-    res.json({ month: first, items });
+    res.json({
+      month: first,
+      items,
+      // whether extra time waits for a reviewer, and when a session is long enough to be held anyway
+      policy: { extra_requires_review: config.extraRequiresReview !== false, max_session_hours: Number(config.maxSessionHours) || 14 },
+    });
   }),
 );
 

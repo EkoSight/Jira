@@ -192,10 +192,17 @@ export function dayExtraState(day, usedFromDay = 0) {
   if (day.E_rejected === day.E_recorded) {
     return { text: `not counted${by}`, tone: 'neutral', title: review?.reason || undefined };
   }
-  const how = review ? `counted${by}` : 'counted automatically';
+  // a review made before early time counted decided only the time after office
+  // hours; the time before them counted automatically, so the day is not
+  // credited to the reviewer alone — the details are in the title
+  const mixed = Boolean(review && review.covers_before_start === false && day.E_before > 0);
+  const how = mixed ? 'counted' : review ? `counted${by}` : 'counted automatically';
+  const title = mixed
+    ? `After office hours: ${earlierDecisionWords(review, day.E_after)}${review.reason ? ` (${review.reason})` : ''}. Before office hours: counted automatically.`
+    : undefined;
   const partly = day.E_rejected > 0 ? `${hhmm(day.E_eligible)} of it ` : '';
-  if (usedFromDay > 0) return { text: `${partly}${how} · ${hhmm(usedFromDay)} used`, tone: 'good' };
-  return { text: `${partly}${how} · not needed`, tone: 'neutral' };
+  if (usedFromDay > 0) return { text: `${partly}${how} · ${hhmm(usedFromDay)} used`, tone: 'good', title };
+  return { text: `${partly}${how} · not needed`, tone: 'neutral', title };
 }
 
 /**
@@ -232,6 +239,16 @@ export function earlierDecisionWords(earlier, after) {
   const cap = earlier.eligible_seconds;
   if (cap !== null && cap !== undefined && cap < after) return `${hhmm(cap)} of it counted${by}`;
   return `counted${by}`;
+}
+
+/** Where a day's extra time stands now, before a reviewer changes it. */
+export function currentExtraWords(day) {
+  const counted = day.E_eligible || 0;
+  const refused = day.E_rejected || 0;
+  const by = day.extra_review?.reviewer_name ? ` (decided by ${firstName(day.extra_review.reviewer_name)})` : '';
+  if (!refused) return day.extra_review ? `All of it counts${by}.` : 'It counts automatically.';
+  if (!counted) return `None of it counts${by}.`;
+  return `${hhmm(counted)} of it counts and ${hhmm(refused)} does not${by}.`;
 }
 
 /**
