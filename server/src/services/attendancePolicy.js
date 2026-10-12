@@ -32,9 +32,11 @@ export const DEFAULT_POLICY = {
   // PROPOSED: arrival inside the window is credited for the minutes it was late;
   // after the window there is no grace and lateness counts from 09:00
   graceMode: 'THRESHOLD',
-  // PROPOSED: time before 09:00 is recorded but not banked
-  creditBeforeStart: false,
-  // PROPOSED: post-18:00 time is captured automatically but only offsets once eligible
+  // CONFIRMED (12 October 2026): time before 09:00 counts as extra time, like
+  // time after 18:00 — people who arrive before office hours have it counted
+  creditBeforeStart: true,
+  // PROPOSED: time outside office hours is captured automatically but only
+  // offsets once a reviewer counts it
   extraRequiresReview: true,
   offsetWindow: 'SAME_MONTH',
 
@@ -89,7 +91,7 @@ export const SETUP_ITEMS = [
 
 /** Which settings are proposed interpretations, shown as such in Settings. */
 export const PROPOSED_KEYS = [
-  'graceMode', 'creditBeforeStart', 'extraRequiresReview', 'offsetWindow',
+  'graceMode', 'extraRequiresReview', 'offsetWindow',
   'leave.allowanceMode', 'leave.eligibility', 'leave.noticeMode', 'payroll.method',
 ];
 

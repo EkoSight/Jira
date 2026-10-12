@@ -114,7 +114,13 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
         ? mine.flatMap((l) => leaveOnDate(l, date, schedule, config))
         : [];
       const extraRow = extraBy.get(key(user.id, date));
-      const extra = extraRow ? { status: extraRow.status, eligibleSeconds: extraRow.eligible_seconds ?? undefined, reviewed: true } : undefined;
+      const extra = extraRow ? {
+        status: extraRow.status,
+        eligibleSeconds: extraRow.eligible_seconds ?? undefined,
+        reviewed: true,
+        // whether the reviewer saw time before office hours counted in it
+        coversBeforeStart: extraRow.covers_before_start === true,
+      } : undefined;
       const review = reviewBy.get(key(user.id, date));
 
       const computed = computeDay({
@@ -140,7 +146,10 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
         extra_review: extraRow ? {
           status: extraRow.status, eligible_seconds: extraRow.eligible_seconds, reason: extraRow.reason,
           reviewer_name: extraRow.reviewer_name, reviewed_at: extraRow.reviewed_at,
+          covers_before_start: extraRow.covers_before_start === true,
         } : null,
+        // whether this day's policy counts time before office hours as extra time
+        counts_before_start: Boolean(config.creditBeforeStart),
       };
     });
     result.set(user.id, { user, profile, days });
@@ -163,6 +172,7 @@ export async function monthLedger(userId, month, options = {}) {
     allocations: month_.allocations,
     blockers: month_.blockers,
     final: month_.final,
+    outside_hours: month_.outside_hours,
   };
 }
 
@@ -277,6 +287,7 @@ export async function computePayroll(userId, month, { now = new Date() } = {}) {
     full_month_required: fullMonthRequired,
     totals: ledger.totals,
     day_counts: ledger.day_counts,
+    outside_hours: ledger.outside_hours,
     days: ledger.days.map((d) => ({ ...d, unpaid: d.R ? unpaidOn(d) : 0, allocated_in: allocatedTo.get(d.date) || 0 })),
     allocations: ledger.allocations,
     salary,

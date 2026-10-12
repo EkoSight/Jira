@@ -9,7 +9,8 @@ import {
   MonthLedger, TodayAttendanceCard,
 } from '../components/Attendance.jsx';
 import {
-  BLOCKER_LABEL, clockIn, dayMeta, dayName, hhmm, monthName, shiftMonth, todayIn, words,
+  BLOCKER_LABEL, clockIn, dayMeta, dayName, earlierDecisionWords, extraReviewFacts, hhmm, monthName, outsideHoursWords,
+  shiftMonth, todayIn, words,
 } from '../lib/attendance.js';
 
 /**
@@ -241,6 +242,7 @@ function TeamTab() {
             <Count label="Not checked in" value={c.not_checked_in} tone={c.not_checked_in ? 'warning' : null} />
             <Count label="On leave" value={c.on_leave} />
             <Count label="Late" value={c.late} tone={c.late ? 'warning' : null} />
+            <Count label="Arrived early" value={c.early ?? 0} tone={c.early ? 'good' : null} hint="Checked in before office hours" />
             <Count label="Missing check-out" value={c.missing_checkout} tone={c.missing_checkout ? 'critical' : null} />
             <Count label="Needs a look" value={c.needs_review} hint="Low accuracy, long sessions" />
             <Count label="Off today" value={c.off} />
@@ -290,7 +292,7 @@ function TeamTab() {
         <div className="card table-wrap">
           <table className="data">
             <thead>
-              <tr><th>Person</th><th>Required so far</th><th>In office hours</th><th>Paid leave</th><th>Late days</th><th>Extra (pending)</th><th>Unpaid</th><th>Open items</th></tr>
+              <tr><th>Person</th><th>Required so far</th><th>In office hours</th><th>Paid leave</th><th>Late days</th><th title="Days checked in before office hours, and the time">Early days</th><th>Extra (pending)</th><th>Unpaid</th><th>Open items</th></tr>
             </thead>
             <tbody>
               {monthData.people.map((p) => (
@@ -302,7 +304,16 @@ function TeamTab() {
                   <td className="tnum">{hhmm(p.totals.in_schedule)}</td>
                   <td className="tnum">{hhmm(p.totals.paid_leave)}</td>
                   <td className="tnum">{p.day_counts.late}</td>
-                  <td className="tnum">{hhmm(p.totals.extra_recorded)}{p.totals.extra_pending ? ` (${hhmm(p.totals.extra_pending)})` : ''}</td>
+                  <td className="tnum">
+                    {p.outside_hours?.early_days || 0}
+                    {p.outside_hours?.early_days > 0 && <span className="muted"> · {hhmm(p.outside_hours.early_arrival)}</span>}
+                  </td>
+                  <td
+                    className="tnum"
+                    title={p.outside_hours?.extra_before ? `${hhmm(p.outside_hours.extra_before)} before office hours · ${hhmm(p.outside_hours.extra_after)} after` : undefined}
+                  >
+                    {hhmm(p.totals.extra_recorded)}{p.totals.extra_pending ? ` (${hhmm(p.totals.extra_pending)})` : ''}
+                  </td>
                   <td className="tnum">{hhmm(p.totals.unpaid)}</td>
                   <td className="small">{p.blockers.length ? p.blockers.map((b) => BLOCKER_LABEL[b] || b).join(', ') : <span className="muted">—</span>}</td>
                 </tr>
@@ -372,17 +383,32 @@ function PersonMonth({ user, initialMonth, onClose }) {
 
 function ExtraDialog({ user, day, onClose, onSaved }) {
   const toast = useToast();
+  const { before, after, earlyOnly, earlier } = extraReviewFacts(day);
+  const date = day.date || day.work_date;
   return (
     <DecisionDialog
-      title={`Extra time · ${user.full_name} · ${dayName(day.date || day.work_date)}`}
-      summary={<p className="small">{words(day.E_recorded ?? day.extra_seconds)} recorded after office hours. Eligible time can offset a shortfall elsewhere in the same month; it is never paid as overtime.</p>}
-      options={[
+      title={`Extra time · ${user.full_name} · ${dayName(date)}`}
+      summary={(
+        <p className="small">
+          {earlyOnly
+            ? `${words(before)} before office hours is waiting for a decision. The ${words(after)} after office hours was already ${earlierDecisionWords(earlier, after)} — that stays as it is.`
+            : `Recorded: ${outsideHoursWords(before, after) || `${words(after)} after office hours`}.`}
+          {' '}Eligible time can offset a shortfall elsewhere in the same month; it is never paid as overtime.
+        </p>
+      )}
+      options={earlyOnly ? [
+        { value: 'ELIGIBLE', label: 'Count the early time', hint: 'may offset a shortfall' },
+        { value: 'REJECTED', label: 'Do not count the early time', needsNote: true, danger: true },
+      ] : [
         { value: 'ELIGIBLE', label: 'Count it', hint: 'may offset a shortfall' },
         { value: 'REJECTED', label: 'Do not count it', needsNote: true, danger: true },
       ]}
       onClose={onClose}
       onDecide={async (status, reason) => {
-        try { await api.reviewExtra({ user_id: user.id, work_date: day.date || day.work_date, status, reason }); onSaved(); } catch (err) { toast.error(err); }
+        try {
+          await api.reviewExtra({ user_id: user.id, work_date: date, status, reason, ...(earlyOnly ? { part: 'BEFORE_START' } : {}) });
+          onSaved();
+        } catch (err) { toast.error(err); }
       }}
     />
   );
@@ -437,10 +463,10 @@ function ApprovalsTab() {
               {!queue ? <Spinner /> : (
                 <>
                   <QueueGroup
-                    title="Extra time after hours"
-                    note="Captured automatically; it only offsets a shortfall once you count it."
+                    title="Extra time outside office hours"
+                    note="Captured automatically, before office hours and after them; it only offsets a shortfall once you count it."
                     items={extras}
-                    render={(i) => <>{words(i.extra_seconds)} after office hours · checked out {clockIn(i.check_out_at)}{i.long_session ? ' · unusually long session' : ''}</>}
+                    render={(i) => <ExtraQueueLine item={i} />}
                     action={can('attendance.extra.review') ? (i) => <button type="button" className="btn btn-sm" onClick={() => setExtraFor(i)}>Review</button> : null}
                     bulk={can('attendance.extra.review') && extras.length > 1 && (
                       <button
@@ -448,7 +474,13 @@ function ApprovalsTab() {
                         className="btn btn-sm"
                         onClick={async () => {
                           try {
-                            const res = await api.reviewExtra({ items: extras.filter((i) => !i.long_session).map((i) => ({ user_id: i.user.id, work_date: i.date, status: 'ELIGIBLE' })) });
+                            // a day whose time after hours was already decided gets only its early part counted
+                            const res = await api.reviewExtra({
+                              items: extras.filter((i) => !i.long_session).map((i) => ({
+                                user_id: i.user.id, work_date: i.date, status: 'ELIGIBLE',
+                                ...(i.pending_part === 'BEFORE_START' ? { part: 'BEFORE_START' } : {}),
+                              })),
+                            });
                             const failed = res.results.filter((r) => !r.ok);
                             toast.success(`Counted ${res.results.length - failed.length}${failed.length ? `, ${failed.length} could not be` : ''}`);
                             load();
@@ -520,6 +552,21 @@ function ApprovalsTab() {
         />
       )}
     </div>
+  );
+}
+
+/** One day's waiting extra time: how much, on which side of office hours, and what was decided already. */
+function ExtraQueueLine({ item: i }) {
+  const { before, after, earlyOnly, earlier } = extraReviewFacts(i);
+  return (
+    <>
+      {earlyOnly
+        ? <>{words(before)} before office hours · the {words(after)} after was already {earlierDecisionWords(earlier, after)}</>
+        : outsideHoursWords(before, after) || `${words(i.extra_seconds)} after office hours`}
+      {before > 0 && i.check_in_at ? ` · checked in ${clockIn(i.check_in_at)}` : ''}
+      {after > 0 && i.check_out_at ? ` · checked out ${clockIn(i.check_out_at)}` : ''}
+      {i.long_session ? ' · unusually long session' : ''}
+    </>
   );
 }
 

@@ -6,7 +6,7 @@ import { useAttendance } from '../state/attendance.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import {
   BLOCKER_LABEL, CORRECTION_KINDS, CORRECTION_LABEL, CORRECTION_STATUS, DAY_PART, FLAG_LABEL, LEAVE_CATEGORIES,
-  dayExtraState, extraBreakdown,
+  dayExtraState, earlyArrivalNote, extraBreakdown,
   LEAVE_STATUS, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayMeta, dayName, hhmm, mapsLink, newRequestId,
   accuracyWords, readLocation, todayIn, words,
 } from '../lib/attendance.js';
@@ -33,7 +33,8 @@ export function PrivacyNote({ style }) {
 export function FlagBadges({ flags = [], reviewFlags = [] }) {
   const all = [...new Set([...flags, ...reviewFlags])].filter((f) => FLAG_LABEL[f]);
   if (!all.length) return null;
-  const tone = (f) => (['LATE', 'MISSING_CHECKOUT', 'EARLY_DEPARTURE'].includes(f) ? 'warning' : f === 'WITHIN_GRACE' ? 'good' : 'neutral');
+  const tone = (f) => (['LATE', 'MISSING_CHECKOUT', 'EARLY_DEPARTURE'].includes(f) ? 'warning'
+    : ['WITHIN_GRACE', 'EARLY_ARRIVAL'].includes(f) ? 'good' : 'neutral');
   return (
     <span className="att-flags">
       {all.map((f) => <Badge key={f} tone={tone(f)}>{FLAG_LABEL[f]}</Badge>)}
@@ -142,6 +143,8 @@ export function TodayAttendanceCard({ variant = 'card' }) {
   const elapsed = open ? Math.max(0, Math.floor((tick - new Date(open.check_in_at)) / 1000)) : 0;
   const overnight = open && open.work_date !== today.today;
   const action = open ? checkOutAction : checkInAction;
+  // arriving before office hours: on the record, and whether it counts
+  const earlyNote = (open || done) ? earlyArrivalNote(day, { reviewRequired: today.policy.extra_requires_review !== false }) : null;
 
   let headline;
   let tone = 'neutral';
@@ -172,6 +175,7 @@ export function TodayAttendanceCard({ variant = 'card' }) {
             {!today.policy.start_date && !open && !done && <>Attendance tracking has not started yet for the company — recording is optional for now.</>}
           </div>
           <FlagBadges flags={day?.flags} reviewFlags={(open || done)?.review_flags} />
+          {earlyNote && <div className="small att-early-note">{earlyNote}</div>}
         </div>
 
         <div className="att-card-actions">
@@ -602,6 +606,9 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
   const usedFrom = (d) => (d.same_day_offset || 0) + (allocatedFrom.get(d.date) || 0);
   const t = data.totals;
   const extra = extraBreakdown(t);
+  // arriving before office hours: always on the record; extra time where the day's policy counts it
+  const o = data.outside_hours;
+  const earlyCounts = data.days.some((d) => d.counts_before_start);
   return (
     <div className="stack">
       <div className="att-totals">
@@ -611,11 +618,23 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
         <Total label="Within office hours" value={hhmm(t.in_schedule)} />
         <Total label="Paid leave" value={hhmm(t.paid_leave)} />
         <Total label="Grace credit" value={hhmm(t.grace)} />
+        {o?.early_days > 0 && (
+          <Total
+            label="Arrived early"
+            value={hhmm(o.early_arrival)}
+            hint={`on ${o.early_days} day${o.early_days === 1 ? '' : 's'} · ${earlyCounts ? 'counts as extra time' : 'recorded, not counted'}`}
+          />
+        )}
         <Total
           label="Extra time"
           value={hhmm(extra.recorded)}
           hint={(
             <span className="att-extra-parts">
+              {o?.extra_before > 0 && (
+                <span className="att-extra-sides">
+                  <strong className="tnum">{hhmm(o.extra_before)}</strong> before office hours · <strong className="tnum">{hhmm(o.extra_after)}</strong> after
+                </span>
+              )}
               {extra.parts.map((p) => <span key={p.key}><strong className="tnum">{hhmm(p.seconds)}</strong> {p.label}</span>)}
             </span>
           )}
@@ -648,7 +667,8 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
           <thead>
             <tr>
               <th>Day</th><th>Status</th><th>In</th><th>Out</th>
-              <th title="Check-out minus check-in">Duration</th><th>Late</th><th>Extra</th><th>Unpaid</th><th />
+              <th title="Check-out minus check-in">Duration</th>
+              <th title="Arrived before office hours by">Early</th><th>Late</th><th>Extra</th><th>Unpaid</th><th />
             </tr>
           </thead>
           <tbody>
@@ -666,6 +686,7 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
                   <td className="tnum">{s ? clockIn(s.check_in_at, tz) : ''}{s?.check_in_source === 'MANUALLY_REGULARIZED' ? '*' : ''}</td>
                   <td className="tnum">{s?.check_out_at ? clockIn(s.check_out_at, tz) : ''}{s?.check_out_source === 'MANUALLY_REGULARIZED' ? '*' : ''}</td>
                   <td className="tnum">{d.duration ? hhmm(d.duration) : ''}</td>
+                  <td className="tnum">{d.early_arrival ? hhmm(d.early_arrival) : ''}</td>
                   <td className="tnum">{d.late_seconds ? hhmm(d.late_seconds) : ''}</td>
                   <td className="tnum">
                     {d.E_recorded > 0 && (() => {
@@ -673,6 +694,11 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
                       return (
                         <span className="att-extra-cell" title={state.title}>
                           {hhmm(d.E_recorded)}
+                          {d.E_before > 0 && (
+                            <span className="att-extra-sides">
+                              {hhmm(d.E_before)} before{d.E_after > 0 ? ` · ${hhmm(d.E_after)} after` : ''}
+                            </span>
+                          )}
                           <span className={`att-extra-state is-${state.tone}`}>{state.text}</span>
                         </span>
                       );
@@ -693,8 +719,11 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
       </div>
       <div className="small muted">
         Durations are hours:minutes. “Duration” is the recorded attendance duration — check-out minus check-in — not a measure of work done.
-        * marks a time set by an approved correction.
-        Extra time is time after office hours. Once counted, it only makes up a shortfall in the same month — arriving after the
+        * marks a time set by an approved correction. “Early” is how long before office hours you checked in.
+        {earlyCounts
+          ? ' Extra time is time outside office hours — before they start as well as after they end.'
+          : ' Extra time is time after office hours; time before them is recorded but not counted.'}
+        {' '}Once counted, it only makes up a shortfall in the same month — arriving after the
         grace period or leaving early. Counted time that isn’t needed stays on record; it is not paid as overtime.
       </div>
       {data.allocations?.length > 0 && (

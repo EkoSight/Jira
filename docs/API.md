@@ -171,7 +171,7 @@ the policy timezone (default `Asia/Kolkata`). Durations are integer seconds.
 | POST | `/attendance/corrections/:id/decide` | `attendance.approve`, authorised, never one's own — `{ decision: APPROVED|REJECTED, note }` |
 | POST | `/attendance/corrections/:id/cancel` | the requester, while pending |
 | POST | `/attendance/reviews/day` | `attendance.approve` — `{ user_id, work_date, decision: UNAPPROVED_ABSENCE|CLEAR, note }` |
-| POST | `/attendance/reviews/extra` | `attendance.extra.review` — one item or `{ items: [...] }` |
+| POST | `/attendance/reviews/extra` | `attendance.extra.review` — one item or `{ items: [...] }`; an item is `{ user_id, work_date, status: ELIGIBLE|REJECTED, eligible_seconds?, reason?, part?: ALL|BEFORE_START }` |
 | GET | `/attendance/review-queue?month=` | `attendance.approve` or `attendance.extra.review` |
 | GET | `/attendance/policy` | signed in (payroll part only for `attendance.policy`) |
 | POST / PATCH | `/attendance/policy`, `/attendance/policy/:id` | `attendance.policy` — new version from a date / edit an unused version (clears acceptance) |
@@ -205,6 +205,28 @@ asks for a network fix for a further 10 s.
 
 **Missing check-out.** An open session becomes `MISSING_CHECKOUT` once the next
 day's cutoff (default 04:00) passes. No time is guessed — a correction supplies it.
+
+**Time outside office hours.** Every day carries `early_arrival` (seconds checked
+in before office hours began, flagged `EARLY_ARRIVAL`) whatever the policy says.
+Extra time `E_recorded` is `E_after` (after office hours) plus `E_before` (the early
+arrival, only where the day's policy has `creditBeforeStart`; the day says so in
+`counts_before_start`). Both go through the same review. A review records whether
+it covered time before office hours (`extra_review.covers_before_start`); one
+made before early time counted decided only `E_after`, and the early part waits
+for its own decision. The review queue marks such a day `pending_part:
+"BEFORE_START"` with the `earlier_review`, and posting `part: "BEFORE_START"`
+decides only that part: the stored decision is rebuilt so the earlier one keeps
+exactly what it counted or refused. Queue items also carry `extra_pending`,
+`extra_before`, `extra_after` and `early_arrival`.
+
+Month responses (`/attendance/me`, `/people/:id`, `/team/month`, and the payroll
+person view) add `outside_hours: { early_arrival, early_days, extra_before,
+extra_after }`, kept outside `totals` so a month already submitted reads exactly
+as before. `/team/today` counts add `early`. The day CSV's *Extra after hours*
+column is time after office hours only, and two columns are added at the end:
+*Arrived early by* and *Extra before hours*. The payroll CSV adds *Days arrived
+before office hours*, *Extra before office hours* and *Extra after office hours*
+at the end (blank for months locked before they were recorded).
 
 **The check-in requirement.** Off until the policy has a `startDate`. After it,
 on a scheduled working day, a person who must record attendance and has no

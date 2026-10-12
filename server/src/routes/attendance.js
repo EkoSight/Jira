@@ -60,6 +60,9 @@ const policySummary = (config) => ({
   map_links: config.mapLinks,
   breaks: config.breaks,
   breaks_confirmed: config.breaksConfirmed,
+  // time outside office hours: whether before them counts, and whether either needs a reviewer
+  counts_before_start: Boolean(config.creditBeforeStart),
+  extra_requires_review: config.extraRequiresReview !== false,
 });
 
 // ---------------------------------------------------------------- me
@@ -168,6 +171,7 @@ async function monthFor(req, userId) {
     allocations: ledger.allocations,
     blockers: ledger.blockers,
     final: ledger.final,
+    outside_hours: ledger.outside_hours,
     sessions: sessions.map((s) => shapeSession(s, { withLocation })),
     corrections,
     locked: await isLocked(userId, first),
@@ -267,6 +271,7 @@ router.get(
         not_checked_in: count((p) => p.day.classification === 'NOT_CHECKED_IN' || p.day.classification === 'UNRECORDED_NEEDS_REVIEW'),
         on_leave: count((p) => ['PAID_LEAVE', 'UNPAID_LEAVE', 'PENDING_LEAVE'].includes(p.day.classification) || p.day.L > 0),
         late: count((p) => p.day.flags.includes('LATE')),
+        early: count((p) => p.day.flags.includes('EARLY_ARRIVAL')),
         missing_checkout: count((p) => p.day.session?.status === 'MISSING_CHECKOUT'),
         needs_review: count((p) => (p.day.session?.review_flags || []).length > 0),
         regularized: count((p) => p.day.flags.includes('MANUALLY_REGULARIZED')),
@@ -290,7 +295,7 @@ router.get(
       const m = computeMonth(days);
       return {
         user: { id: user.id, full_name: user.full_name, avatar_color: user.avatar_color, department_name: user.department_name },
-        totals: m.totals, day_counts: m.days, blockers: m.blockers, final: m.final,
+        totals: m.totals, day_counts: m.days, blockers: m.blockers, final: m.final, outside_hours: m.outside_hours,
       };
     });
     res.json({ month: first, people });
@@ -335,6 +340,8 @@ router.get(
       'Paid leave (HH:MM)', 'Grace credit (HH:MM)', 'Late by (HH:MM)', 'Left early by (HH:MM)', 'Extra after hours (HH:MM)', 'Flags',
     ];
     if (wantLocation) header.push('Check-in latitude', 'Check-in longitude', 'Check-in accuracy (m)', 'Check-out latitude', 'Check-out longitude', 'Check-out accuracy (m)');
+    // added last, so every earlier column keeps its place
+    header.push('Arrived early by (HH:MM)', 'Extra before hours (HH:MM)');
     const rows = [];
     for (const { user, days } of ledgers.values()) {
       const locationOk = wantLocation && (await canSeeLocation(req.currentUser, user.id));
@@ -344,13 +351,14 @@ router.get(
           d.date, user.full_name, user.email, user.department_name || '', d.schedule_state, d.classification,
           localTime(s?.check_in_at, tz), localTime(s?.check_out_at, tz), s?.check_in_source || '', s?.check_out_source || '',
           d.duration ? hhmm(d.duration) : '', d.duration ? decimalHours(d.duration) : '', hhmm(d.C), hhmm(d.L), hhmm(d.G),
-          hhmm(d.late_seconds), hhmm(d.early_departure), hhmm(d.E_recorded), [...d.flags, ...(s?.review_flags || [])].join(' '),
+          hhmm(d.late_seconds), hhmm(d.early_departure), hhmm(d.E_after), [...d.flags, ...(s?.review_flags || [])].join(' '),
         ];
         if (wantLocation) {
           row.push(...(locationOk && s
             ? [s.check_in_lat, s.check_in_lng, s.check_in_accuracy_m, s.check_out_lat, s.check_out_lng, s.check_out_accuracy_m]
             : ['', '', '', '', '', '']));
         }
+        row.push(hhmm(d.early_arrival), hhmm(d.E_before));
         rows.push(row);
       }
     }
@@ -449,6 +457,9 @@ const extraItem = z.object({
   status: z.enum(['ELIGIBLE', 'REJECTED']),
   eligible_seconds: z.number().int().min(0).optional().nullable(),
   reason: z.string().max(2000).optional().nullable(),
+  // BEFORE_START: only the time before office hours, where the time after
+  // them was decided before early time counted
+  part: z.enum(['ALL', 'BEFORE_START']).optional(),
 });
 
 /** One day's extra time, or several at once ({ items: [...] }). */
@@ -484,12 +495,21 @@ router.get(
     const items = [];
     for (const { user, days } of ledgers.values()) {
       for (const d of days) {
+        // a review made before early time counted decided only the time after
+        // office hours; what waits is the time before them
+        const earlyOnly = Boolean(d.extra_review && !d.extra_review.covers_before_start && d.E_before > 0);
         for (const blocker of d.blockers) {
           items.push({
             user: { id: user.id, full_name: user.full_name, avatar_color: user.avatar_color },
             date: d.date, kind: blocker, extra_seconds: d.E_recorded, classification: d.classification,
             session_id: d.session?.id || null, check_in_at: d.session?.check_in_at || null, check_out_at: d.session?.check_out_at || null,
             long_session: d.flags.includes('LONG_SESSION'),
+            extra_pending: d.E_pending, extra_before: d.E_before, extra_after: d.E_after, early_arrival: d.early_arrival,
+            pending_part: earlyOnly ? 'BEFORE_START' : 'ALL',
+            earlier_review: earlyOnly ? {
+              status: d.extra_review.status, eligible_seconds: d.extra_review.eligible_seconds,
+              reviewer_name: d.extra_review.reviewer_name, reviewed_at: d.extra_review.reviewed_at,
+            } : null,
           });
         }
       }

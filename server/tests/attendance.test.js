@@ -762,3 +762,129 @@ test('csv cells: formulas are neutralised, numbers stay numbers', () => {
   assert.equal(csvCell(-2.5), '-2.5');
   assert.equal(csvCell('Gupta, Vartika'), '"Gupta, Vartika"');
 });
+
+// ---------------------------------------------------------------- before office hours
+
+test('time before office hours is recorded, reviewed and counted; a review made before it counted keeps its effect', async (t) => {
+  if (skip(t)) return;
+  const first = firstOfPrevMonth();
+  const month = first.slice(0, 7);
+  const workdays = [];
+  for (let d = first; d <= lastOf(first); d = addDays(d, 1)) if (weekday(d) !== 0) workdays.push(d);
+  const [early, rejectedAfter, partAfter, late] = workdays.slice(3, 7);
+  const insert = (date, from, to) => query(
+    `INSERT INTO attendance_sessions (user_id, work_date, status, check_in_at, check_out_at, check_in_source, check_out_source)
+     VALUES ($1, $2, 'COMPLETED', $3, $4, 'DEVICE_LOCATION', 'DEVICE_LOCATION')`,
+    [ids.rahul, date, at(date, from), at(date, to)],
+  );
+  await insert(early, '08:30', '18:00'); // 30 minutes early
+  await insert(rejectedAfter, '08:40', '19:00'); // 20 early, 60 after
+  await insert(partAfter, '08:45', '18:30'); // 15 early, 30 after
+  await insert(late, '09:40', '18:00'); // 40 minutes late
+  // two reviews made before early time counted: they saw only the time after office hours
+  const earlier = (date, status, eligible, reason) => query(
+    `INSERT INTO extra_time_reviews (user_id, work_date, status, eligible_seconds, reason, reviewer_id, covers_before_start)
+     VALUES ($1, $2, $3, $4, $5, $6, FALSE)`,
+    [ids.rahul, date, status, eligible, reason, ids.manager],
+  );
+  await earlier(rejectedAfter, 'REJECTED', null, 'Not agreed in advance');
+  await earlier(partAfter, 'ELIGIBLE', 20 * 60, null);
+
+  const policy = await call('GET', '/attendance/policy', { token: tokens.admin });
+  assert.equal(policy.body.versions[0].config.creditBeforeStart, true);
+  assert.ok(!policy.body.proposed_keys.includes('creditBeforeStart'));
+
+  // the record: every early arrival, apart from the time after hours
+  const ledger = await call('GET', `/attendance/people/${ids.rahul}?month=${month}`, { token: tokens.admin });
+  assert.equal(ledger.status, 200, JSON.stringify(ledger.body));
+  const dayOf = (body, date) => body.days.find((d) => d.date === date);
+  const e = dayOf(ledger.body, early);
+  assert.ok(e.flags.includes('EARLY_ARRIVAL'));
+  assert.equal(e.early_arrival, 30 * 60);
+  assert.equal(e.E_before, 30 * 60);
+  assert.equal(e.E_pending, 30 * 60, 'waiting for a reviewer, like time after hours');
+  assert.equal(e.counts_before_start, true);
+  const r = dayOf(ledger.body, rejectedAfter);
+  assert.equal(r.E_rejected, 60 * 60, 'the earlier refusal still stands');
+  assert.equal(r.E_pending, 20 * 60, 'the early part was never decided');
+  assert.equal(r.extra_review.covers_before_start, false);
+  assert.deepEqual(ledger.body.outside_hours, {
+    early_arrival: 65 * 60, early_days: 3, extra_before: 65 * 60, extra_after: 90 * 60,
+  });
+
+  // the review list says what is waiting, and which part
+  const queue = await call('GET', `/attendance/review-queue?month=${month}`, { token: tokens.admin });
+  const waiting = queue.body.items.filter((i) => i.user.id === ids.rahul && i.kind === 'EXTRA_PENDING');
+  const item = (date) => waiting.find((i) => i.date === date);
+  assert.equal(waiting.length, 3);
+  assert.equal(item(early).pending_part, 'ALL');
+  assert.equal(item(early).extra_pending, 30 * 60);
+  assert.equal(item(rejectedAfter).pending_part, 'BEFORE_START');
+  assert.equal(item(rejectedAfter).extra_pending, 20 * 60);
+  assert.equal(item(rejectedAfter).extra_after, 60 * 60);
+  assert.equal(item(rejectedAfter).earlier_review.status, 'REJECTED');
+  assert.equal(item(rejectedAfter).earlier_review.reviewer_name, 'Meera Manager');
+
+  // deciding only the early part leaves the earlier decision exactly its effect
+  const before = (date) => ({ user_id: ids.rahul, work_date: date, part: 'BEFORE_START' });
+  const notEarly = await call('POST', '/attendance/reviews/extra', { token: tokens.admin, body: { ...before(early), status: 'ELIGIBLE' } });
+  assert.equal(notEarly.status, 409, 'a day nobody reviewed is decided whole');
+  const counted = await call('POST', '/attendance/reviews/extra', { token: tokens.admin, body: { ...before(rejectedAfter), status: 'ELIGIBLE' } });
+  assert.equal(counted.status, 200, JSON.stringify(counted.body));
+  const stored = (date) => query('SELECT * FROM extra_time_reviews WHERE user_id = $1 AND work_date = $2', [ids.rahul, date]).then((x) => x.rows[0]);
+  const row = await stored(rejectedAfter);
+  assert.equal(row.status, 'ELIGIBLE');
+  assert.equal(row.eligible_seconds, 20 * 60, 'only the early 20 minutes count; the hour after stays refused');
+  assert.equal(row.covers_before_start, true);
+  assert.equal(row.reason, 'After office hours: Not agreed in advance');
+  const again = await call('POST', '/attendance/reviews/extra', { token: tokens.admin, body: { ...before(rejectedAfter), status: 'ELIGIBLE' } });
+  assert.equal(again.status, 409, 'already decided whole');
+
+  const noReason = await call('POST', '/attendance/reviews/extra', { token: tokens.admin, body: { ...before(partAfter), status: 'REJECTED' } });
+  assert.equal(noReason.status, 400);
+  const refused = await call('POST', '/attendance/reviews/extra', {
+    token: tokens.admin, body: { ...before(partAfter), status: 'REJECTED', reason: 'Early start not needed' },
+  });
+  assert.equal(refused.status, 200, JSON.stringify(refused.body));
+  const part = await stored(partAfter);
+  assert.equal(part.status, 'ELIGIBLE', 'the 20 minutes counted earlier still count');
+  assert.equal(part.eligible_seconds, 20 * 60);
+  assert.equal(part.reason, 'Before office hours: Early start not needed');
+  const { rows: trail } = await query(
+    `SELECT action, after FROM attendance_audit WHERE entity_type = 'EXTRA_TIME' AND entity_id = $1 ORDER BY id DESC LIMIT 1`,
+    [`${ids.rahul}:${partAfter}`],
+  );
+  assert.equal(trail[0].action, 'REJECTED', 'the audit records what the reviewer decided');
+  assert.equal(trail[0].after.decided, 'BEFORE_START');
+
+  // a day nobody had reviewed is decided whole, early part included
+  assert.equal((await call('POST', '/attendance/reviews/extra', { token: tokens.admin, body: { user_id: ids.rahul, work_date: early, status: 'ELIGIBLE' } })).status, 200);
+  assert.equal((await stored(early)).covers_before_start, true);
+
+  // and the month uses it: the early starts cover the late day
+  const after_ = await call('GET', `/attendance/people/${ids.rahul}?month=${month}`, { token: tokens.admin });
+  assert.equal(dayOf(after_.body, early).E_eligible, 30 * 60);
+  assert.equal(dayOf(after_.body, rejectedAfter).E_eligible, 20 * 60);
+  assert.equal(dayOf(after_.body, rejectedAfter).E_rejected, 60 * 60);
+  assert.equal(dayOf(after_.body, partAfter).E_eligible, 20 * 60);
+  assert.equal(dayOf(after_.body, partAfter).E_rejected, 25 * 60);
+  for (const date of [early, rejectedAfter, partAfter]) assert.equal(dayOf(after_.body, date).E_pending, 0);
+  assert.deepEqual(after_.body.allocations, [
+    { source_date: early, target_date: late, seconds: 30 * 60 },
+    { source_date: rejectedAfter, target_date: late, seconds: 10 * 60 },
+  ]);
+  const left = await call('GET', `/attendance/review-queue?month=${month}`, { token: tokens.admin });
+  assert.equal(left.body.items.filter((i) => i.user.id === ids.rahul && i.kind === 'EXTRA_PENDING').length, 0);
+
+  // the team views and the export carry it too, with every earlier column in its place
+  const team = await call('GET', `/attendance/team/month?month=${month}`, { token: tokens.admin });
+  assert.equal(team.body.people.find((p) => p.user.id === ids.rahul).outside_hours.early_days, 3);
+  const todayView = await call('GET', '/attendance/team/today', { token: tokens.admin });
+  assert.equal(typeof todayView.body.counts.early, 'number');
+  const csv = await call('GET', `/attendance/export.csv?user_id=${ids.rahul}&from=${rejectedAfter}&to=${rejectedAfter}`, { token: tokens.admin, raw: true });
+  const [header, line] = csv.text.trim().split(/\r?\n/).map((l) => l.split(','));
+  assert.equal(header[17], 'Extra after hours (HH:MM)');
+  assert.equal(line[17], '1:00', 'after hours only');
+  assert.deepEqual(header.slice(-2), ['Arrived early by (HH:MM)', 'Extra before hours (HH:MM)']);
+  assert.deepEqual(line.slice(-2), ['0:20', '0:20']);
+});

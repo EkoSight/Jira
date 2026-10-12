@@ -123,8 +123,188 @@ test('08:30–17:30 is 30 minutes short: time before 09:00 is recorded, not bank
   const d = day('08:30', '17:30');
   assert.equal(d.duration, 9 * H);
   assert.equal(d.early_arrival, 30 * M);
+  assert.ok(d.flags.includes('EARLY_ARRIVAL'), 'the early arrival is still on the record');
+  assert.equal(d.E_before, 0);
   assert.equal(d.E_recorded, 0);
   assert.equal(d.ordinary_short, 30 * M);
+});
+
+// ---------------------------------------------------------------- before office hours
+
+// what the company asked for on 12 October 2026: time before 09:00 counts like time after 18:00
+const EARLY = { ...POLICY, creditBeforeStart: true };
+
+test('when early time counts, 08:30–17:30 is complete: the half hour before 09:00 covers leaving early', () => {
+  const d = day('08:30', '17:30', {}, EARLY);
+  assert.equal(d.early_arrival, 30 * M);
+  assert.ok(d.flags.includes('EARLY_ARRIVAL'));
+  assert.equal(d.E_before, 30 * M);
+  assert.equal(d.E_after, 0);
+  assert.equal(d.E_recorded, 30 * M);
+  assert.equal(d.E_eligible, 30 * M);
+  assert.equal(d.ordinary_short, 30 * M, 'the early departure is still a shortfall');
+  assert.equal(d.same_day_offset, 30 * M, 'covered by the early start');
+  assert.equal(d.remaining_short, 0);
+  assert.equal(d.remaining_extra, 0);
+});
+
+test('08:00–19:00 keeps both sides apart: an hour before, an hour after, two hours for another day', () => {
+  const d = day('08:00', '19:00', {}, EARLY);
+  assert.equal(d.E_before, H);
+  assert.equal(d.E_after, H);
+  assert.equal(d.E_recorded, 2 * H);
+  assert.equal(d.ordinary_short, 0);
+  assert.equal(d.remaining_extra, 2 * H);
+});
+
+test('arriving on time, within grace or late records no early arrival', () => {
+  for (const [checkIn, flag] of [['09:00', null], ['09:10', 'WITHIN_GRACE'], ['09:45', 'LATE']]) {
+    const d = day(checkIn, '18:00', {}, EARLY);
+    assert.equal(d.early_arrival, 0, checkIn);
+    assert.equal(d.E_before, 0, checkIn);
+    assert.ok(!d.flags.includes('EARLY_ARRIVAL'), checkIn);
+    if (flag) assert.ok(d.flags.includes(flag), checkIn);
+  }
+  // one second early is early
+  assert.equal(day('08:59:59', '18:00', {}, EARLY).E_before, 1);
+});
+
+test('leaving before office hours begin counts only the time actually there', () => {
+  const d = day('07:00', '08:30', {}, EARLY);
+  assert.equal(d.early_arrival, 90 * M, 'not the two hours to 09:00');
+  assert.equal(d.E_before, 90 * M);
+  assert.equal(d.C, 0);
+  assert.equal(d.ordinary_short, 9 * H);
+  assert.equal(d.same_day_offset, 90 * M);
+});
+
+test('early is measured against the person\'s own start time', () => {
+  const tenToSeven = { ...WORKDAY, start: clock('10:00'), end: clock('19:00') };
+  const d = day('09:30', '19:00', { schedule: tenToSeven }, EARLY);
+  assert.equal(d.early_arrival, 30 * M);
+  assert.equal(d.E_before, 30 * M);
+  assert.equal(d.E_after, 0);
+});
+
+test('an early arrival waits for review like time after hours, and the reviewer\'s decision covers both', () => {
+  const policy = { ...EARLY, extraRequiresReview: true };
+  const waiting = day('08:30', '19:00', {}, policy);
+  assert.equal(waiting.E_pending, 90 * M);
+  assert.equal(waiting.E_eligible, 0);
+  assert.deepEqual(waiting.blockers, ['EXTRA_PENDING']);
+  assert.equal(waiting.remaining_extra, 0, 'held, not used');
+
+  const counted = day('08:30', '19:00', { extraReview: { status: 'ELIGIBLE', reviewed: true, coversBeforeStart: true } }, policy);
+  assert.equal(counted.E_eligible, 90 * M);
+  assert.equal(counted.E_pending, 0);
+  assert.deepEqual(counted.blockers, []);
+
+  const part = day('08:30', '19:00', { extraReview: { status: 'ELIGIBLE', eligibleSeconds: 45 * M, reviewed: true, coversBeforeStart: true } }, policy);
+  assert.equal(part.E_eligible, 45 * M);
+  assert.equal(part.E_rejected, 45 * M);
+
+  const refused = day('08:30', '19:00', { extraReview: { status: 'REJECTED', reviewed: true, coversBeforeStart: true } }, policy);
+  assert.equal(refused.E_rejected, 90 * M);
+  assert.equal(refused.E_eligible, 0);
+});
+
+test('a review made before early time counted decides only the time after hours; the early part waits for its own', () => {
+  const policy = { ...EARLY, extraRequiresReview: true };
+  const earlier = (over) => ({ reviewed: true, coversBeforeStart: false, ...over });
+
+  const counted = day('08:30', '19:00', { extraReview: earlier({ status: 'ELIGIBLE' }) }, policy);
+  assert.equal(counted.E_eligible, H, 'what the reviewer counted still counts');
+  assert.equal(counted.E_pending, 30 * M, 'what they never saw is not counted on their behalf');
+  assert.deepEqual(counted.blockers, ['EXTRA_PENDING']);
+
+  const refused = day('08:30', '19:00', { extraReview: earlier({ status: 'REJECTED' }) }, policy);
+  assert.equal(refused.E_rejected, H);
+  assert.equal(refused.E_pending, 30 * M, 'nor refused on their behalf');
+
+  const part = day('08:30', '19:00', { extraReview: earlier({ status: 'ELIGIBLE', eligibleSeconds: 20 * M }) }, policy);
+  assert.equal(part.E_eligible, 20 * M, 'a partial count still applies to the time it was made on');
+  assert.equal(part.E_rejected, 40 * M);
+  assert.equal(part.E_pending, 30 * M);
+
+  // where the policy needs no review, the early part counts as any unreviewed time does
+  const automatic = day('08:30', '19:00', { extraReview: earlier({ status: 'REJECTED' }) }, EARLY);
+  assert.equal(automatic.E_rejected, H);
+  assert.equal(automatic.E_eligible, 30 * M);
+  assert.deepEqual(automatic.blockers, []);
+});
+
+test('a very long session that started early is held for a person to look at, even where review is not normally needed', () => {
+  const d = day('06:00', '21:00', {}, EARLY);
+  assert.ok(d.flags.includes('LONG_SESSION'));
+  assert.equal(d.E_before, 3 * H);
+  assert.equal(d.E_after, 3 * H);
+  assert.equal(d.E_pending, 6 * H);
+  assert.equal(d.E_eligible, 0);
+
+  // a review of only the time after hours does not release the early part
+  const half = day('06:00', '21:00', { extraReview: { status: 'ELIGIBLE', reviewed: true, coversBeforeStart: false } }, EARLY);
+  assert.equal(half.E_eligible, 3 * H);
+  assert.equal(half.E_pending, 3 * H);
+});
+
+test('an early arrival shows while the day is running, and nothing is banked until check-out', () => {
+  const open = day('08:40', null, { phase: 'TODAY' }, EARLY);
+  assert.equal(open.classification, 'IN_PROGRESS');
+  assert.equal(open.early_arrival, 20 * M);
+  assert.deepEqual(open.flags, ['EARLY_ARRIVAL']);
+  assert.equal(open.E_recorded, 0);
+
+  const forgotten = day('08:40', null, { phase: 'PAST' }, EARLY);
+  assert.equal(forgotten.classification, 'MISSING_CHECKOUT');
+  assert.equal(forgotten.early_arrival, 20 * M, 'still on the record');
+  assert.equal(forgotten.E_before, 0, 'but nothing counts until the day is complete');
+  assert.equal(forgotten.E_recorded, 0);
+});
+
+test('before tracking starts, early time is shown and never counted', () => {
+  const d = day('08:30', '18:00', { schedule: { ...WORKDAY, beforeStart: true } }, { ...EARLY, extraRequiresReview: true });
+  assert.equal(d.E_before, 30 * M);
+  assert.equal(d.E_untracked, 30 * M);
+  assert.equal(d.E_pending, 0);
+  assert.equal(d.E_eligible, 0);
+  assert.deepEqual(d.blockers, []);
+});
+
+test('a day off has no office hours to be early for', () => {
+  const sunday = computeDay({
+    date: '2026-10-04', schedule: { state: 'WEEKLY_OFF' }, phase: 'PAST',
+    session: { checkIn: clock('08:00'), checkOut: clock('12:00'), status: 'COMPLETED' },
+  }, EARLY);
+  assert.equal(sunday.early_arrival, 0);
+  assert.deepEqual(sunday.flags, ['WORKED_ON_NON_WORKING_DAY']);
+});
+
+test('the month counts early arrivals and both sides of extra time, outside the totals', () => {
+  const month = computeMonth([
+    day('08:30', '17:30', { date: '2026-10-05' }, EARLY), // 30m early, used the same day
+    day('08:45', '19:00', { date: '2026-10-06' }, EARLY), // 15m early, 60m after
+    day('09:00', '18:00', { date: '2026-10-07' }, EARLY),
+    day('09:40', '18:00', { date: '2026-10-08' }, EARLY), // 40m late
+  ]);
+  assert.deepEqual(month.outside_hours, {
+    early_arrival: 45 * M, early_days: 2, extra_before: 45 * M, extra_after: 60 * M,
+  });
+  assert.equal(month.totals.extra_recorded, 105 * M);
+  // the 08:45 day's 75 minutes cover the late day's 40
+  assert.deepEqual(month.allocations, [{ source_date: '2026-10-06', target_date: '2026-10-08', seconds: 40 * M }]);
+  assert.equal(month.totals.unpaid, 0);
+  assert.equal(month.totals.unused_extra, 35 * M);
+  // a month already submitted must read as it did: nothing new among the totals
+  for (const key of ['early_arrival', 'early_days', 'extra_before', 'extra_after']) assert.ok(!(key in month.totals), key);
+});
+
+test('when early time does not count, the month still shows how often and how early people came in', () => {
+  const month = computeMonth([
+    day('08:30', '18:00', { date: '2026-10-05' }),
+    day('08:50', '18:00', { date: '2026-10-06' }),
+  ]);
+  assert.deepEqual(month.outside_hours, { early_arrival: 40 * M, early_days: 2, extra_before: 0, extra_after: 0 });
+  assert.equal(month.totals.extra_recorded, 0);
 });
 
 // ---------------------------------------------------------------- the boundary
@@ -556,6 +736,43 @@ test('every minute of recorded extra time is accounted for: used, counted-not-ne
     const t = computeMonth(days).totals;
     const parts = t.same_day_offset + t.cross_day_offset + t.unused_extra + t.extra_pending + t.extra_rejected + t.extra_untracked;
     assert.equal(parts, t.extra_recorded, `month ${month}: ${JSON.stringify(t)}`);
+    assert.ok(t.unused_extra >= 0);
+  }
+});
+
+test('with time before office hours counted too, every minute is still accounted for, and each side adds up', () => {
+  let seed = 11;
+  const rand = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const pick = (xs) => xs[Math.floor(rand() * xs.length)];
+  for (let month = 0; month < 300; month += 1) {
+    const days = [];
+    for (let i = 1; i <= 26; i += 1) {
+      const date = `2026-10-${String(i).padStart(2, '0')}`;
+      const checkIn = clock(pick(['06:30', '08:10', '08:40', '08:59', '09:00', '09:15', '09:35', '10:10']));
+      const checkOut = clock(pick(['08:50', '13:30', '17:10', '18:00', '18:25', '19:40', '21:05', '23:30']));
+      const review = pick([undefined,
+        { status: 'ELIGIBLE', reviewed: true, coversBeforeStart: true },
+        { status: 'REJECTED', reviewed: true, coversBeforeStart: true },
+        { status: 'ELIGIBLE', eligibleSeconds: 25 * M, reviewed: true, coversBeforeStart: true },
+        { status: 'ELIGIBLE', reviewed: true, coversBeforeStart: false },
+        { status: 'REJECTED', reviewed: true, coversBeforeStart: false },
+        { status: 'ELIGIBLE', eligibleSeconds: 15 * M, reviewed: true, coversBeforeStart: false }]);
+      const policy = { ...POLICY, creditBeforeStart: rand() < 0.6, extraRequiresReview: rand() < 0.7 };
+      const d = computeDay({
+        date, phase: 'PAST', leave: [], extra: review,
+        schedule: { ...WORKDAY, beforeStart: rand() < 0.15 },
+        session: checkOut <= checkIn ? null : { checkIn, checkOut, status: 'COMPLETED' },
+      }, policy);
+      assert.equal(d.E_before + d.E_after, d.E_recorded, `${date}: the two sides make the whole`);
+      assert.equal(d.E_eligible + d.E_pending + d.E_rejected + d.E_untracked, d.E_recorded, `${date}: every minute has one state`);
+      if (!policy.creditBeforeStart) assert.equal(d.E_before, 0);
+      days.push(d);
+    }
+    const m = computeMonth(days);
+    const t = m.totals;
+    assert.equal(t.same_day_offset + t.cross_day_offset + t.unused_extra + t.extra_pending + t.extra_rejected + t.extra_untracked,
+      t.extra_recorded, `month ${month}: ${JSON.stringify(t)}`);
+    assert.equal(m.outside_hours.extra_before + m.outside_hours.extra_after, t.extra_recorded);
     assert.ok(t.unused_extra >= 0);
   }
 });

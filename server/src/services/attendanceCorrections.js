@@ -12,11 +12,11 @@ import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { clock } from '../lib/attendanceCalc.js';
 import { effectivePermissions } from '../lib/permissions.js';
 import { notify } from './activity.js';
-import { currentPolicy } from './attendancePolicy.js';
+import { currentPolicy, getPolicyFor } from './attendancePolicy.js';
 import {
   SESSION_COLUMNS, addDays, assertReviewer, audit, cutoffFor, dateIn, instantAt, settleMissingCheckouts,
 } from './attendance.js';
-import { isLocked } from './attendanceLedger.js';
+import { buildLedgers, isLocked } from './attendanceLedger.js';
 
 export const CORRECTION_KINDS = {
   MISSED_CHECK_IN: 'Missed check-in',
@@ -271,26 +271,76 @@ export async function reviewDay(reviewer, { user_id: userId, work_date: workDate
 }
 
 /** Decide whether a day's post-shift time may offset a shortfall. */
-export async function reviewExtra(reviewer, { user_id: userId, work_date: workDate, status, eligible_seconds: eligible, reason }) {
+/**
+ * Decide a day's extra time.
+ *
+ * `part` is ALL (the default: everything recorded outside office hours that
+ * day) or BEFORE_START — only the time before office hours, on a day whose
+ * time after them was already decided before early time counted.
+ */
+export async function reviewExtra(reviewer, {
+  user_id: userId, work_date: workDate, status, eligible_seconds: eligible, reason, part = 'ALL',
+}) {
   await assertReviewer(reviewer, userId, 'attendance.extra.review');
   if (!['ELIGIBLE', 'REJECTED'].includes(status)) throw badRequest('Mark it eligible or not eligible');
   if (status === 'REJECTED' && !String(reason || '').trim()) throw badRequest('Say why the extra time does not count');
   if (eligible !== undefined && eligible !== null && (!Number.isInteger(eligible) || eligible < 0)) {
     throw badRequest('Eligible time is a whole number of seconds');
   }
+  if (!['ALL', 'BEFORE_START'].includes(part)) throw badRequest('Say which extra time this decides');
   if (await isLocked(userId, workDate)) throw conflict('Payroll for that month is locked — reopen it first');
   const { rows: before } = await query('SELECT * FROM extra_time_reviews WHERE user_id = $1 AND work_date = $2', [userId, workDate]);
+  // the decision covers what the reviewer was shown: time before office hours
+  // too, when that day's policy counts it
+  const { config } = await getPolicyFor(workDate);
+  const coversBeforeStart = Boolean(config.creditBeforeStart);
+  const decision = part === 'BEFORE_START'
+    ? await keepingEarlierDecision(userId, workDate, before[0], { status, eligible, reason }, coversBeforeStart)
+    : { status, eligible: eligible ?? null, reason: reason?.trim() || null };
   await withTransaction(async (client) => {
     await client.query(
-      `INSERT INTO extra_time_reviews (user_id, work_date, status, eligible_seconds, reason, reviewer_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO extra_time_reviews (user_id, work_date, status, eligible_seconds, reason, reviewer_id, covers_before_start)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id, work_date) DO UPDATE SET status = EXCLUDED.status, eligible_seconds = EXCLUDED.eligible_seconds,
-         reason = EXCLUDED.reason, reviewer_id = EXCLUDED.reviewer_id, reviewed_at = now()`,
-      [userId, workDate, status, eligible ?? null, reason?.trim() || null, reviewer.id],
+         reason = EXCLUDED.reason, reviewer_id = EXCLUDED.reviewer_id, reviewed_at = now(),
+         covers_before_start = EXCLUDED.covers_before_start`,
+      [userId, workDate, decision.status, decision.eligible, decision.reason, reviewer.id, coversBeforeStart],
     );
     await audit(client, {
       entityType: 'EXTRA_TIME', entityId: `${userId}:${workDate}`, subjectUserId: userId, actorId: reviewer.id,
-      action: status, reason: reason || null, before: before[0] || null, after: { status, eligible_seconds: eligible ?? null },
+      action: status, reason: reason || null, before: before[0] || null,
+      after: {
+        status: decision.status, eligible_seconds: decision.eligible, covers_before_start: coversBeforeStart,
+        ...(part === 'BEFORE_START' ? { decided: 'BEFORE_START', before_start: { status, eligible_seconds: eligible ?? null } } : {}),
+      },
     });
   });
+}
+
+/**
+ * A decision on only the time before office hours, on a day whose time after
+ * them was decided before early time counted. A day keeps one decision, so it
+ * is rebuilt to leave the earlier one exactly its effect — what it counted
+ * still counts, what it refused stays refused — with the early part added as
+ * decided now.
+ */
+async function keepingEarlierDecision(userId, workDate, earlier, { status, eligible, reason }, coversBeforeStart) {
+  if (!coversBeforeStart) throw badRequest('Time before office hours does not count as extra time on that day');
+  if (!earlier || earlier.covers_before_start) {
+    throw conflict('This day’s extra time was reviewed again since you opened it. Refresh, then review it.');
+  }
+  const day = (await buildLedgers([userId], workDate, workDate)).get(Number(userId))?.days[0];
+  if (!day || day.E_before <= 0) throw conflict('There is no time before office hours to decide on that day');
+  const afterCounted = earlier.status === 'ELIGIBLE' ? Math.min(day.E_after, earlier.eligible_seconds ?? day.E_after) : 0;
+  const beforeCounted = status === 'ELIGIBLE' ? Math.min(day.E_before, eligible ?? day.E_before) : 0;
+  const counted = afterCounted + beforeCounted;
+  const reasons = [
+    earlier.reason && `After office hours: ${earlier.reason}`,
+    reason?.trim() && `Before office hours: ${reason.trim()}`,
+  ].filter(Boolean);
+  return {
+    status: counted > 0 ? 'ELIGIBLE' : 'REJECTED',
+    eligible: counted === day.E_recorded ? null : counted,
+    reason: reasons.join(' · ') || null,
+  };
 }

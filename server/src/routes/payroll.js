@@ -186,12 +186,16 @@ router.get(
       'Paid leave days', 'Unpaid leave days', 'Unapproved absence days',
       'Currency', 'Attendance-sensitive entitlement', 'Attendance adjustment', 'Attendance-adjusted earnings', 'Fixed components (not adjusted)',
       'Policy version',
+      // added last, so every earlier column keeps its place; blank for months
+      // locked before these were recorded
+      'Days arrived before office hours', 'Extra before office hours (HH:MM)', 'Extra after office hours (HH:MM)',
     ];
     const out = rows.map((r) => {
       const s = r.snapshot || {};
       const t = s.totals || {};
       const c = s.day_counts || {};
       const pay = s.salary || {};
+      const o = s.outside_hours;
       return [
         month.slice(0, 7), r.full_name, r.email, r.department_name || '', r.version, r.locked_at,
         hhmm(t.required), decimalHours(t.required || 0), hhmm(t.in_schedule), hhmm(t.paid_leave), hhmm(t.grace),
@@ -199,6 +203,7 @@ router.get(
         c.paid_leave ?? '', c.unpaid_leave ?? '', c.unapproved_absence ?? '',
         pay.currency || 'INR', pay.entitlement ?? '', pay.attendance_adjustment ?? '', pay.attendance_adjusted_earnings ?? '', pay.fixed_components ?? '',
         r.policy_id,
+        o ? o.early_days : '', o ? hhmm(o.extra_before) : '', o ? hhmm(o.extra_after) : '',
       ];
     });
     await markExported(req.currentUser, rows.map((r) => r.id), month);

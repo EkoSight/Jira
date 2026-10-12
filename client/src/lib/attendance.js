@@ -80,6 +80,7 @@ export const dayMeta = (classification) => DAY_META[classification] || { label: 
 export const FLAG_LABEL = {
   LATE: 'Late',
   WITHIN_GRACE: 'Within grace',
+  EARLY_ARRIVAL: 'Arrived early',
   EARLY_DEPARTURE: 'Left early',
   LONG_SESSION: 'Unusually long',
   MANUALLY_REGULARIZED: 'Manually regularised',
@@ -185,7 +186,9 @@ export function dayExtraState(day, usedFromDay = 0) {
   const review = day.extra_review;
   const by = review?.reviewer_name ? ` by ${firstName(review.reviewer_name)}` : '';
   if (day.E_untracked) return { text: 'before tracking started', tone: 'neutral' };
-  if (day.E_pending) return { text: 'awaiting review', tone: 'warning' };
+  if (day.E_pending) {
+    return { text: day.E_pending < day.E_recorded ? `${hhmm(day.E_pending)} of it awaiting review` : 'awaiting review', tone: 'warning' };
+  }
   if (day.E_rejected === day.E_recorded) {
     return { text: `not counted${by}`, tone: 'neutral', title: review?.reason || undefined };
   }
@@ -193,6 +196,53 @@ export function dayExtraState(day, usedFromDay = 0) {
   const partly = day.E_rejected > 0 ? `${hhmm(day.E_eligible)} of it ` : '';
   if (usedFromDay > 0) return { text: `${partly}${how} · ${hhmm(usedFromDay)} used`, tone: 'good' };
   return { text: `${partly}${how} · not needed`, tone: 'neutral' };
+}
+
+/**
+ * Time outside office hours in words, before and after: "20 min before and
+ * 1 h after office hours". Empty when there is none.
+ */
+export function outsideHoursWords(before = 0, after = 0) {
+  if (before > 0 && after > 0) return `${words(before)} before and ${words(after)} after office hours`;
+  if (before > 0) return `${words(before)} before office hours`;
+  if (after > 0) return `${words(after)} after office hours`;
+  return '';
+}
+
+/**
+ * What a reviewer is deciding on a day's extra time, from either a ledger day
+ * or a review-list item: the time before and after office hours, and — where
+ * the time after was decided before early time counted — that earlier
+ * decision, which stays as it is while only the early part is decided now.
+ */
+export function extraReviewFacts(day) {
+  const before = day.E_before ?? day.extra_before ?? 0;
+  const after = day.E_after ?? day.extra_after ?? Math.max(0, (day.E_recorded ?? day.extra_seconds ?? 0) - before);
+  const earlier = day.earlier_review
+    || (day.extra_review && day.extra_review.covers_before_start === false && before > 0 ? day.extra_review : null);
+  const earlyOnly = day.pending_part ? day.pending_part === 'BEFORE_START' : Boolean(earlier);
+  return { before, after, earlyOnly, earlier: earlyOnly ? earlier : null };
+}
+
+/** An earlier decision on the time after office hours, in words. */
+export function earlierDecisionWords(earlier, after) {
+  if (!earlier) return '';
+  const by = earlier.reviewer_name ? ` by ${firstName(earlier.reviewer_name)}` : '';
+  if (earlier.status === 'REJECTED') return `not counted${by}`;
+  const cap = earlier.eligible_seconds;
+  if (cap !== null && cap !== undefined && cap < after) return `${hhmm(cap)} of it counted${by}`;
+  return `counted${by}`;
+}
+
+/**
+ * What a person is told about arriving before office hours: that it is on
+ * their record, and whether it counts as extra time.
+ */
+export function earlyArrivalNote(day, { reviewRequired = true } = {}) {
+  if (!day?.early_arrival) return null;
+  const when = `You started ${words(day.early_arrival)} before office hours.`;
+  if (!day.counts_before_start) return `${when} It is on your record; under the current policy it does not count as extra time.`;
+  return `${when} It counts as extra time${reviewRequired ? ' once it is reviewed' : ''}, the same as time after office hours.`;
 }
 
 export const money = (value, currency = 'INR') => (value === null || value === undefined ? '—'

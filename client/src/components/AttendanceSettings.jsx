@@ -83,6 +83,8 @@ function PolicySection() {
               Version {current.id}, from {current.effective_from === '2000-01-01' ? 'the start' : dayName(current.effective_from)}
               {current.accepted_at ? ` · accepted by ${current.accepted_by_name}` : ' · not yet accepted'}
             </div>
+            {/* what changed, while it waits for acceptance */}
+            {!current.accepted_at && current.note && <div className="small">{current.note}</div>}
           </div>
           {!current.accepted_at && (
             <button
@@ -115,6 +117,7 @@ function PolicySection() {
         <NumberField label="Arrival grace (minutes)" min={0} max={120} {...field('graceMinutes')} />
         <NumberField label="Paid leave days a month" min={0} max={10} step={0.5} {...field('leave.monthlyPaidDays')} />
         <NumberField label="Notice for planned leave (hours)" min={0} max={720} {...field('leave.noticeHours')} />
+        <SelectField label="Time before office hours" {...field('creditBeforeStart')} boolean options={[[true, 'Counts as extra time'], [false, 'Recorded, not counted']]} />
         <Field label="Working days">
           <div className="att-weekdays">
             {WEEKDAYS.map((name, i) => (
@@ -137,8 +140,7 @@ function PolicySection() {
           ['FORGIVE_FIRST', 'The first minutes of the window are always forgiven, even when later'],
           ['NONE', 'No grace credit at all'],
         ]} />
-        <SelectField label="Time before office hours" {...field('creditBeforeStart')} boolean options={[[false, 'Recorded but not banked'], [true, 'Banked as extra time']]} />
-        <SelectField label="Time after office hours" {...field('extraRequiresReview')} boolean options={[[true, 'Offsets only once a reviewer counts it'], [false, 'Offsets automatically']]} />
+        <SelectField label="Time outside office hours" {...field('extraRequiresReview')} boolean options={[[true, 'Offsets only once a reviewer counts it'], [false, 'Offsets automatically']]} />
         <SelectField label="Paid leave allowance" {...field('leave.allowanceMode')} options={[['POOLED', 'One pool for casual, sick and other'], ['SPLIT', 'Split equally between casual and sick']]} />
         <SelectField label="Allowance starts" {...field('leave.eligibility')} options={[['JOINED_BEFORE_MONTH', 'From the first full month after joining'], ['IMMEDIATE', 'From the joining month']]} />
       </PolicyGroup>

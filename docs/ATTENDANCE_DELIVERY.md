@@ -82,8 +82,9 @@ integer seconds). It implements §15 of the brief:
 - Unresolved time is never turned into attended or unpaid.
 - Morning leave moves the expected arrival time and gives no second grace.
 - Lateness beyond grace counts from 09:00.
-- Extra time after 18:00 is captured automatically. It can offset a shortfall
-  only once a reviewer counts it.
+- Extra time outside office hours — after 18:00, and before 09:00 since 12
+  October 2026 — is captured automatically. It can offset a shortfall only once
+  a reviewer counts it.
 - Offsets are allocated within the month in date order, so the result is
   deterministic.
 - Durations show as H:MM (8 h 30 m is “8:30”). Exports also give exact decimal
@@ -97,6 +98,41 @@ always add up to the total. Each day shows its own state and who decided
 after a month where all of one person's extra time had been counted but none
 was needed (she was never late), which showed as "0:00 used · 0:00 awaiting"
 with the rest apparently missing.
+
+**Time before office hours** (added 12 October 2026, because some people come
+in before 09:00 and that time should count).
+
+- Every check-in before office hours is recorded: the day is flagged *Arrived
+  early* and shows how early. This happens whatever the policy says.
+- It counts as extra time, the same way as time after 18:00: it goes through the
+  same review, and once counted it makes up a shortfall in the same month. It is
+  never paid as overtime.
+- It is measured from check-in to the start of that person's own office hours, or
+  to their check-out if they left before office hours began. Nothing counts until
+  the day is checked out.
+- The two sides are kept apart everywhere: each day shows its *Early* time and how
+  its extra time splits (before and after). The month shows *Arrived early* (time
+  and days) and the split. The team views show early arrivals, and the review
+  list says which side each item is on.
+- The policy setting moved from *Proposed* to *Confirmed by the company*.
+
+Migration `023_early_arrival_counts.sql` is additive:
+
+- It adds one column, `extra_time_reviews.covers_before_start`, which records
+  whether a review covered time before office hours. Reviews made before this
+  change are marked as not covering it.
+- It adds a new policy version, copied from the one in force with only this
+  setting changed. The existing version is not edited. The new version starts on
+  1 October 2026, or after the last approved or locked payroll month if that is
+  later. A closed month therefore never changes.
+- Like any new version, it needs an administrator to accept it before a month
+  that uses it can be finalised.
+
+Reviews made before this change decided only the time after office hours. That
+decision stands exactly: what was counted still counts, and what was refused
+stays refused. The early part of the same day goes into the review list as its
+own item. Deciding it (one at a time, or with *Count all*) keeps the earlier
+decision.
 
 **Unrecorded days** read *Unrecorded — needs review* until a reviewer confirms an
 unapproved absence with a note. Nothing is assumed absent.
@@ -178,13 +214,17 @@ amounts, payroll transitions, exports and location views all go to
 
 Drafts run without these items and show them as assumptions:
 
-1. **Accept the policy version.** This accepts the proposed interpretations:
+1. **Accept the policy version.** Since 12 October 2026 there is a new version,
+   from October, that counts time before office hours (see above). Accepting it
+   also accepts the proposed interpretations:
    - grace credit inside the 20-minute window, with lateness counted from 09:00
      after it;
-   - pre-09:00 time is not banked;
-   - post-18:00 time offsets only after review, within the same month;
+   - time outside office hours (before 09:00 or after 18:00) offsets only after
+     review, within the same month;
    - one pooled allowance of two paid days, from the first full month after
      joining.
+
+   Counting time before 09:00 is no longer a proposal. The company asked for it.
 2. **Breaks.** Which lunch or rest breaks exist and whether each is paid. This
    was not supplied, so currently none is deducted.
 3. **Salary method.** HR or payroll must confirm attendance-sensitive amount ×
@@ -229,6 +269,29 @@ offsetting is not a legal exemption.
   Testing found two bugs, and both are fixed:
   - two devices racing a check-in could report a false “already recorded”;
   - an unanswered permission prompt left the button spinning indefinitely.
+
+**For time before office hours (12 October 2026):**
+
+- Server: **405 passing, 0 skipped**, against PostgreSQL. This includes:
+  - 14 new engine tests: both sides kept apart, the person's own start time,
+    leaving before office hours, review, earlier reviews keeping their effect,
+    long sessions, days off, before tracking starts, and a 300-month randomised
+    check that every minute adds up;
+  - migration 023 run over live-style data (an accepted policy, a locked month,
+    earlier reviews). The earlier versions and reviews were unchanged, the new
+    version came out as expected, a closed month pushed the new version's start
+    later, and running it a second time did nothing;
+  - the review flow over the API: the review list, deciding only the early part,
+    refusals with reasons, the audit entry, the month's offsets, the team views
+    and the CSV columns.
+- Client: **72 passing**.
+- Browser: Chromium via Playwright, on a database set up the way the live site
+  would be at deploy (a policy without early time, October sessions, two earlier
+  reviews, then migration 023). Walked through the settings, the team day and
+  month views, a person's month, the review list, deciding the early part of a
+  day whose later hour had been refused, *Count all*, and the person's own Today
+  card and month on a phone in light and dark. There were no page errors and no
+  sideways scrolling.
 
 ## Not done, or not claimed
 

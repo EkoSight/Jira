@@ -10,8 +10,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DAY_META, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayExtraState, dayMeta, dayName, extraBreakdown, hhmm, mapsLink, money,
-  newRequestId, readLocation, shiftMonth, words,
+  DAY_META, FLAG_LABEL, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayExtraState, dayMeta, dayName, earlierDecisionWords,
+  earlyArrivalNote, extraBreakdown, extraReviewFacts, hhmm, mapsLink, money, newRequestId, outsideHoursWords, readLocation,
+  shiftMonth, words,
 } from '../src/lib/attendance.js';
 
 test('durations are hours and minutes, never decimal-looking', () => {
@@ -193,4 +194,58 @@ test('each day says what happened to its extra time, and who decided', () => {
   assert.equal(dayExtraState({ ...base, E_untracked: 47 * 60 }).text, 'before tracking started');
   assert.equal(dayExtraState({ ...base, E_eligible: 15 * 60, E_rejected: 32 * 60, extra_review: by }).text, '0:15 of it counted by Dhiraj · not needed');
   assert.equal(dayExtraState({ ...base, E_recorded: 0 }), null);
+});
+
+test('arriving before office hours is on the record, and says whether it counts', () => {
+  assert.equal(FLAG_LABEL.EARLY_ARRIVAL, 'Arrived early');
+  assert.equal(earlyArrivalNote({ early_arrival: 0 }), null);
+  assert.equal(earlyArrivalNote(null), null);
+  assert.equal(
+    earlyArrivalNote({ early_arrival: 30 * 60, counts_before_start: true }),
+    'You started 30 min before office hours. It counts as extra time once it is reviewed, the same as time after office hours.',
+  );
+  assert.equal(
+    earlyArrivalNote({ early_arrival: 30 * 60, counts_before_start: true }, { reviewRequired: false }),
+    'You started 30 min before office hours. It counts as extra time, the same as time after office hours.',
+  );
+  assert.match(earlyArrivalNote({ early_arrival: 10 * 60, counts_before_start: false }), /on your record; under the current policy it does not count/);
+});
+
+test('extra time says which side of office hours it fell on', () => {
+  assert.equal(outsideHoursWords(20 * 60, 60 * 60), '20 min before and 1 h after office hours');
+  assert.equal(outsideHoursWords(20 * 60, 0), '20 min before office hours');
+  assert.equal(outsideHoursWords(0, 45 * 60), '45 min after office hours');
+  assert.equal(outsideHoursWords(0, 0), '');
+  // part of a day still waiting is said as such
+  const day = { E_recorded: 80 * 60, E_eligible: 60 * 60, E_pending: 20 * 60, E_rejected: 0, E_untracked: 0, extra_review: null };
+  assert.equal(dayExtraState(day).text, '0:20 of it awaiting review');
+});
+
+test('a reviewer sees what is being decided: the whole day, or only the early part of a day decided before', () => {
+  // a day nobody reviewed, from the month view
+  const fresh = extraReviewFacts({ E_recorded: 80 * 60, E_before: 20 * 60, E_after: 60 * 60, extra_review: null });
+  assert.deepEqual(fresh, { before: 20 * 60, after: 60 * 60, earlyOnly: false, earlier: null });
+
+  // the same day, its time after hours refused before early time counted
+  const refused = { status: 'REJECTED', reviewer_name: 'Meera Rao', covers_before_start: false };
+  const fromMonth = extraReviewFacts({ E_recorded: 80 * 60, E_before: 20 * 60, E_after: 60 * 60, extra_review: refused });
+  assert.equal(fromMonth.earlyOnly, true);
+  assert.equal(earlierDecisionWords(fromMonth.earlier, fromMonth.after), 'not counted by Meera');
+
+  // from the review list, which says which part waits
+  const item = {
+    extra_seconds: 80 * 60, extra_before: 20 * 60, extra_after: 60 * 60, pending_part: 'BEFORE_START',
+    earlier_review: { status: 'ELIGIBLE', eligible_seconds: 20 * 60, reviewer_name: 'Dhiraj Kumar' },
+  };
+  const fromList = extraReviewFacts(item);
+  assert.equal(fromList.earlyOnly, true);
+  assert.equal(earlierDecisionWords(fromList.earlier, fromList.after), '0:20 of it counted by Dhiraj');
+  assert.equal(extraReviewFacts({ ...item, pending_part: 'ALL', earlier_review: null }).earlyOnly, false);
+
+  // a review that already covered early time is not reopened
+  const covered = extraReviewFacts({ E_before: 20 * 60, E_after: 60 * 60, extra_review: { status: 'ELIGIBLE', covers_before_start: true } });
+  assert.equal(covered.earlyOnly, false);
+
+  // an older list item without the split reads as time after hours
+  assert.deepEqual(extraReviewFacts({ extra_seconds: 45 * 60 }), { before: 0, after: 45 * 60, earlyOnly: false, earlier: null });
 });

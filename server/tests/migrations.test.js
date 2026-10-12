@@ -394,3 +394,111 @@ test('existing leads get a state only where a person already recorded one', asyn
     query(`INSERT INTO discussion_threads (entity_type, entity_id, kind) VALUES ('WIDGET', 1, 'blocker')`),
   );
 });
+
+test('time before office hours: a new policy version, never an edit, and earlier reviews keep what they decided', async (t) => {
+  if (skipIfUnavailable(t)) return;
+
+  // the database as it was before 023, holding attendance the way the live site does
+  const files = (await fs.readdir(migrationsDir)).filter((f) => f.endsWith('.sql')).sort();
+  await query(`DROP SCHEMA IF EXISTS "${config.db.schema}" CASCADE`);
+  await query(`CREATE SCHEMA "${config.db.schema}"`);
+  await query(`
+    CREATE TABLE schema_migrations (
+      name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )`);
+  for (const file of files.filter((f) => f < '023')) {
+    await query(await fs.readFile(path.join(migrationsDir, file), 'utf8'));
+    await query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+  }
+
+  const password = await hashPassword('Password123!');
+  const person = async (name, email, role) => (await query(
+    `INSERT INTO users (full_name, email, password_hash, role, must_change_password) VALUES ($1, $2, $3, $4, FALSE) RETURNING id`,
+    [name, email, password, role],
+  )).rows[0].id;
+  const admin = await person('Live Admin', 'admin-023@test.local', 'admin');
+  const nikita = await person('Nikita', 'nikita-023@test.local', 'member');
+
+  const office = {
+    timezone: 'Asia/Kolkata', officeStart: '09:00', officeEnd: '18:00', graceMinutes: 20,
+    graceMode: 'THRESHOLD', extraRequiresReview: true, startDate: '2026-09-01',
+    payroll: { method: 'SCHEDULED_HOURS', methodConfirmed: true },
+  };
+  const version = async (effectiveFrom, config, accepted) => (await query(
+    `INSERT INTO attendance_policies (effective_from, config, note, accepted_by, accepted_at)
+     VALUES ($1, $2, 'as set up', $3, $4) RETURNING id`,
+    [effectiveFrom, JSON.stringify(config), accepted ? admin : null, accepted ? '2026-09-02T10:00:00Z' : null],
+  )).rows[0].id;
+  // an old version that counted early time, then the one in force, which does not
+  await version('2000-01-01', { ...office, creditBeforeStart: true }, true);
+  const inForce = await version('2026-06-01', { ...office, creditBeforeStart: false }, true);
+  // September is paid and locked under it
+  await query(
+    `INSERT INTO payroll_results (month, user_id, status, policy_id, snapshot) VALUES ('2026-09-01', $1, 'LOCKED', $2, '{}'::jsonb)`,
+    [nikita, inForce],
+  );
+  const review = (date, status, eligible, reason) => query(
+    `INSERT INTO extra_time_reviews (user_id, work_date, status, eligible_seconds, reason, reviewer_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [nikita, date, status, eligible, reason, admin],
+  );
+  await review('2026-05-15', 'ELIGIBLE', null, null);
+  await review('2026-09-10', 'REJECTED', null, 'Not agreed in advance');
+  await review('2026-10-07', 'ELIGIBLE', 1200, null);
+
+  const policiesBefore = (await query('SELECT * FROM attendance_policies ORDER BY id')).rows;
+  const reviewsBefore = (await query('SELECT * FROM extra_time_reviews ORDER BY work_date')).rows;
+
+  assert.ok(await runMigrations({ verbose: false }) >= 1);
+
+  // every earlier version is exactly as it was: nothing edited, nothing unaccepted
+  const policiesAfter = (await query('SELECT * FROM attendance_policies ORDER BY id')).rows;
+  assert.deepEqual(policiesAfter.slice(0, policiesBefore.length), policiesBefore);
+
+  // one new version, copied from the one in force with only early time changed
+  assert.equal(policiesAfter.length, policiesBefore.length + 1);
+  const added = policiesAfter[policiesAfter.length - 1];
+  assert.equal(added.effective_from, '2026-10-01', 'from October, after the locked September');
+  assert.deepEqual(added.config, { ...office, creditBeforeStart: true });
+  assert.equal(added.accepted_at, null, 'waiting for an administrator to accept it');
+  assert.equal(added.accepted_by, null);
+  assert.match(added.note, /before office hours/i);
+  const { rows: trail } = await query(`SELECT * FROM attendance_audit WHERE entity_type = 'POLICY'`);
+  assert.equal(trail.length, 1);
+  assert.equal(trail[0].entity_id, String(added.id));
+  assert.equal(trail[0].action, 'VERSION_CREATED');
+  assert.equal(trail[0].source, 'MIGRATION 023');
+
+  // each review says whether its reviewer saw early time; nothing else about it moved
+  const reviewsAfter = (await query('SELECT * FROM extra_time_reviews ORDER BY work_date')).rows;
+  assert.deepEqual(reviewsAfter.map((r) => r.covers_before_start), [true, false, false]);
+  assert.deepEqual(reviewsAfter.map(({ covers_before_start: _, ...rest }) => rest), reviewsBefore);
+
+  // run again by hand, the change neither repeats nor reinterprets the reviews
+  await query(await fs.readFile(path.join(migrationsDir, files.find((f) => f.startsWith('023'))), 'utf8'));
+  assert.equal((await query('SELECT COUNT(*)::int AS n FROM attendance_policies')).rows[0].n, policiesAfter.length);
+  assert.deepEqual((await query('SELECT * FROM extra_time_reviews ORDER BY work_date')).rows, reviewsAfter);
+  assert.equal(await runMigrations({ verbose: false }), 0);
+
+  // had October already been closed under a version without early time, the
+  // new one would start after it — a closed month never changes underneath
+  const october = await version('2026-10-20', { ...office, creditBeforeStart: false }, true);
+  await query(
+    `INSERT INTO payroll_results (month, user_id, status, policy_id, snapshot) VALUES ('2026-10-01', $1, 'APPROVED', $2, '{}'::jsonb)`,
+    [nikita, october],
+  );
+  await query(await fs.readFile(path.join(migrationsDir, files.find((f) => f.startsWith('023'))), 'utf8'));
+  const { rows: latest } = await query('SELECT effective_from, config FROM attendance_policies ORDER BY id DESC LIMIT 1');
+  assert.equal(latest[0].effective_from, '2026-11-01');
+  assert.equal(latest[0].config.creditBeforeStart, true);
+});
+
+test('time before office hours: a fresh install starts with it counted, and with no version to copy, none is added', async (t) => {
+  if (skipIfUnavailable(t)) return;
+  await query(`DROP SCHEMA IF EXISTS "${config.db.schema}" CASCADE`);
+  assert.ok(await runMigrations({ verbose: false }) >= 1);
+  assert.equal((await query('SELECT COUNT(*)::int AS n FROM attendance_policies')).rows[0].n, 0);
+  const { DEFAULT_POLICY, PROPOSED_KEYS } = await import('../src/services/attendancePolicy.js');
+  assert.equal(DEFAULT_POLICY.creditBeforeStart, true);
+  assert.ok(!PROPOSED_KEYS.includes('creditBeforeStart'), 'confirmed by the company, not a proposal');
+});

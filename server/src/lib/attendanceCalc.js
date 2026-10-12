@@ -19,7 +19,9 @@
  *   G  eligible arrival-grace credit inside that schedule
  *   N  confirmed non-offsettable unpaid time (approved unpaid leave, confirmed
  *      unapproved absence)
- *   E  eligible post-shift time
+ *   E  eligible time outside office hours: after the shift, and — when the
+ *      policy counts it — before it (an early arrival). The two parts are kept
+ *      apart as E_after and E_before so each can be seen and explained.
  *
  * C, L, G and N are built as a union of disjoint intervals, in that order of
  * precedence, so no scheduled second is ever counted twice. Anything that is not
@@ -126,6 +128,7 @@ export const DAY_STATES = {
 const zero = () => ({
   R: 0, C: 0, L: 0, G: 0, N: 0, U: 0,
   E_recorded: 0, E_eligible: 0, E_pending: 0, E_rejected: 0, E_untracked: 0,
+  E_before: 0, E_after: 0,
   early_arrival: 0, late_seconds: 0, early_departure: 0,
   duration: 0, net_estimate: 0,
   ordinary_short: 0, same_day_offset: 0, remaining_short: 0, remaining_extra: 0,
@@ -138,7 +141,9 @@ const zero = () => ({
  *   input.session    null | { checkIn, checkOut, status: OPEN|COMPLETED|MISSING_CHECKOUT, regularized }
  *   input.leave      [{ start, end, paid, status: APPROVED|PENDING }]
  *   input.absence    null | 'UNAPPROVED_ABSENCE'   (a reviewer's confirmed decision)
- *   input.extra      { status: PENDING|ELIGIBLE|REJECTED, eligibleSeconds? }
+ *   input.extra      { status: PENDING|ELIGIBLE|REJECTED, eligibleSeconds?, reviewed?, coversBeforeStart? }
+ *                    coversBeforeStart false: the review was made when time before
+ *                    office hours did not count, so it decided only the time after
  *   input.phase      PAST | TODAY | FUTURE   (relative to now and the day's cutoff)
  *   policy           { graceSeconds, graceMode, creditBeforeStart, extraRequiresReview, maxSessionSeconds }
  */
@@ -189,6 +194,8 @@ export function computeDay(input, policy) {
       const grace = arrivalJudgement(session.checkIn, schedule, [], policy);
       out.late_seconds = grace.lateSeconds;
       if (grace.late) out.flags.push('LATE');
+      out.early_arrival = earlySeconds(session, schedule);
+      if (out.early_arrival > 0) out.flags.push('EARLY_ARRIVAL');
     }
     return out;
   }
@@ -230,7 +237,8 @@ export function computeDay(input, policy) {
     if (judgement.late) out.flags.push('LATE');
     if (judgement.withinGrace) out.flags.push('WITHIN_GRACE');
     Gset = subtract(intersect(judgement.graceInterval, S), union(Cset, Lset));
-    out.early_arrival = Math.max(0, schedule.start - session.checkIn);
+    out.early_arrival = earlySeconds(completed ? session : { checkIn: session.checkIn, checkOut: null }, schedule);
+    if (out.early_arrival > 0) out.flags.push('EARLY_ARRIVAL');
   }
   out.G = length(Gset);
 
@@ -273,31 +281,43 @@ export function computeDay(input, policy) {
     }
   }
 
-  // ---- extra time after the shift
+  // ---- time outside office hours: after the shift, and before it when counted
   if (completed) {
     const postStart = Math.max(session.checkIn, schedule.end);
     let post = session.checkOut > postStart ? [[postStart, session.checkOut]] : [];
     const unpaidAfter = (schedule.breaks || []).filter((b) => !b.paid).map((b) => [b.start, b.end]);
     post = subtract(post, unpaidAfter);
-    out.E_recorded = length(post);
-    if (policy.creditBeforeStart) out.E_recorded += out.early_arrival;
+    out.E_after = length(post);
+    // an early arrival is always recorded; it is extra time only when the policy counts it
+    out.E_before = policy.creditBeforeStart ? out.early_arrival : 0;
+    out.E_recorded = out.E_after + out.E_before;
 
-    const review = input.extra || { status: policy.extraRequiresReview ? 'PENDING' : 'ELIGIBLE' };
+    const defaultStatus = policy.extraRequiresReview ? 'PENDING' : 'ELIGIBLE';
+    const review = input.extra || { status: defaultStatus };
     // an implausibly long session is never banked without a person looking at it
-    const status = out.flags.includes('LONG_SESSION') && review.status === 'ELIGIBLE' && !review.reviewed
-      ? 'PENDING' : review.status;
-
-    if (out.E_recorded > 0) {
+    const guard = (status, reviewed) => (out.flags.includes('LONG_SESSION') && status === 'ELIGIBLE' && !reviewed
+      ? 'PENDING' : status);
+    const settle = (status, seconds, cap) => {
+      if (seconds <= 0) return;
       if (status === 'ELIGIBLE') {
-        out.E_eligible = Math.min(out.E_recorded, review.eligibleSeconds ?? out.E_recorded);
-        out.E_rejected = out.E_recorded - out.E_eligible;
+        const counted = Math.min(seconds, cap ?? seconds);
+        out.E_eligible += counted;
+        out.E_rejected += seconds - counted;
       } else if (status === 'REJECTED') {
-        out.E_rejected = out.E_recorded;
+        out.E_rejected += seconds;
       } else {
-        out.E_pending = out.E_recorded;
-        out.blockers.push('EXTRA_PENDING');
+        out.E_pending += seconds;
+        if (!out.blockers.includes('EXTRA_PENDING')) out.blockers.push('EXTRA_PENDING');
       }
-    }
+    };
+
+    // A review made while time before office hours did not count decided only
+    // the time after them. The early part it never saw is not counted or
+    // refused on its behalf: it waits for its own decision (or, where the
+    // policy needs none, is counted as any unreviewed time would be).
+    const seen = review.reviewed && review.coversBeforeStart === false ? out.E_after : out.E_recorded;
+    settle(guard(review.status, review.reviewed), seen, review.eligibleSeconds);
+    settle(guard(defaultStatus, false), out.E_recorded - seen);
   }
 
   // ---- the day's balance
@@ -326,6 +346,18 @@ export function computeDay(input, policy) {
 
   out.classification = classify(out, { hasSession, completed, approvedPaid, approvedUnpaid, S, absence: input.absence });
   return out;
+}
+
+/**
+ * Time present before office hours began: from check-in to the start of the
+ * shift, or to check-out if they left before it. An open session counts up to
+ * the start.
+ */
+export function earlySeconds(session, schedule) {
+  if (!session || session.checkIn === null || session.checkIn === undefined) return 0;
+  const end = session.checkOut === null || session.checkOut === undefined
+    ? schedule.start : Math.min(session.checkOut, schedule.start);
+  return Math.max(0, end - session.checkIn);
 }
 
 /** Whether an arrival was on time, within grace, or late — and how much grace it earns. */
@@ -473,6 +505,14 @@ export function computeMonth(days) {
     allocations,
     blockers,
     final: blockers.length === 0 && unresolved === 0,
+    // time outside office hours, by side. Kept apart from the totals so a month
+    // already submitted reads exactly as it did when nothing has changed.
+    outside_hours: {
+      early_arrival: sum('early_arrival'),
+      early_days: count((d) => d.early_arrival > 0),
+      extra_before: sum('E_before'),
+      extra_after: sum('E_after'),
+    },
   };
 }
 
