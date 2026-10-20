@@ -78,7 +78,7 @@ export async function campaignReport(id) {
     ),
     query(`SELECT DISTINCT provider FROM mkt_messages WHERE campaign_id = $1 AND kind = 'CAMPAIGN' AND provider IS NOT NULL`, [id]),
     query(
-      `SELECT f.id, f.reason, f.created_at, t.ref AS task_ref, t.title AS task_title, ws.stage AS task_stage, u.full_name AS assignee_name,
+      `SELECT f.id, f.reason, f.created_at, f.task_id, t.ref AS task_ref, t.title AS task_title, ws.stage AS task_stage, u.full_name AS assignee_name,
               c.id AS contact_id, c.email, c.first_name, c.last_name
          FROM mkt_followups f JOIN mkt_contacts c ON c.id = f.contact_id LEFT JOIN tasks t ON t.id = f.task_id
          LEFT JOIN workflow_statuses ws ON ws.id = t.status_id LEFT JOIN users u ON u.id = t.assignee_id

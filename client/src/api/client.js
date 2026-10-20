@@ -104,6 +104,29 @@ export async function downloadFile(url, filename) {
   setTimeout(() => URL.revokeObjectURL(href), 10_000);
 }
 
+/** A body that is not JSON — a CSV file, an image — sent as it is. */
+async function rawRequest(method, path, body, contentType) {
+  const token = tokenStore.get();
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      method,
+      headers: { 'Content-Type': contentType || 'application/octet-stream', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body,
+    });
+  } catch {
+    throw new ApiError('Cannot reach the server — check your connection', 0);
+  }
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  if (!response.ok) {
+    if (response.status === 401) onUnauthorized();
+    throw new ApiError(data.error || `Request failed (${response.status})`, response.status, data.details);
+  }
+  return data;
+}
+
 const qs = (params = {}) => {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -469,6 +492,17 @@ export const api = {
 
   settings: () => request('GET', '/settings'),
   updateSettings: (key, value) => request('PUT', `/settings/${key}`, { value }),
+
+  // Email marketing: one namespace, paths relative to /marketing
+  mkt: {
+    get: (path, params) => request('GET', `/marketing${path}${qs(params)}`),
+    post: (path, body) => request('POST', `/marketing${path}`, body || {}),
+    patch: (path, body) => request('PATCH', `/marketing${path}`, body || {}),
+    put: (path, body) => request('PUT', `/marketing${path}`, body || {}),
+    del: (path, params) => request('DELETE', `/marketing${path}${qs(params)}`),
+    send: (path, body, contentType, params) => rawRequest('POST', `/marketing${path}${qs(params)}`, body, contentType),
+    url: (path, params) => `${BASE}/marketing${path}${qs(params)}`,
+  },
 
   notifications: () => request('GET', '/notifications'),
   markNotificationsRead: (ids) => request('POST', '/notifications/read', ids ? { ids } : {}),

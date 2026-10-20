@@ -86,6 +86,19 @@ GOOGLE_CHAT_PROJECT_ID=<project>
 # optional: an administrator to read the user directory as, so a Chat app
 # installed for everyone connects people automatically (docs/GOOGLE_CHAT.md §4c)
 GOOGLE_CHAT_DIRECTORY_ADMIN=<admin>@ekosight.com
+
+# Email marketing (optional) — see docs/EMAIL_MARKETING.md §3. With no
+# EMAIL_PROVIDER in production, nothing is sent.
+EMAIL_PROVIDER=ses
+AWS_SES_REGION=ap-south-1
+AWS_SES_ACCESS_KEY_ID=<IAM user key>
+AWS_SES_SECRET_ACCESS_KEY=<IAM user secret>
+AWS_SES_CONFIGURATION_SET=<configuration set name>
+AWS_SES_SNS_TOPIC_ARN=arn:aws:sns:ap-south-1:<account>:<topic>
+# BREVO_API_KEY=<key>   EMAIL_WEBHOOK_SECRET=<random>   (if using Brevo instead)
+MARKETING_INBOUND_KEY=<random, only if an inbound mail service posts replies>
+MARKETING_CONVERSION_KEY=<random, given to the website's server>
+ANTHROPIC_API_KEY=<optional, for the writing assistant>
 ```
 
 ### 2. Attachments
@@ -158,7 +171,7 @@ sudo systemctl enable --now taskflow
 server {
     server_name taskflow.ekosight.com;
 
-    client_max_body_size 12M;          # must exceed UPLOAD_MAX_MB
+    client_max_body_size 16M;          # must exceed UPLOAD_MAX_MB and email marketing's 15 MB CSV imports
 
     location / {
         proxy_pass http://127.0.0.1:4000;
@@ -235,6 +248,17 @@ Nothing is required — the new features light up on their own. Two optional ste
 - **Permissions.** The new capabilities (`note.use`, `feature.request`,
   `kudos.give`, and for admins `feature.manage`, `recognition.manage`) are added
   to the existing roles automatically. Nothing to run.
+
+---
+
+## Email marketing (this release)
+
+Migration `025_email_marketing.sql` runs with the normal update routine; it only
+adds tables. Nothing sends until a provider is configured and a campaign is
+approved by a second person and scheduled. The setup steps — provider, DNS
+records, reply mailbox, festival dates, the CRM sync decision — are in
+`docs/EMAIL_MARKETING.md` §3. If you import large contact files, raise nginx's
+`client_max_body_size` to `16M` and reload nginx.
 
 ---
 

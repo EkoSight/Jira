@@ -308,13 +308,21 @@ router.patch('/fields/:id', manage, asyncHandler(async (req, res) => {
 // ---------------------------------------------------------------- audiences and topics
 
 router.get('/audiences', asyncHandler(async (req, res) => res.json({ audiences: await listAudiences({ includeArchived: req.query.archived === 'true' }) })));
-router.post('/audiences', manage, asyncHandler(async (req, res) => res.status(201).json({ audience: await saveAudience(null, req.body || {}, req.currentUser) })));
+const crmRuleNeedsSettings = (req) => {
+  // a rule that adds people from the CRM is a decision about consent
+  if (req.body?.crm_sync !== undefined && req.body?.crm_sync !== null && !hasPermission(req.currentUser, 'marketing.settings')) {
+    throw forbidden('Choosing who the CRM adds to an audience needs marketing.settings');
+  }
+};
+router.post('/audiences', manage, asyncHandler(async (req, res) => {
+  crmRuleNeedsSettings(req);
+  res.status(201).json({ audience: await saveAudience(null, req.body || {}, req.currentUser) });
+}));
 router.get('/audiences/:id', asyncHandler(async (req, res) => {
   const audienceId = id(req.params.id);
   res.json({ audience: await getAudience(audienceId), report: await audienceReport(audienceId) });
 }));
 router.patch('/audiences/:id', manage, asyncHandler(async (req, res) => {
-  // a rule that adds people from the CRM is a decision about consent
   if (req.body?.crm_sync !== undefined && !hasPermission(req.currentUser, 'marketing.settings')) {
     throw forbidden('Changing who the CRM adds to an audience needs marketing.settings');
   }
@@ -753,9 +761,12 @@ const outboxOnly = (req, res, next) => {
   next();
 };
 
-router.get('/dev/outbox', settingsOnly, outboxOnly, (req, res) => {
-  res.json({ messages: outbox().slice(-50).reverse().map(({ raw, ...m }) => ({ ...m, size: raw.length })) });
-});
+router.get('/dev/outbox', settingsOnly, outboxOnly, asyncHandler(async (req, res) => {
+  const list = outbox().slice(-50).reverse();
+  const { rows } = await query('SELECT id, token, kind FROM mkt_messages WHERE token = ANY($1::text[])', [list.map((m) => m.reference)]);
+  const byToken = new Map(rows.map((r) => [r.token, r]));
+  res.json({ messages: list.map(({ raw, ...m }) => ({ ...m, size: raw.length, message_id: byToken.get(m.reference)?.id ?? null, kind: byToken.get(m.reference)?.kind ?? null })) });
+}));
 router.delete('/dev/outbox', settingsOnly, outboxOnly, (req, res) => { clearOutbox(); res.json({ ok: true }); });
 
 /** What a provider would report, for trying bounces and complaints without a real mailbox. */

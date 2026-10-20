@@ -25,6 +25,8 @@ export const ACTIVITY_META = {
   PAYMENT: { label: 'Payment', icon: 'wallet', quick: false },
   HANDOVER: { label: 'Handover', icon: 'user', quick: false },
   NEXT_ACTION: { label: 'Next action', icon: 'flag', quick: false },
+  // written by Email marketing: what someone did with a campaign. Never a touch.
+  CAMPAIGN: { label: 'Email campaign', icon: 'mail', quick: false },
 };
 
 /** Which way an entry went — the difference between hearing from them and chasing them. */

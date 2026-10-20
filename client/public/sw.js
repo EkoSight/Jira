@@ -33,6 +33,9 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  // email marketing's public pages and tracking (unsubscribe, forms, opens,
+  // clicks) are for recipients: never cached on a colleague's device
+  if (/\/api\/[^/]+\/m\//.test(url.pathname)) return;
 
   // API: network first, fall back to the last good response so the board still
   // renders something useful when the phone drops off the network.

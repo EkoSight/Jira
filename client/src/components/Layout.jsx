@@ -23,6 +23,7 @@ const NAV = [
   { to: '/attendance', label: 'Attendance', icon: 'clock' },
   { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },
   { to: '/pipeline', label: 'B2B Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
+  { to: '/marketing', label: 'Email marketing', icon: 'mail', permission: 'marketing.view', module: 'marketing' },
   { to: '/notes', label: 'My notes', icon: 'note', permission: 'note.use' },
   { to: '/team', label: 'Team', icon: 'team', permission: 'user.view' },
   { to: '/recognition', label: 'Recognition', icon: 'trophy' },
@@ -42,6 +43,10 @@ const ATTENDANCE_TYPES = {
   attendance_reminder: '/attendance',
   attendance_checkout_reminder: '/attendance',
 };
+
+// email marketing's notices (approvals waiting, a contact reaching a step)
+const MARKETING_TYPES = { marketing_review: '/marketing?tab=overview', marketing: '/marketing?tab=contacts' };
+const noticeRoute = (type) => ATTENDANCE_TYPES[type] || MARKETING_TYPES[type] || null;
 
 // picked by route rather than position, so adding a nav item never silently
 // reshuffles the phone tab bar
@@ -106,7 +111,7 @@ export default function Layout({ children }) {
               if (notification.task_id) setOpenTaskId(notification.task_id);
               else if (notification.objective_id) navigate(`/goals/${notification.objective_id}`);
               else if (notification.account_id) navigate(`/accounts/${notification.account_id}`);
-              else if (ATTENDANCE_TYPES[notification.type]) navigate(ATTENDANCE_TYPES[notification.type]);
+              else if (noticeRoute(notification.type)) navigate(noticeRoute(notification.type));
             },
           });
         })
@@ -307,7 +312,7 @@ export default function Layout({ children }) {
                   borderBottomColor: 'var(--border)',
                   width: '100%',
                   textAlign: 'left',
-                  cursor: n.task_id || n.objective_id || n.account_id || ATTENDANCE_TYPES[n.type] ? 'pointer' : 'default',
+                  cursor: n.task_id || n.objective_id || n.account_id || noticeRoute(n.type) ? 'pointer' : 'default',
                 }}
                 onClick={() => {
                   if (n.task_id) {
@@ -319,9 +324,9 @@ export default function Layout({ children }) {
                   } else if (n.account_id) {
                     setShowNotifications(false);
                     navigate(`/accounts/${n.account_id}`);
-                  } else if (ATTENDANCE_TYPES[n.type]) {
+                  } else if (noticeRoute(n.type)) {
                     setShowNotifications(false);
-                    navigate(ATTENDANCE_TYPES[n.type]);
+                    navigate(noticeRoute(n.type));
                   }
                 }}
               >
@@ -335,6 +340,7 @@ export default function Layout({ children }) {
                     : n.type === 'okr_digest' || n.type === 'okr_department' || n.type === 'okr_check_in' ? 'target'
                     : n.type === 'crm_digest' || n.type === 'crm_activity' || n.type === 'crm_assigned' ? 'pipeline'
                     : ATTENDANCE_TYPES[n.type] ? 'clock'
+                    : MARKETING_TYPES[n.type] ? 'mail'
                     : 'bell'
                   }
                 />

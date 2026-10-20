@@ -63,7 +63,11 @@ export function BarList({ items, valueKey = 'value', labelKey = 'label', max, on
  * Created vs completed over time. Two series, one y-axis, legend always present,
  * with a crosshair tooltip on hover / touch.
  */
-export function TrendChart({ data, height = 170 }) {
+export function TrendChart({
+  data, height = 170, xKey = 'day',
+  series = [{ key: 'created', label: 'Created' }, { key: 'completed', label: 'Completed' }],
+  ariaLabel = 'Tasks created and completed per day',
+}) {
   const gradientId = useId();
   const [hover, setHover] = useState(null);
 
@@ -74,12 +78,13 @@ export function TrendChart({ data, height = 170 }) {
   const innerW = width - pad.left - pad.right;
   const innerH = height - pad.top - pad.bottom;
 
-  const maxValue = Math.max(1, ...data.map((d) => Math.max(d.created, d.completed)));
+  const [a, b] = series;
+  const maxValue = Math.max(1, ...data.map((d) => Math.max(d[a.key] || 0, d[b.key] || 0)));
   const x = (index) => pad.left + (data.length === 1 ? innerW / 2 : (index / (data.length - 1)) * innerW);
   const y = (value) => pad.top + innerH - (value / maxValue) * innerH;
 
-  const line = (key) => data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
-  const area = `${line('created')} L${x(data.length - 1)},${pad.top + innerH} L${x(0)},${pad.top + innerH} Z`;
+  const line = (key) => data.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d[key] || 0).toFixed(1)}`).join(' ');
+  const area = `${line(a.key)} L${x(data.length - 1)},${pad.top + innerH} L${x(0)},${pad.top + innerH} Z`;
 
   const ticks = [0, Math.round(maxValue / 2), maxValue].filter((v, i, arr) => arr.indexOf(v) === i);
 
@@ -97,16 +102,16 @@ export function TrendChart({ data, height = 170 }) {
       <div className="row-between" style={{ marginBottom: 6 }}>
         <div className="chart-legend">
           <span className="key">
-            <span className="swatch" style={{ background: SERIES_1 }} /> Created
+            <span className="swatch" style={{ background: SERIES_1 }} /> {a.label}
           </span>
           <span className="key">
-            <span className="swatch" style={{ background: SERIES_2 }} /> Completed
+            <span className="swatch" style={{ background: SERIES_2 }} /> {b.label}
           </span>
         </div>
         {point && (
           <div className="small tnum dim">
-            {new Date(point.day).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ·{' '}
-            {point.created} created · {point.completed} completed
+            {new Date(point[xKey]).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} ·{' '}
+            {point[a.key] || 0} {a.label.toLowerCase()} · {point[b.key] || 0} {b.label.toLowerCase()}
           </div>
         )}
       </div>
@@ -118,7 +123,7 @@ export function TrendChart({ data, height = 170 }) {
         onMouseLeave={() => setHover(null)}
         onTouchMove={(e) => handlePointer(e.touches[0])}
         role="img"
-        aria-label="Tasks created and completed per day"
+        aria-label={ariaLabel}
       >
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
@@ -144,8 +149,8 @@ export function TrendChart({ data, height = 170 }) {
         ))}
 
         <path d={area} fill={`url(#${gradientId})`} />
-        <path d={line('created')} fill="none" stroke={SERIES_1} strokeWidth="2" strokeLinejoin="round" />
-        <path d={line('completed')} fill="none" stroke={SERIES_2} strokeWidth="2" strokeLinejoin="round" />
+        <path d={line(a.key)} fill="none" stroke={SERIES_1} strokeWidth="2" strokeLinejoin="round" />
+        <path d={line(b.key)} fill="none" stroke={SERIES_2} strokeWidth="2" strokeLinejoin="round" />
 
         {hover !== null && (
           <>
@@ -157,15 +162,15 @@ export function TrendChart({ data, height = 170 }) {
               stroke="var(--axis)"
               strokeWidth="1"
             />
-            <circle cx={x(hover)} cy={y(data[hover].created)} r="4" fill={SERIES_1} stroke="var(--surface)" strokeWidth="2" />
-            <circle cx={x(hover)} cy={y(data[hover].completed)} r="4" fill={SERIES_2} stroke="var(--surface)" strokeWidth="2" />
+            <circle cx={x(hover)} cy={y(data[hover][a.key] || 0)} r="4" fill={SERIES_1} stroke="var(--surface)" strokeWidth="2" />
+            <circle cx={x(hover)} cy={y(data[hover][b.key] || 0)} r="4" fill={SERIES_2} stroke="var(--surface)" strokeWidth="2" />
           </>
         )}
 
         {data.map((d, i) =>
           i === 0 || i === data.length - 1 || i === Math.floor(data.length / 2) ? (
-            <text key={d.day} x={x(i)} y={height - 6} textAnchor="middle" fontSize="9.5" fill="var(--ink-muted)">
-              {new Date(d.day).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+            <text key={d[xKey]} x={x(i)} y={height - 6} textAnchor="middle" fontSize="9.5" fill="var(--ink-muted)">
+              {new Date(d[xKey]).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
             </text>
           ) : null,
         )}

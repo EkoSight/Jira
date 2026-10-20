@@ -1,4 +1,4 @@
-import { Component, useEffect, useState } from 'react';
+import { Children, Component, cloneElement, isValidElement, useEffect, useId, useState } from 'react';
 import { initials } from '../lib/format.js';
 import { BASE, fetchBlobUrl } from '../api/client.js';
 
@@ -152,10 +152,17 @@ export function Modal({ title, onClose, children, footer, size }) {
 }
 
 export function Field({ label, hint, error, children }) {
+  // a single form control is tied to its label, so screen readers announce it
+  const generated = useId();
+  const isControl = (el) => isValidElement(el) && ['input', 'select', 'textarea'].includes(el.type);
+  const items = Children.toArray(children);
+  const control = items.find(isControl);
+  const id = control ? control.props.id || generated : undefined;
+  const linked = control && !control.props.id ? items.map((el) => (el === control ? cloneElement(el, { id }) : el)) : children;
   return (
     <div className="field">
-      {label && <label>{label}</label>}
-      {children}
+      {label && <label htmlFor={id}>{label}</label>}
+      {linked}
       {hint && !error && <div className="field-hint">{hint}</div>}
       {error && <div className="field-error">{error}</div>}
     </div>
@@ -197,6 +204,17 @@ const PATHS = {
   target: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zm0-4.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zm0-3.5a1 1 0 1 0 0-2 1 1 0 0 0 0 2z',
   wallet: 'M3 7h18v12H3zM3 7l3-3h12l3 3M16 13h2',
   pipeline: 'M3 6h18M3 6v4a2 2 0 0 0 2 2h4M21 6v4a2 2 0 0 1-2 2h-4M9 12v6M15 12v6M7 18h4M13 18h4',
+  mail: 'M3 6h18v12H3zM3 7l9 6 9-6',
+  send: 'M4 12 20 4l-4 16-4-7-8-1zM12 13l8-9',
+  calendar: 'M4 6h16v14H4zM4 10h16M8 3v4M16 3v4',
+  copy: 'M8 8h12v12H8zM4 16V4h12',
+  grip: 'M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01',
+  zap: 'M13 3 4 14h7l-1 7 9-11h-7l1-7z',
+  up: 'M12 19V5M6 11l6-6 6 6',
+  down: 'M12 5v14M6 13l6 6 6-6',
+  sparkle: 'M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6z',
+  eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
+  download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
 };
 
 export function Icon({ name, size = 16, style }) {

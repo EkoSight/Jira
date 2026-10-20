@@ -32,6 +32,15 @@ export async function checkDomain(domain, { dkimSelectors = [] } = {}) {
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(name)) return { domain: name, error: 'Enter the domain you send from, like ekosight.com' };
   const provider = providerName();
   const out = { domain: name, provider, checks: [] };
+  // a domain that does not answer at all (or a server with no DNS) is not the
+  // same as one with no records: say so rather than report everything missing
+  if (resolver.resolveNs) {
+    try {
+      await resolver.resolveNs(name);
+    } catch (err) {
+      return { ...out, ready: false, error: `${name} could not be looked up in DNS from this server (${err.code || err.message}). Check the spelling; if it is right, the server cannot reach DNS — check from your DNS provider’s dashboard instead.` };
+    }
+  }
   const add = (key, label, status, detail, fix = null) => out.checks.push({ key, label, status, detail, fix });
 
   try {

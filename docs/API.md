@@ -449,6 +449,97 @@ being used. Leave reasons, coordinates and pay are never sent.
 
 ---
 
+## Email marketing
+
+Staff routes are under `/marketing`, behind sign-in, the attendance check,
+`settings.marketing.enabled` and `marketing.view`; changes ask their own
+permission. See `docs/EMAIL_MARKETING.md` for how the module works.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/marketing/overview` | view — last 30 days, approvals waiting, deadlines, health |
+| GET | `/marketing/meta` | view — field catalogue, operators, triggers, block types, audiences, topics, what the caller can do |
+| GET | `/marketing/contacts` | view — `?search&audience_id&tag&status&segment_id&limit&offset` |
+| POST | `/marketing/contacts` | manage — `{ email, first_name, …, tags, custom, audience_ids, basis }`; `basis` required with audiences; an existing address is updated, never duplicated (200 vs 201) |
+| GET | `/marketing/contacts/:id` | view — contact, memberships, topics, consent record, emails, events, follow-ups, suppression |
+| PATCH | `/marketing/contacts/:id` | manage — refuses an address another contact has |
+| POST | `/marketing/contacts/:id/archive` | manage — `{ archived }` |
+| POST | `/marketing/contacts/:id/audiences` | manage — `{ audience_id, basis }`; returns `SUPPRESSED` / `KEPT_UNSUBSCRIBED` for people who said stop |
+| DELETE | `/marketing/contacts/:id/audiences/:audienceId` | manage — removes (archives) without recording an unsubscribe |
+| POST | `/marketing/contacts/:id/unsubscribe` | manage — `{ audience_id \| all, reason }`: the person asked a colleague |
+| PUT | `/marketing/contacts/:id/topics` | manage — `{ choices: { topicId: bool } }` |
+| POST | `/marketing/contacts/:id/notes` | manage |
+| POST | `/marketing/contacts/tags` | manage — `{ ids, add, remove }` |
+| POST | `/marketing/contacts/import/preview` | manage — body is the CSV (`text/csv`, ≤15 MB): header, suggested mapping, sample |
+| POST | `/marketing/contacts/import` | manage — CSV body; `?audience_id&status&basis&tags&mode&filename&mapping` |
+| GET | `/marketing/contacts/export.csv` | export |
+| GET | `/marketing/imports`, `/marketing/tags`, `/marketing/fields` | view |
+| POST, PATCH | `/marketing/fields[/:id]` | manage — a field's key never changes |
+| GET, POST, PATCH | `/marketing/audiences[/:id]` | view / manage — a CRM sync rule (`crm_sync`) needs settings |
+| GET | `/marketing/audiences/:id/members` | view |
+| GET, POST, PATCH | `/marketing/topics[/:id]`, `/marketing/segments[/:id]` | view / manage |
+| POST | `/marketing/segments/preview` | view — `{ rules, audience_id }` → count and sample |
+| GET, POST, PATCH | `/marketing/forms[/:id]`; GET `/marketing/forms/:id/embed` | view / manage |
+| GET, POST, PATCH | `/marketing/templates[/:id]` | view / manage — starters are read-only |
+| GET, POST | `/marketing/assets` | view / manage — POST body is the image (`image/*`, ≤2 MB, `?filename`) |
+| POST | `/marketing/preview` | view — `{ design, subject, preheader, lang, contact_id }` → `{ html, text }` |
+| POST | `/marketing/test` | manage — a test of any design to ≤10 addresses |
+| GET, POST | `/marketing/campaigns` | view / manage |
+| GET, PATCH | `/marketing/campaigns/:id` | view / manage — content can't change once sending; a change after review returns it to draft |
+| GET | `/marketing/campaigns/:id/checks` | view — problems, warnings, recipients now, sender |
+| POST | `/marketing/campaigns/:id/preview`, `/test` | view / manage |
+| POST | `/marketing/campaigns/:id/submit` | manage |
+| POST | `/marketing/campaigns/:id/approve`, `/request-changes` | approve — not the person who submitted it (unless Settings allow) |
+| POST | `/marketing/campaigns/:id/schedule` | send — `{ at, strategy: NOW \| SCHEDULED \| OPTIMIZED }`; approved, unchanged campaigns only |
+| POST | `/marketing/campaigns/:id/unschedule`, `/pause`, `/resume`, `/cancel`, `/finish-test`, `/retry-failed` | send |
+| POST | `/marketing/campaigns/:id/duplicate`, `/archive` | manage |
+| GET | `/marketing/campaigns/:id/report` | view |
+| GET | `/marketing/campaigns/:id/recipients.csv`, `/events.csv` | export |
+| GET | `/marketing/calendar` | view — `?from&to` (dates) |
+| GET, POST, PATCH | `/marketing/automations[/:id]` | view / manage — an active automation's path can't change |
+| POST | `/marketing/automations/:id/submit` | manage |
+| POST | `/marketing/automations/:id/approve` | approve |
+| POST | `/marketing/automations/:id/status` | send — `{ status: ACTIVE \| PAUSED \| ARCHIVED \| DRAFT }`; ACTIVE needs the approved version |
+| POST | `/marketing/automations/:id/enroll` | send — `{ contact_ids }` |
+| GET | `/marketing/automations/:id/enrollments` | view |
+| GET | `/marketing/festivals`; POST, PATCH `/marketing/festivals[/:id]` | view; settings to add, move or confirm dates |
+| GET | `/marketing/followups`, `/marketing/reports/audiences` | view |
+| POST | `/marketing/messages/:id/events` | manage — `{ type: REPLY \| CONVERSION, value, note }` recorded by hand, once |
+| POST | `/marketing/ai` | manage — `{ task, text, context, language }`; 30 a person per 10 minutes; 400 when `ANTHROPIC_API_KEY` is not set |
+| GET | `/marketing/settings` | view — settings, provider status (never a credential), webhook addresses |
+| PUT | `/marketing/settings` | settings — partial; nested groups are merged |
+| POST | `/marketing/settings/dns-check`, `/sync-crm`, `/sync-replies`; `/marketing/worker/run` | settings |
+| GET | `/marketing/suppressions`; `/suppressions.csv`, `/consents.csv` | view; export |
+| POST | `/marketing/suppressions` | settings — block an address |
+| DELETE | `/marketing/suppressions/:email?note=` | settings — only blocks added by staff or for repeated soft bounces; never unsubscribes, hard bounces or complaints (403) |
+| GET, DELETE | `/marketing/dev/outbox`; POST `/marketing/dev/simulate` | settings — only outside production with no provider set (404 otherwise) |
+
+### Public addresses (no sign-in), under `/m`
+
+| Method | Route | What |
+|---|---|---|
+| GET | `/m/o/:token.gif` | open tracking image |
+| GET | `/m/c/:token/:linkId` | click redirect — only to a link in that email; adds UTM tags and `tf_ref` |
+| GET | `/m/u/:token` | preference page (lists, topics, language, unsubscribe) |
+| POST | `/m/u/:token` | `action=save \| unsubscribe_audience \| unsubscribe_all` (form post) |
+| POST | `/m/u/:token/one-click` | RFC 8058 one-click unsubscribe; a GET only redirects to the page |
+| GET | `/m/confirm/:token` | double opt-in confirmation |
+| GET, POST | `/m/f/:publicId` | hosted signup form / submission (form post or JSON) |
+| GET | `/m/a/:publicId/:name` | an image used in emails |
+| POST | `/m/webhooks/ses` | SNS notifications; signature verified; only `AWS_SES_SNS_TOPIC_ARN` |
+| POST | `/m/webhooks/brevo/:secret` | Brevo events; secret must equal `EMAIL_WEBHOOK_SECRET` |
+| POST | `/m/inbound/:key` | replies from an inbound mail service; key must equal `MARKETING_INBOUND_KEY` |
+| POST | `/m/conversions` | website conversions; header `X-TaskFlow-Key: <MARKETING_CONVERSION_KEY>` |
+
+Settings key `marketing`: `{ enabled, company, postalAddress, defaultFromName,
+defaultFromEmail, defaultReplyTo, replyPlusAddressing, senders, sendingDomain,
+dkimSelectors, approvals: { required, allowSelfApproval }, limits:
+{ perContactPerDay, perContactPerWeek, ratePerMinute }, followUps: { dueDays,
+departmentId }, crmSync: { enabled }, replies: { enabled, mailbox, lookbackDays },
+softBounceLimit, sto: { defaultHour }, timezone }`.
+
+---
+
 ## Structure
 
 | Method | Route | Permission |

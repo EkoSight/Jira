@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider, RefDataProvider, ToastProvider, useAuth, useRefData } from './state/AppState.jsx';
 import { Spinner } from './components/ui.jsx';
@@ -19,6 +20,10 @@ import Pipeline from './pages/Pipeline.jsx';
 import AccountDetail from './pages/AccountDetail.jsx';
 import Attendance from './pages/Attendance.jsx';
 import Payroll from './pages/Payroll.jsx';
+// email marketing loads only for the people who open it
+const Marketing = lazy(() => import('./pages/Marketing.jsx'));
+const MarketingCampaign = lazy(() => import('./pages/MarketingCampaign.jsx'));
+const MarketingAutomation = lazy(() => import('./pages/MarketingAutomation.jsx'));
 import { AttendanceProvider } from './state/attendance.jsx';
 
 function Protected({ permission, children }) {
@@ -99,6 +104,30 @@ function Shell() {
           element={
             <Protected permission="payroll.view">
               <Payroll />
+            </Protected>
+          }
+        />
+        <Route
+          path="/marketing"
+          element={
+            <Protected permission="marketing.view">
+              <Suspense fallback={<Spinner label="Opening email marketing" />}><Marketing /></Suspense>
+            </Protected>
+          }
+        />
+        <Route
+          path="/marketing/campaigns/:id"
+          element={
+            <Protected permission="marketing.view">
+              <Suspense fallback={<Spinner label="Opening email marketing" />}><MarketingCampaign /></Suspense>
+            </Protected>
+          }
+        />
+        <Route
+          path="/marketing/automations/:id"
+          element={
+            <Protected permission="marketing.view">
+              <Suspense fallback={<Spinner label="Opening email marketing" />}><MarketingAutomation /></Suspense>
             </Protected>
           }
         />

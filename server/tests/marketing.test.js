@@ -335,7 +335,11 @@ test('the DNS check reports SPF, DKIM and DMARC and what to fix', async () => {
       const err = new Error('none'); err.code = 'ENODATA'; throw err;
     },
     resolveCname: async () => [],
+    resolveNs: async (name) => { if (name === 'ekosight.com') return ['ns1.example.net']; const err = new Error('none'); err.code = 'ENOTFOUND'; throw err; },
   });
+  const unknown = await checkDomain('no-such-domain-here.in');
+  assert.match(unknown.error, /could not be looked up/, 'no answer at all is not reported as missing records');
+  assert.equal(unknown.checks.length, 0);
   const result = await checkDomain('ekosight.com', { dkimSelectors: ['brevo1'] });
   const by = Object.fromEntries(result.checks.map((c) => [c.key, c]));
   assert.equal(by.spf.status, 'ok');
