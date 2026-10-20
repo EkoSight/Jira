@@ -11,6 +11,47 @@ const int = (value, fallback) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+
+// Email marketing settings from the environment, read when asked (so a test or
+// a restarted worker sees the current values). Credentials live only here,
+// never in the database or any API response. See docs/EMAIL_MARKETING.md.
+function readEmailEnv() {
+  return {
+    // log (records, never delivers) | smtp | ses | brevo. Unset in production
+    // means sending is not set up.
+    provider: (process.env.EMAIL_PROVIDER || '').toLowerCase(),
+    smtp: {
+      host: process.env.SMTP_HOST || '',
+      port: int(process.env.SMTP_PORT, 587),
+      user: process.env.SMTP_USER || '',
+      password: process.env.SMTP_PASSWORD || '',
+      secure: bool(process.env.SMTP_SECURE, false),
+    },
+    ses: {
+      region: process.env.AWS_SES_REGION || 'ap-south-1',
+      accessKeyId: process.env.AWS_SES_ACCESS_KEY_ID || '',
+      secretAccessKey: process.env.AWS_SES_SECRET_ACCESS_KEY || '',
+      configurationSet: process.env.AWS_SES_CONFIGURATION_SET || '',
+      // only notifications from this SNS topic are accepted
+      snsTopicArn: process.env.AWS_SES_SNS_TOPIC_ARN || '',
+    },
+    brevo: {
+      apiKey: process.env.BREVO_API_KEY || '',
+    },
+    // part of the webhook address providers without signed webhooks post to
+    webhookSecret: process.env.EMAIL_WEBHOOK_SECRET || '',
+    // the website calls the conversion endpoint with this key
+    conversionKey: process.env.MARKETING_CONVERSION_KEY || '',
+    // inbound replies posted by a mail service, with this key
+    inboundKey: process.env.MARKETING_INBOUND_KEY || '',
+    // the writing assistant
+    anthropicKey: process.env.ANTHROPIC_API_KEY || '',
+    // the background sender; on wherever the other jobs run
+    workerEnabled: bool(process.env.MARKETING_WORKER, true),
+    workerIntervalSeconds: int(process.env.MARKETING_WORKER_INTERVAL_SECONDS, 15),
+  };
+}
+
 export const config = {
   env: process.env.NODE_ENV || 'development',
   port: int(process.env.PORT, 4000),
@@ -66,6 +107,10 @@ export const config = {
     // an administrator the service account reads the user directory as, so
     // admin-installed chats can be matched to people (see docs/GOOGLE_CHAT.md)
     directoryAdmin: process.env.GOOGLE_CHAT_DIRECTORY_ADMIN || '',
+  },
+
+  get email() {
+    return readEmailEnv();
   },
 
   jobs: {

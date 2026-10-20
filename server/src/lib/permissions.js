@@ -70,6 +70,14 @@ export const PERMISSIONS = {
   'payroll.approve': 'Approve and lock payroll months',
   'payroll.reopen': 'Reopen a locked payroll month',
   'payroll.salary.edit': 'Record and change salary amounts',
+
+  // Email marketing. Contacts are personal data, so seeing them is its own permission.
+  'marketing.view': 'See email marketing: contacts, audiences, campaigns and reports',
+  'marketing.manage': 'Create and edit contacts, audiences, templates, campaigns and automations',
+  'marketing.send': 'Schedule and send approved campaigns, and switch automations on',
+  'marketing.approve': 'Approve campaigns and automations before anything is sent',
+  'marketing.settings': 'Set up sending: senders, domain, limits, festivals and compliance',
+  'marketing.export': 'Export contacts and marketing reports',
 };
 
 export const PERMISSION_KEYS = Object.keys(PERMISSIONS);
@@ -113,6 +121,11 @@ export const ROLE_PERMISSIONS = {
     'attendance.approve',
     'attendance.extra.review',
     'leave.approve',
+    'marketing.view',
+    'marketing.manage',
+    'marketing.send',
+    'marketing.approve',
+    'marketing.export',
   ],
 
   member: [

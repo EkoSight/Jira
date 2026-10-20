@@ -3,6 +3,7 @@ import { config } from './config.js';
 import { runMigrations } from './db/migrate.js';
 import { startDeadlineScanner, stopDeadlineScanner } from './jobs/deadlineScanner.js';
 import { startChatWorker, stopChatWorker } from './jobs/chatWorker.js';
+import { startMarketingWorker, stopMarketingWorker } from './jobs/marketingWorker.js';
 import { closePool } from './db/pool.js';
 import { reportStartupFailure } from './lib/dbErrors.js';
 import { backfillAccountImages } from './services/accountImages.js';
@@ -44,12 +45,14 @@ async function main() {
   if (config.jobs.enabled) {
     startDeadlineScanner();
     startChatWorker();
+    startMarketingWorker();
   }
 
   const shutdown = async (signal) => {
     console.log(`[taskflow] ${signal} received, shutting down`);
     stopDeadlineScanner();
     stopChatWorker();
+    stopMarketingWorker();
     server.close(async () => {
       await closePool();
       process.exit(0);

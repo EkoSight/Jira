@@ -163,6 +163,42 @@ export const DEFAULT_SETTINGS = {
       afterDays: 3,
     },
   },
+  // Email marketing. Nothing is sent until a provider is set up on the server
+  // and the sender, address and footer below are filled in.
+  marketing: {
+    // the module's on/off switch, like Goals and the pipeline
+    enabled: true,
+    // the footer every email carries: who it is from and where they are
+    company: 'EkoSight',
+    postalAddress: '',
+    defaultFromName: 'EkoSight Soil Doctor',
+    defaultFromEmail: '',
+    // a mailbox people read. With plus addressing (Google Workspace supports
+    // it), replies are matched to the email they answer.
+    defaultReplyTo: '',
+    replyPlusAddressing: false,
+    // the only addresses a campaign may be sent from
+    senders: [],
+    // the domain checked for SPF, DKIM and DMARC
+    sendingDomain: '',
+    dkimSelectors: [],
+    // a second person approves before anything is sent
+    approvals: { required: true, allowSelfApproval: false },
+    // at most this many marketing emails to one person (0 means no limit)
+    limits: { perContactPerDay: 1, perContactPerWeek: 3, ratePerMinute: 120 },
+    // a reply, a click or a conversion becomes a task due this many days later
+    followUps: { dueDays: 2, departmentId: null },
+    // people at organizations in the pipeline join audiences by their rules.
+    // Off until an admin has checked the consent basis.
+    crmSync: { enabled: false },
+    // reading replies from a Google Workspace mailbox
+    replies: { enabled: false, mailbox: '', lookbackDays: 3 },
+    // soft bounces in a row before an address is suppressed
+    softBounceLimit: 3,
+    // send-time optimization: the hour used for someone with no history (India time)
+    sto: { defaultHour: 10 },
+    timezone: 'Asia/Kolkata',
+  },
   googleChat: {
     // off until an admin has sent a test message and switched it on
     enabled: false,

@@ -28,6 +28,9 @@ import leaveRoutes from './routes/leave.js';
 import payrollRoutes from './routes/payroll.js';
 import { requireAttendance } from './services/attendance.js';
 import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
+import marketingRoutes from './routes/marketing.js';
+import marketingPublicRoutes from './routes/marketingPublic.js';
+import { requireMarketingEnabled } from './middleware/marketing.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
 import { requirePermission } from './middleware/auth.js';
@@ -46,6 +49,10 @@ export function createTaskFlowRouter() {
   router.use('/auth', authRoutes);
   // Google Chat calls this itself, with a token Google signs — not a TaskFlow login
   router.use('/integrations/google-chat/events', chatEventsRouter);
+  // what email recipients and providers reach: tracking, unsubscribe and
+  // preference pages, signup forms, images, delivery reports. Always on, so a
+  // link in an email already sent keeps working.
+  router.use('/m', marketingPublicRoutes);
 
   // everything below needs a signed-in caller
   router.use(authenticate, touchActivity);
@@ -93,6 +100,9 @@ export function createTaskFlowRouter() {
   // the week's record, weekly reviews and imported correspondence
   router.use('/crm', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), crmWeeklyRoutes);
   router.use('/crm', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), crmControlsRoutes);
+
+  // email marketing, mounted the same way — off cleanly when disabled
+  router.use('/marketing', requireAttendance, requireMarketingEnabled, requirePermission('marketing.view'), marketingRoutes);
 
   return router;
 }
