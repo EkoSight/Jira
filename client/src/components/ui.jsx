@@ -215,6 +215,7 @@ const PATHS = {
   sparkle: 'M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2 2-6z',
   eye: 'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
   download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
+  upload: 'M12 16V5M7 10l5-5 5 5M5 20h14',
 };
 
 export function Icon({ name, size = 16, style }) {

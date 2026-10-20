@@ -93,39 +93,110 @@ export const personName = (c) => [c?.first_name, c?.last_name].filter(Boolean).j
 
 // ---------------------------------------------------------------- the email builder
 
+/**
+ * The sections an email is built from. Colours, fonts, the logo and the
+ * footer come from the Soil Doctor brand and are not chosen here: a section
+ * offers only the brand's own choices (a ground, a button style, a tag tone).
+ */
+export const BLOCK_GROUPS = [['sections', 'Brand sections'], ['basics', 'Basics']];
+
 export const BLOCKS = {
-  heading: { label: 'Heading', icon: 'edit', hint: 'A title' },
-  text: { label: 'Text', icon: 'list', hint: 'Paragraphs, bold, links, lists' },
-  button: { label: 'Button', icon: 'zap', hint: 'One clear action' },
-  image: { label: 'Image', icon: 'image', hint: 'A picture, with a link if you like' },
-  columns: { label: 'Two columns', icon: 'board', hint: 'Side by side; stacked on phones' },
-  divider: { label: 'Divider', icon: 'menu', hint: 'A thin line' },
-  spacer: { label: 'Space', icon: 'grip', hint: 'Breathing room' },
-  social: { label: 'Social links', icon: 'link', hint: 'Website, Facebook, YouTube…' },
-  html: { label: 'Custom HTML', icon: 'note', hint: 'For experts; scripts are removed' },
+  hero: { label: 'Hero', icon: 'sparkle', group: 'sections', hint: 'Eyebrow, a big outcome-led headline, one or two buttons' },
+  cards: { label: 'Cards', icon: 'board', group: 'sections', hint: 'Stories, offers or roles, two to a row' },
+  stats: { label: 'Figures', icon: 'dashboard', group: 'sections', hint: 'Up to four real numbers on Deep Green' },
+  data: { label: 'Soil data', icon: 'list', group: 'sections', hint: 'Readings on the low-to-high scale' },
+  steps: { label: 'Steps', icon: 'subtask', group: 'sections', hint: 'What to do, in order' },
+  details: { label: 'Details', icon: 'calendar', group: 'sections', hint: 'Date, time, place, dose: label and value' },
+  quote: { label: 'Testimonial', icon: 'note', group: 'sections', hint: 'A real person’s words, led by the outcome' },
+  panel: { label: 'Call to action', icon: 'zap', group: 'sections', hint: 'A Deep Green panel with a gold button' },
+  heading: { label: 'Heading', icon: 'edit', group: 'basics', hint: 'A title, with an eyebrow if you like' },
+  text: { label: 'Text', icon: 'list', group: 'basics', hint: 'Paragraphs, bold, links, lists' },
+  button: { label: 'Button', icon: 'zap', group: 'basics', hint: 'One clear action' },
+  image: { label: 'Image', icon: 'image', group: 'basics', hint: 'A real photo, with a link if you like' },
+  pulse: { label: 'Pulse line', icon: 'sound', group: 'basics', hint: 'The brand’s heartbeat line, between sections' },
+  divider: { label: 'Divider', icon: 'menu', group: 'basics', hint: 'A thin line' },
+  spacer: { label: 'Space', icon: 'grip', group: 'basics', hint: 'Breathing room' },
+  social: { label: 'Social links', icon: 'link', group: 'basics', hint: 'Website, Facebook, YouTube…' },
+  html: { label: 'Custom HTML', icon: 'note', group: 'basics', hint: 'For experts; sent in the brand’s colours and fonts' },
+  // older designs only: drawn as cards
+  columns: { label: 'Two columns', icon: 'board', group: 'legacy', hint: 'Older layout, shown as cards' },
 };
+
+export const BUTTON_STYLE_LABEL = { primary: 'Deep Green', secondary: 'Outline', gold: 'Gold (once per email)', link: 'Text link →' };
+export const TONE_LABEL = { paper: 'Paper', sand: 'Sand', dark: 'Deep Green' };
+export const TAG_TONE_LABEL = { good: 'Good — Mint', info: 'Info — Aqua', warn: 'Warning — Wheat' };
+export const HEADER_LABEL = {
+  light: ['Logo above', 'The full logo above the email'],
+  dark: ['Deep Green band', 'The logo on a Deep Green band'],
+  minimal: ['Small mark', 'For personal notes and follow-ups'],
+};
+export const GROUND_LABEL = { sand: 'Sand', paper: 'Paper' };
+export const LEVEL_WORDS = ['Very low', 'Low', 'Medium', 'Adequate', 'High'];
+// blocks whose example figures must be replaced before sending
+export const NUMBERS_BLOCKS = ['stats', 'data', 'quote', 'details'];
 
 export const SOCIAL_NETWORKS = [['website', 'Website'], ['facebook', 'Facebook'], ['instagram', 'Instagram'], ['linkedin', 'LinkedIn'], ['youtube', 'YouTube'], ['x', 'X'], ['whatsapp', 'WhatsApp']];
 
 let uid = 0;
 const blockId = () => `b${Date.now().toString(36)}${(uid += 1).toString(36)}`;
+const w = (en) => ({ en, hi: '' });
+const SITE = 'https://soildoctor.in';
 
-/** A new block of a type, with words in both languages ready to fill. */
+/** A new item for a list inside a section. */
+export function newItem(type) {
+  switch (type) {
+    case 'cards': return { tag: w('Advisory'), tag_tone: 'info', title: w('A specific title'), text: w('One or two sentences on what changes for the reader.'), link_text: w('Read more'), href: SITE };
+    case 'stats': return { value: w('0'), label: w('what it counts') };
+    case 'data': return { label: w('Nutrient'), value: w('0 kg/ha'), level: 3, status: w('') };
+    case 'steps': return { title: w('Do this'), text: w('One line on how.') };
+    case 'details': return { label: w('Label'), value: w('Value') };
+    default: return {};
+  }
+}
+
+/**
+ * A new block of a type, with words in both languages ready to fill. Figures,
+ * readings, testimonials and details start as examples: they must be replaced
+ * before the email can be sent.
+ */
 export function newBlock(type) {
   const base = { id: blockId(), type };
   switch (type) {
-    case 'heading': return { ...base, text: { en: 'A clear headline', hi: '' }, level: 1, align: 'left' };
-    case 'text': return { ...base, text: { en: 'Hello {{first_name|there}},\n\nWrite your message here.', hi: '' }, align: 'left' };
-    case 'button': return { ...base, text: { en: 'Find out more', hi: '' }, href: 'https://', align: 'left' };
-    case 'image': return { ...base, src: '', alt: { en: '', hi: '' }, href: '', align: 'center' };
-    case 'columns': return { ...base, columns: [{ title: { en: 'Left', hi: '' }, text: { en: 'A sentence or two.', hi: '' } }, { title: { en: 'Right', hi: '' }, text: { en: 'A sentence or two.', hi: '' } }] };
+    case 'hero': return {
+      ...base, tone: 'sand', align: 'left', eyebrow: w('Soil Doctor'), title: w('Know your soil before you sow'), highlight: w('your soil'),
+      text: w('Hello {{first_name|there}}, one or two sentences on what the reader gets.'),
+      button: { text: w('Book a soil test →'), href: `${SITE}/book`, style: 'primary' },
+    };
+    case 'cards': return { ...base, tone: 'paper', layout: 'grid', items: [newItem('cards'), newItem('cards')] };
+    case 'stats': return { ...base, example: true, eyebrow: w('This season'), items: [newItem('stats'), newItem('stats')], note: w('Where the figures come from.') };
+    case 'data': return {
+      ...base, example: true, eyebrow: w('Your readings'), title: w('What the soil shows'),
+      rows: [{ ...newItem('data'), label: w('Nitrogen (N)'), level: 2 }, { ...newItem('data'), label: w('Phosphorus (P)'), level: 3 }, { ...newItem('data'), label: w('Zinc (Zn)'), value: w('0 ppm'), level: 1 }],
+      note: w(''),
+    };
+    case 'steps': return { ...base, eyebrow: w('What to do'), title: w(''), items: [newItem('steps'), newItem('steps'), newItem('steps')] };
+    case 'details': return { ...base, example: true, items: [{ label: w('Date'), value: w('Saturday, 14 November') }, { label: w('Place'), value: w('Krishi Vigyan Kendra') }] };
+    case 'quote': return { ...base, example: true, tone: 'paper', outcome: w('The result, in a few words'), text: w('What they said, in their own words.'), name: w('Their name'), role: w('Farmer, village') };
+    case 'panel': return {
+      ...base, align: 'left', eyebrow: w('Next step'), title: w('Talk to us'), highlight: w(''), text: w('One sentence on why now.'),
+      button: { text: w('Request a demo →'), href: `${SITE}/demo` }, link: { text: w(''), href: '' },
+    };
+    case 'heading': return { ...base, eyebrow: w(''), text: w('A clear headline'), highlight: w(''), level: 1, align: 'left' };
+    case 'text': return { ...base, text: w('Hello {{first_name|there}},\n\nWrite your message here.'), align: 'left' };
+    case 'button': return { ...base, text: w('Find out more →'), href: 'https://', style: 'primary', align: 'left' };
+    case 'image': return { ...base, src: '', alt: w(''), caption: w(''), href: '', align: 'center' };
+    case 'columns': return { ...base, columns: [{ title: w('Left'), text: w('A sentence or two.') }, { title: w('Right'), text: w('A sentence or two.') }] };
+    case 'pulse':
     case 'divider': return base;
     case 'spacer': return { ...base, height: 24 };
-    case 'social': return { ...base, links: [{ network: 'website', url: 'https://soildoctor.in' }] };
-    case 'html': return { ...base, html: { en: '<p>Your HTML</p>', hi: '' } };
+    case 'social': return { ...base, links: [{ network: 'website', url: SITE }] };
+    case 'html': return { ...base, html: w('<p>Your HTML</p>') };
     default: return base;
   }
 }
+
+/** A block once someone has edited it: no longer the template's example. */
+export const withoutExample = ({ example, ...block }) => block;
 
 /** Gives every block an id the editor can track (designs from templates have none). */
 export const withIds = (design) => ({ ...design, blocks: (design?.blocks || []).map((b) => (b.id ? b : { ...b, id: blockId() })) });
@@ -145,20 +216,56 @@ export const pick = (value, lang = 'en') => (value && typeof value === 'object' 
 /** Sets one language of a field, turning a plain string into { en, hi }. */
 export const setLang = (value, lang, text) => ({ ...(value && typeof value === 'object' ? value : { en: value || '', hi: '' }), [lang]: text });
 
-export const designHasHindi = (design) => (design?.blocks || []).some(
-  (b) => ['text', 'heading', 'button', 'html'].some((k) => b[k] && typeof b[k] === 'object' && String(b[k].hi || '').trim())
-    || (b.columns || []).some((c) => String(c.text?.hi || c.title?.hi || '').trim()),
-);
+/** Whether any words in a design have been written in Hindi. */
+export function designHasHindi(design) {
+  const visit = (node, key) => {
+    if (!node || typeof node !== 'object' || key === 'condition') return false;
+    if (Array.isArray(node)) return node.some((n) => visit(n));
+    if (typeof node.hi === 'string' && node.hi.trim()) return true;
+    return Object.entries(node).some(([k, v]) => visit(v, k));
+  };
+  return (design?.blocks || []).some((b) => visit(b));
+}
+
+const plainWords = (value, lang = 'en') => String(pick(value, lang) || pick(value, 'en') || '')
+  .replace(/<[^>]+>/g, ' ').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/[*#]/g, '').replace(/\s+/g, ' ').trim();
 
 /** What a block shows in the builder's outline. */
-export function blockSummary(block) {
-  const text = pick(block.text) || pick(block.html) || pick(block.alt) || '';
-  const plain = String(text).replace(/<[^>]+>/g, ' ').replace(/[*#[\]()]/g, '').replace(/\s+/g, ' ').trim();
-  if (block.type === 'columns') return (block.columns || []).map((c) => pick(c.title)).filter(Boolean).join(' · ');
-  if (block.type === 'spacer') return `${block.height || 24}px`;
-  if (block.type === 'social') return (block.links || []).map((l) => l.network).join(', ');
-  return plain.slice(0, 80);
+export function blockSummary(block, lang = 'en') {
+  const join = (list, f) => (list || []).map(f).filter(Boolean).join(' · ');
+  switch (block.type) {
+    case 'hero': case 'panel': return plainWords(block.title, lang) || plainWords(block.text, lang);
+    case 'cards': return join(block.items, (i) => plainWords(i.title, lang));
+    case 'stats': return join(block.items, (i) => [plainWords(i.value, lang), plainWords(i.label, lang)].filter(Boolean).join(' '));
+    case 'data': return join(block.rows, (r) => plainWords(r.label, lang));
+    case 'steps': return join(block.items, (i) => plainWords(i.title, lang));
+    case 'details': return join(block.items, (i) => `${plainWords(i.label, lang)}: ${plainWords(i.value, lang)}`);
+    case 'quote': return plainWords(block.text, lang);
+    case 'columns': return join(block.columns, (c) => plainWords(c.title, lang));
+    case 'spacer': return `${block.height || 24}px`;
+    case 'social': return (block.links || []).map((l) => l.network).join(', ');
+    case 'pulse': case 'divider': return '';
+    default: return (plainWords(block.text, lang) || plainWords(block.html, lang) || plainWords(block.alt, lang)).slice(0, 80);
+  }
 }
+
+/** Template categories, in the order the gallery shows them. */
+export const TEMPLATE_CATEGORIES = {
+  GENERAL: 'General', NEWSLETTER: 'Newsletter', ADVISORY: 'Advisory', REPORT: 'Report', PRODUCT: 'Product', EVENT: 'Event',
+  STORY: 'Impact story', PARTNER: 'Partners', INDUSTRY: 'Industry update', RETAIL: 'Retailers', WELCOME: 'Welcome', FOLLOW_UP: 'Follow-up',
+  GREETING: 'Greeting', REENGAGE: 'Re-engagement', CAREERS: 'Careers',
+};
+
+export const templateSource = (source) => {
+  if (!source || source === 'designed') return 'Designed here';
+  if (source.startsWith('starter:')) return 'From a starter';
+  if (source === 'upload:html') return 'Uploaded HTML';
+  if (source === 'upload:json') return 'Imported';
+  if (source === 'campaign') return 'Saved from a campaign';
+  return source;
+};
+
+export const fileSlug = (name) => String(name || 'template').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'template';
 
 export const CONDITION_KINDS = [
   ['', 'Everyone'],

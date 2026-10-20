@@ -46,9 +46,9 @@ the gap named. **Not built** = not in this release.
 
 | Mailchimp feature | TaskFlow | Status |
 |---|---|---|
-| Drag-and-drop builder | Heading, text, button, image, two columns, divider, space, social links, custom HTML; drag in, drag to reorder, keyboard arrows, duplicate | Built |
-| Templates | 8 starters (newsletter, festival greeting, product/offer, personal follow-up, jobs/internships, FPO industry update, welcome, re-engagement) in English and Hindi; save your own | Built |
-| Code your own | A custom HTML block (scripts, forms and frames are stripped) | Partly |
+| Drag-and-drop builder | Brand sections — hero, cards, figures, soil data, steps, details, testimonial, call to action — and basics (heading, text, button, image, pulse line, divider, space, social links, custom HTML); a canvas that shows the email in the brand; drag in, drag to reorder, keyboard arrows, duplicate; a live brand check | Built |
+| Templates | 14 Soil Doctor starters in English and Hindi with subject and preview text (field notes, festival, season advisory, soil report ready, product, follow-up, soil camp invite, FPO update, careers, welcome, re-engagement, impact story, partner programme update, retailer update); a gallery with live thumbnails; design your own, copy a starter, save a campaign as a template; export and import as a file | Built |
+| Code your own / import | Upload an HTML email from Mailchimp, Brevo, Campaign Monitor, HubSpot or a designer: styles are written onto the layout, merge tags converted, embedded images hosted, scripts removed, colours and fonts moved onto the brand, with a report of every change. Or a custom HTML block | Built |
 | Content studio / image hosting | Upload PNG/JPEG/GIF/WebP up to 2 MB, kept in the database, served publicly | Built (no image editor) |
 | Personalization (merge tags) | `{{first_name|fallback}}`, standard fields, `{{custom.key}}`, `{{festival}}` | Built |
 | Dynamic content | Show a block only to a language, tag, pipeline type, audience or field value | Built |
@@ -56,7 +56,8 @@ the gap named. **Not built** = not in this release.
 | Multilingual | English and Hindi side by side; each contact gets their language | Built (two languages) |
 | Preview, test emails | Server-rendered preview on computer or phone width, as any contact; test sends marked [Test] that never count in results | Built |
 | Inbox previews across mail apps | — | Not built |
-| Content checks | Empty subject, buttons without links, unknown merge tags, missing alt text, insecure links, missing Hindi, spammy subjects | Built |
+| Content checks | Empty subject, buttons without links, unknown merge tags, missing alt text, insecure links, missing Hindi, spammy subjects — and the brand rules: no emoji, example figures replaced, Deep Green never twice in a row, gold used sparingly | Built |
+| Brand control | Every email, whatever made it, is sent in the Soil Doctor brand: logo, palette, Manrope, pill buttons and footer are fixed; other colours move to the nearest brand colour | Built (beyond Mailchimp) |
 
 ### Sending
 
@@ -411,13 +412,17 @@ contact to audience, approval, sending (outbox), delivery event, click, reply,
 conversion, follow-up task, CRM history, unsubscribe enforcement, forms with
 double opt-in, imports, A/B tests, automations (welcome, TaskFlow event,
 festival), frequency limits, reports and CSV exports — is covered by automated
-tests and was walked through in a browser.
+tests and was walked through in a browser. Template upload was tested with
+HTML written the way Mailchimp and similar tools write it, not with real exports
+from each tool, and the new brand design was checked in Chromium only, not in
+Gmail, Outlook or Apple Mail.
 
 **Before the first real send**, send tests to a Gmail, an Outlook and an
 Apple Mail address and check placement (inbox vs spam), images, Hindi
 rendering and the one-click unsubscribe in Gmail's header.
 
-**Limits:** imports up to 50,000 rows / 15 MB per file; images up to 2 MB; up
+**Limits:** imports up to 50,000 rows / 15 MB per file; images up to 2 MB;
+uploaded templates up to 8 MB as a file and 900 KB once prepared; up
 to 8 A/B versions; segments up to 60 conditions, 4 levels deep; the outbox keeps
 the last 500 messages in memory and is empty after a restart.
 
@@ -438,3 +443,83 @@ the last 500 messages in memory and is empty after a restart.
   and preference links in emails already sent keep working.
 
 API reference: `docs/API.md` → *Email marketing*.
+
+---
+
+## 10. Templates and the Soil Doctor brand
+
+Every email TaskFlow sends — campaigns, automation emails, tests, festival
+greetings and the "please confirm" email — follows the Soil Doctor design
+language (`soil-doctor-tokens.css`, October 2026). The brand is built into the
+renderer rather than left to whoever designs the email, so it cannot drift:
+
+- **Always added:** the Soil Doctor lockup at the top (or on a Deep Green band,
+  or the small mark for personal notes) linking to the website set in
+  Settings, and the footer with the mark, *Turning soil data into farmer
+  prosperity*, company, postal address and the unsubscribe links.
+- **Fixed:** Paper cards on a Sand (or Paper) ground, Manrope for everything
+  (Noto Sans Devanagari for Hindi, Source Serif 4 italic only in testimonials),
+  pill buttons in Deep Green, outline, gold or as a text link, 24–28 px
+  corners, eyebrows with the strata dot, gold numbers on Deep Green, the
+  data scale Soil Brown → Gold → Straw → Mint → Forest, and Mint / Aqua /
+  Wheat tags. A design chooses among these; it never picks a colour or font.
+- **Corrected:** colours in custom HTML or an uploaded template move to the
+  nearest brand colour (its main colour becomes Deep Green) and fonts to
+  Manrope, when it is saved and again when it is sent.
+- **Checked:** emoji, example figures not yet replaced, two Deep Green
+  sections in a row, more than two gold accents, and the usual sending checks.
+  Emoji and example figures stop a campaign or automation being approved.
+
+The logo, mark, strata dot, pulse line and watermark are PNG images served by
+TaskFlow at `/api/taskflow/m/brand/…` (mail apps do not show SVG). Gmail and
+Outlook do not load web fonts, so there Manrope falls back to Segoe UI,
+Helvetica or Arial; Outlook on Windows also draws square corners and no
+watermark. Apple Mail and iOS Mail show the full design.
+
+### Adding templates, on screen
+
+**Email marketing → Templates.** Anyone with *marketing.manage* can:
+
+1. **Copy a starter** (*Copy & edit*): the copy is yours to change; the starter
+   stays as it is. Starters marked *example sections* hold sample figures,
+   readings, testimonials or event details — replace them with real ones; until
+   then the email cannot be sent.
+2. **Design a template** from the brand layout (hero, text, call to action):
+   drag sections from the left, edit them on the right in English and Hindi,
+   and watch the brand check above the canvas. *Preview* shows exactly what is
+   sent, on a computer or a phone, as any contact.
+3. **Save a campaign as a template**, from the campaign's Content tab.
+4. **Upload a template**: an `.html` email exported from Mailchimp, Brevo,
+   Campaign Monitor or HubSpot, or made by a designer, or a `.json` file
+   exported from TaskFlow. The upload report lists every change: styles
+   written onto elements (mail apps drop `<style>` sections), merge tags
+   converted (`*|FNAME|*`, `[firstname,fallback=]`, `{{ contact.FIRSTNAME }}`
+   → `{{first_name}}`; unsubscribe and preference links → TaskFlow's), images
+   inside the file hosted, scripts, forms and frames removed, colours and fonts
+   moved onto the brand, wide layouts made to shrink on phones. Merge tags
+   TaskFlow cannot fill are listed for you to replace. Images the file points
+   to on someone's computer (`images/hero.png`) cannot be fetched: upload them
+   under Images and change the address. The template's own logo, if any, stays
+   in its HTML — remove it, since the Soil Doctor header is added.
+5. **Export** any template or starter as a `.json` file to keep, share or
+   import into another TaskFlow.
+
+Templates are archived, never deleted (*Show archived* brings them back).
+*Use* starts a campaign from a template with its subject and preview text.
+
+### Adding starters, for developers
+
+Starters live in `server/src/services/marketing/starters.js`. Add an object
+with a unique `key`, `name`, `category`, `description`, `subject` and
+`preheader` as `{ en, hi }`, and a `design` built from the section types in
+`server/src/lib/emailRender.js` (`BLOCK_TYPES`). Mark sections with sample
+numbers, readings, quotes or details `example: true`. The tests in
+`server/tests/emailTemplates.test.js` check every starter renders in both
+languages with only brand colours, known merge tags and no emoji. The keys
+`welcome`, `product`, `follow_up`, `festival` and `reengage` are used by the
+automation recipes and must stay.
+
+The brand values are in `server/src/lib/brand.js`. If the logo changes, render
+new PNGs into `server/src/assets/brand/` with the same file names (two lockups
+— ink and paper — at 4× of 150 px wide, the mark at 96 and 192 px, the strata
+dot, the pulse line and the watermark).

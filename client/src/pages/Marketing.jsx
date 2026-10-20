@@ -7,6 +7,7 @@ import EmailBuilder, { cleanDesign } from '../components/marketing/EmailBuilder.
 import MarketingContacts from '../components/marketing/MarketingContacts.jsx';
 import MarketingAudiences from '../components/marketing/MarketingAudiences.jsx';
 import MarketingSettings from '../components/marketing/MarketingSettings.jsx';
+import MarketingTemplates from '../components/marketing/MarketingTemplates.jsx';
 import { CampaignBadge, CopyButton, PreviewFrame, Stat, WorkflowBadge, forgetMarketingMeta, useMarketingMeta } from '../components/marketing/parts.jsx';
 import { formatDate } from '../lib/format.js';
 import { istDay, monthGrid, percent, personName, triggerSummary } from '../lib/marketing.js';
@@ -95,7 +96,9 @@ function NewCampaign({ meta, onClose }) {
       const { campaign } = await api.mkt.post('/campaigns', {
         name: form.name, audience_id: form.audience_id ? Number(form.audience_id) : null, create_task: form.create_task,
         deadline: form.deadline ? new Date(`${form.deadline}T18:00:00+05:30`).toISOString() : null,
-        ...(t ? { design: t.design, subject: t.subject?.en || null, subject_hi: t.subject?.hi || null } : { design: { blocks: [] } }),
+        ...(t ? {
+          design: t.design, subject: t.subject?.en || null, subject_hi: t.subject?.hi || null, preheader: t.preheader?.en || null, preheader_hi: t.preheader?.hi || null,
+        } : { design: { settings: { header: 'light', ground: 'sand' }, blocks: [] } }),
       });
       navigate(`/marketing/campaigns/${campaign.id}`);
     } catch (err) { toast.error(err); }
@@ -222,11 +225,11 @@ const RECIPES = [
   { key: 'welcome', name: 'Welcome series', note: 'When someone joins an audience: a welcome, then a nudge if they did not open it.', build: (t, aud) => ({
     trigger: { type: 'AUDIENCE_JOINED', audience_id: aud }, audience_id: aud,
     graph: { start: 's1', nodes: {
-      s1: { type: 'email', config: { subject: 'Welcome to EkoSight, {{first_name|}}', subject_hi: 'EkoSight में आपका स्वागत है', design: t.welcome }, next: 's2' },
+      s1: { type: 'email', config: { subject: 'Welcome to Soil Doctor, {{first_name|friend}}', subject_hi: 'Soil Doctor में आपका स्वागत है, {{first_name|मित्र}}', design: t.welcome }, next: 's2' },
       s2: { type: 'delay', config: { amount: 3, unit: 'days' }, next: 's3' },
       s3: { type: 'condition', config: { kind: 'opened' }, yes: 's4', no: 's5' },
       s4: { type: 'action', config: { kind: 'add_tag', value: 'engaged' }, next: null },
-      s5: { type: 'email', config: { subject: 'In case you missed it', design: t.welcome }, next: null },
+      s5: { type: 'email', config: { subject: 'Good decisions start with your soil', subject_hi: 'अच्छे फ़ैसले आपकी मिट्टी से शुरू होते हैं', design: t.welcome }, next: null },
     } },
   }) },
   { key: 'lead', name: 'Lead nurturing', note: 'When a lead is added in the pipeline: an introduction; a call task for whoever clicks, a follow-up for the rest.', build: (t) => ({
@@ -236,17 +239,17 @@ const RECIPES = [
       s2: { type: 'delay', config: { amount: 3, unit: 'days' }, next: 's3' },
       s3: { type: 'condition', config: { kind: 'clicked' }, yes: 's4', no: 's5' },
       s4: { type: 'action', config: { kind: 'create_task', title: 'Call {{name}} — clicked the introduction', due_days: 1 }, next: null },
-      s5: { type: 'email', config: { subject: 'A quick follow-up', design: t.follow_up }, next: null },
+      s5: { type: 'email', config: { subject: 'Following up on soil testing for {{organization|your farms}}', design: t.follow_up }, next: null },
     } },
   }) },
   { key: 'festival', name: 'Festival greetings', note: 'On each confirmed festival, a greeting in English or Hindi to an audience.', build: (t, aud) => ({
     trigger: { type: 'FESTIVAL', days_before: 0, send_hour: 9 }, audience_id: aud,
-    graph: { start: 's1', nodes: { s1: { type: 'email', config: { subject: 'Warm wishes on {{festival}}', subject_hi: '{{festival}} की हार्दिक शुभकामनाएँ', design: t.festival }, next: null } } },
+    graph: { start: 's1', nodes: { s1: { type: 'email', config: { subject: 'Warm wishes on {{festival|this festival}}', subject_hi: '{{festival|त्योहार}} की हार्दिक शुभकामनाएँ', design: t.festival }, next: null } } },
   }) },
   { key: 'reengage', name: 'Re-engagement', note: 'For people quiet for 90 days: one email asking if they want to stay; tags those who do not respond.', build: (t, aud) => ({
     trigger: { type: 'INACTIVE', days: 90 }, audience_id: aud,
     graph: { start: 's1', nodes: {
-      s1: { type: 'email', config: { subject: 'Do you still want to hear from us?', design: t.reengage }, next: 's2' },
+      s1: { type: 'email', config: { subject: 'Do you still want to hear from us?', subject_hi: 'क्या आप हमसे जुड़े रहना चाहते हैं?', design: t.reengage }, next: 's2' },
       s2: { type: 'delay', config: { amount: 7, unit: 'days' }, next: 's3' },
       s3: { type: 'condition', config: { kind: 'clicked' }, yes: 's4', no: 's5' },
       s4: { type: 'action', config: { kind: 'add_tag', value: 'reengaged' }, next: null },
@@ -256,7 +259,7 @@ const RECIPES = [
   { key: 'customer', name: 'New customer onboarding', note: 'When a lead becomes a customer: a welcome, and an onboarding call task for their owner.', build: (t) => ({
     trigger: { type: 'TASKFLOW_EVENT', event: 'BECAME_CUSTOMER' },
     graph: { start: 's1', nodes: {
-      s1: { type: 'email', config: { subject: 'Welcome aboard, {{first_name|}}', design: t.welcome }, next: 's2' },
+      s1: { type: 'email', config: { subject: 'Welcome to Soil Doctor, {{first_name|friend}}', subject_hi: 'Soil Doctor में आपका स्वागत है, {{first_name|मित्र}}', design: t.welcome }, next: 's2' },
       s2: { type: 'action', config: { kind: 'create_task', title: 'Onboarding call with {{name}}', due_days: 3 }, next: null },
     } },
   }) },
@@ -445,63 +448,6 @@ function Forms({ meta }) {
   );
 }
 
-// ---------------------------------------------------------------- templates
-
-function Templates({ meta }) {
-  const { can } = useAuth();
-  const toast = useToast();
-  const navigate = useNavigate();
-  const [data, setData] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [editing, setEditing] = useState(null);
-  const load = useCallback(() => api.mkt.get('/templates').then(setData).catch(() => {}), []);
-  useEffect(() => { load(); }, [load]);
-  const show = async (t, lang = 'en') => {
-    try { const r = await api.mkt.post('/preview', { design: t.design, subject: t.subject?.[lang] || t.name, lang }); setPreview({ t, html: r.html, lang }); } catch (err) { toast.error(err); }
-  };
-  const use = async (t) => {
-    try {
-      const { campaign } = await api.mkt.post('/campaigns', { name: t.name, design: t.design, subject: t.subject?.en || null, subject_hi: t.subject?.hi || null, create_task: true });
-      navigate(`/marketing/campaigns/${campaign.id}`);
-    } catch (err) { toast.error(err); }
-  };
-  if (!data) return <Spinner />;
-  const card = (t, saved) => (
-    <div key={t.id || t.key} className="mkt-template card">
-      <span className="mkt-template-name">{t.name}</span>
-      <span className="small muted">{t.description || t.category?.toLowerCase()}</span>
-      <div className="row wrap" style={{ marginTop: 'auto' }}>
-        <button type="button" className="btn btn-sm" onClick={() => show(t)}><Icon name="eye" size={13} /> Preview</button>
-        {can('marketing.manage') && <button type="button" className="btn btn-sm btn-primary" onClick={() => use(t)}>Use</button>}
-        {saved && can('marketing.manage') && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing({ ...t })}>Edit</button>}
-      </div>
-    </div>
-  );
-  return (
-    <div className="stack">
-      {data.saved.length > 0 && (<><h3>Your templates</h3><div className="mkt-template-grid">{data.saved.map((t) => card(t, true))}</div></>)}
-      <h3>Starter templates</h3>
-      <div className="small muted">Written in English and Hindi, in EkoSight’s colours. Using one makes a copy.</div>
-      <div className="mkt-template-grid">{data.starters.map((t) => card(t, false))}</div>
-      {preview && (
-        <Modal size="lg" title={preview.t.name} onClose={() => setPreview(null)}
-          footer={<div className="row"><button type="button" className="btn btn-sm" onClick={() => show(preview.t, preview.lang === 'en' ? 'hi' : 'en')}>{preview.lang === 'en' ? 'हिन्दी में देखें' : 'View in English'}</button></div>}>
-          <PreviewFrame html={preview.html} />
-        </Modal>
-      )}
-      {editing && (
-        <Modal size="mkt-wide" title={`Edit ${editing.name}`} onClose={() => setEditing(null)}
-          footer={<><button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button><button type="button" className="btn btn-primary" onClick={async () => { try { await api.mkt.patch(`/templates/${editing.id}`, { name: editing.name, design: editing.design }); setEditing(null); load(); toast.success('Template saved'); } catch (err) { toast.error(err); } }}>Save template</button></>}>
-          <div className="stack">
-            <Field label="Name"><input className="input" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} /></Field>
-            <EmailBuilder design={editing.design} meta={meta} onChange={(d) => setEditing((x) => ({ ...x, design: cleanDesign(d) }))} />
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------- the page
 
 export default function Marketing() {
@@ -526,7 +472,7 @@ export default function Marketing() {
       {tab === 'contacts' && <MarketingContacts meta={meta} />}
       {tab === 'audiences' && <MarketingAudiences meta={meta} onMetaChanged={refreshMeta} />}
       {tab === 'forms' && <Forms meta={meta} />}
-      {tab === 'templates' && <Templates meta={meta} />}
+      {tab === 'templates' && <MarketingTemplates meta={meta} />}
       {tab === 'settings' && <MarketingSettings onSaved={refreshMeta} />}
     </div>
   );

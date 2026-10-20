@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express, { Router } from 'express';
 
 import { config } from '../config.js';
@@ -13,6 +16,9 @@ import { formPage, messagePage, preferencesPage, unsubscribedPage, wordsFor } fr
 import { publicForm, submitForm } from '../services/marketing/forms.js';
 import { readAsset } from '../services/marketing/templates.js';
 import { handleReply, normalizeInbound } from '../services/marketing/replies.js';
+import { BRAND_FILES } from '../lib/brand.js';
+
+const BRAND_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../assets/brand');
 
 /**
  * Everything people and services outside TaskFlow reach, with no sign-in:
@@ -42,8 +48,8 @@ const html = (res, status, body) => {
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
     'Referrer-Policy': 'no-referrer',
-    // the pages carry no scripts and are never framed
-    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self' https: data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+    // the pages carry no scripts and are never framed; the brand fonts come from Google Fonts
+    'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' https: data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   });
   res.send(body);
 };
@@ -267,6 +273,14 @@ router.post('/f/:publicId', form, json, asyncHandler(async (req, res) => {
 }));
 
 // ---------------------------------------------------------------- images in emails
+
+/** The Soil Doctor logo, strata dot, pulse divider and watermark every email uses. */
+router.get('/brand/:file', (req, res) => {
+  const file = String(req.params.file);
+  if (!BRAND_FILES.includes(file)) return res.status(404).end();
+  res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=604800', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'" });
+  return fs.createReadStream(path.join(BRAND_DIR, file)).on('error', () => res.status(404).end()).pipe(res);
+});
 
 router.get('/a/:publicId/:name', asyncHandler(async (req, res) => {
   const asset = /^[A-Za-z0-9_-]{8,40}$/.test(req.params.publicId) ? await readAsset(req.params.publicId) : null;

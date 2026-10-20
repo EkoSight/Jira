@@ -163,7 +163,7 @@ export default function MarketingSettings({ onSaved }) {
         enabled: s.enabled, company: s.company, postalAddress: s.postalAddress, defaultFromName: s.defaultFromName, defaultFromEmail: s.defaultFromEmail,
         defaultReplyTo: s.defaultReplyTo, replyPlusAddressing: s.replyPlusAddressing, senders: s.senders, sendingDomain: s.sendingDomain,
         dkimSelectors: s.dkimSelectors, approvals: s.approvals, limits: s.limits, followUps: s.followUps, crmSync: s.crmSync, replies: s.replies,
-        softBounceLimit: s.softBounceLimit, sto: s.sto,
+        softBounceLimit: s.softBounceLimit, sto: s.sto, website: s.website ?? '', tagline: s.tagline ?? '',
       });
       setView(r); setS(r.settings);
       toast.success('Settings saved');
@@ -208,6 +208,14 @@ export default function MarketingSettings({ onSaved }) {
             <Field label="Replies go to" hint="A mailbox someone reads"><input className="input" value={s.defaultReplyTo} onChange={(e) => set('defaultReplyTo', e.target.value)} placeholder="hello@ekosight.com" /></Field>
             <Field label="Approved senders" hint="Comma-separated. When set, only these addresses can send.">
               <input className="input" value={(s.senders || []).map((x) => x.email).join(', ')} onChange={(e) => set('senders', e.target.value.split(',').map((x) => x.trim()).filter(Boolean).map((email) => ({ email })))} />
+            </Field>
+          </div>
+          <div className="grid-2">
+            <Field label="Logo links to" hint="Where the Soil Doctor logo at the top of every email goes (https).">
+              <input className="input" value={s.website ?? ''} onChange={(e) => set('website', e.target.value)} placeholder="https://soildoctor.in" />
+            </Field>
+            <Field label="Line under the footer mark" hint="The brand line in every footer. Leave empty for none.">
+              <input className="input" value={s.tagline ?? ''} onChange={(e) => set('tagline', e.target.value)} placeholder="Turning soil data into farmer prosperity" maxLength={120} />
             </Field>
           </div>
           <label className="row small"><input type="checkbox" checked={Boolean(s.replyPlusAddressing)} onChange={(e) => set('replyPlusAddressing', e.target.checked)} /> Add a code to the reply address (replies+code@…) so each reply is matched to the email it answers. Google Workspace delivers these to the same mailbox.</label>

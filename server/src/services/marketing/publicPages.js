@@ -1,10 +1,13 @@
 /**
  * The pages people outside TaskFlow see: the preference and unsubscribe page,
  * confirmations, and hosted signup forms. Plain server-rendered HTML with no
- * scripts, so they work on any phone and leak nothing.
+ * scripts, so they work on any phone and leak nothing; in the Soil Doctor
+ * brand, like the emails that link to them.
  */
 
 import { escapeHtml as e } from '../../lib/emailRender.js';
+import { BRAND, FONTS, TAGLINE } from '../../lib/brand.js';
+import { publicBase } from './core.js';
 
 const WORDS = {
   en: {
@@ -45,42 +48,62 @@ const WORDS = {
 
 export const wordsFor = (lang) => WORDS[lang] || WORDS.en;
 
-/** A whole page around some content. */
+/** A whole page around some content, in the Soil Doctor brand. */
 export function page({ title, body, lang = 'en', company = 'EkoSight' }) {
+  const brand = `${publicBase()}/brand`;
   return `<!DOCTYPE html>
 <html lang="${lang === 'hi' ? 'hi' : 'en'}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>${e(title)} · ${e(company)}</title>
+<meta name="color-scheme" content="light">
+<title>${e(title)} · Soil Doctor</title>
+<link rel="icon" href="${brand}/mark-96.png">
+<link rel="stylesheet" href="${FONTS.link}">
 <style>
-  :root { --ink:#1f2a24; --muted:#5b6b61; --line:#d9e2db; --brand:#1f7a4d; --bg:#eef2ee; --card:#ffffff; --danger:#b42318; }
-  @media (prefers-color-scheme: dark) { :root { --ink:#e7eee9; --muted:#a5b3aa; --line:#33403a; --brand:#4fb07c; --bg:#141a17; --card:#1c2420; --danger:#f97066; } }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 'Segoe UI', Roboto, 'Noto Sans Devanagari', 'Nirmala UI', Arial, sans-serif; }
-  main { max-width:560px; margin:32px auto; padding:0 16px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:24px; }
-  h1 { font-size:22px; margin:0 0 8px; line-height:1.3; }
-  h2 { font-size:15px; margin:20px 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  :root { --deep:${BRAND.deepGreen}; --forest:${BRAND.forest}; --ink:${BRAND.ink}; --body:${BRAND.body}; --muted:${BRAND.muted};
+    --paper:${BRAND.paper}; --sand:${BRAND.sand}; --sand-hover:${BRAND.sandHover}; --mint:${BRAND.mint};
+    --line:rgba(16,21,16,.09); --line-strong:rgba(16,21,16,.16);
+    --strata:linear-gradient(180deg,#9DDCF8 0 22%,#FFF 22% 25%,#AED252 25% 50%,#FFF 50% 54%,#8B5E3B 54% 75%,#FFF 75% 78%,#593C28 78%); }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--sand); color:var(--body); font:16px/1.55 ${FONTS.sans}; -webkit-font-smoothing:antialiased; }
+  main { max-width:580px; margin:0 auto; padding:28px 16px 40px; }
+  .logo { display:block; width:150px; height:auto; margin:0 0 20px 6px; }
+  .card { background:var(--paper); border:1px solid var(--line); border-radius:28px; padding:34px 32px 30px; box-shadow:0 18px 40px rgba(7,63,42,.06); }
+  h1 { font-size:30px; line-height:1.1; font-weight:800; letter-spacing:-.035em; color:var(--ink); margin:0 0 12px; text-wrap:balance; }
+  h2 { display:flex; align-items:center; gap:10px; font-size:13px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:var(--forest); margin:26px 0 8px; }
+  h2::before { content:""; width:16px; height:16px; border-radius:50%; flex-shrink:0; background:var(--strata); }
+  :lang(hi) h2 { letter-spacing:0; text-transform:none; } :lang(hi) h1 { letter-spacing:0; line-height:1.35; }
   p { margin:0 0 12px; }
   .muted { color:var(--muted); font-size:14px; }
-  label.row { display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--line); }
+  label.row { display:flex; gap:12px; align-items:flex-start; padding:12px 0; border-top:1px solid var(--line); color:var(--ink); }
   label.row:first-of-type { border-top:0; }
-  input[type=checkbox] { width:18px; height:18px; margin-top:3px; accent-color:var(--brand); }
-  input[type=text], input[type=email], input[type=number], input[type=date], select { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px; font:inherit; background:var(--card); color:var(--ink); }
-  .field { margin-bottom:14px; } .field span { display:block; font-size:14px; font-weight:600; margin-bottom:4px; }
-  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
-  button { font:inherit; border-radius:8px; padding:10px 18px; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--ink); }
-  button.primary { background:var(--brand); border-color:var(--brand); color:#fff; font-weight:600; }
-  button.danger { color:var(--danger); border-color:var(--danger); }
-  button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--brand); outline-offset:2px; }
-  .notice { background:color-mix(in srgb, var(--brand) 12%, transparent); border-radius:8px; padding:10px 12px; margin-bottom:14px; }
+  input[type=checkbox] { width:18px; height:18px; margin-top:3px; accent-color:var(--deep); }
+  input[type=text], input[type=email], input[type=number], input[type=date], select { width:100%; padding:12px 14px; border:1px solid var(--line-strong); border-radius:14px; font:inherit; background:var(--paper); color:var(--ink); }
+  .field { display:block; margin-bottom:16px; } .field span { display:block; font-size:12px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); margin-bottom:6px; }
+  :lang(hi) .field span { letter-spacing:0; text-transform:none; font-size:14px; }
+  .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; }
+  button { font:700 15.5px/1 ${FONTS.sans}; border-radius:999px; padding:15px 26px; cursor:pointer; border:1px solid var(--line-strong); background:var(--paper); color:var(--ink); transition:background .2s; }
+  button:hover { background:var(--sand); }
+  button.primary { background:var(--deep); border-color:var(--deep); color:var(--paper); }
+  button.primary:hover { background:var(--forest); }
+  button.danger { color:var(--ink); }
+  :focus-visible { outline:2px solid var(--forest); outline-offset:2px; }
+  .notice { background:var(--mint); color:var(--deep); font-weight:700; border-radius:18px; padding:12px 16px; margin-bottom:16px; }
   .hp { position:absolute; left:-5000px; width:1px; height:1px; overflow:hidden; }
-  footer { text-align:center; margin:18px 0 32px; }
+  footer { text-align:center; margin:22px 0 0; }
+  footer img { width:28px; height:28px; display:block; margin:0 auto 8px; }
+  footer strong { display:block; color:var(--ink); font-size:13px; }
+  @media (max-width:520px) { .card { padding:26px 20px 22px; border-radius:24px; } h1 { font-size:26px; } }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
 </style>
 </head>
-<body><main><div class="card">${body}</div><footer class="muted">${e(company)}</footer></main></body>
+<body><main>
+<img class="logo" src="${brand}/lockup-ink.png" width="150" height="45" alt="Soil Doctor by ekosight">
+<div class="card">${body}</div>
+<footer class="muted"><img src="${brand}/mark-96.png" alt=""><strong>${e(TAGLINE)}</strong>${e(company)}</footer>
+</main></body>
 </html>`;
 }
 

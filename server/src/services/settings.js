@@ -171,6 +171,9 @@ export const DEFAULT_SETTINGS = {
     // the footer every email carries: who it is from and where they are
     company: 'EkoSight',
     postalAddress: '',
+    // the logo in every email links here; the line under the footer mark
+    website: 'https://soildoctor.in',
+    tagline: 'Turning soil data into farmer prosperity',
     defaultFromName: 'EkoSight Soil Doctor',
     defaultFromEmail: '',
     // a mailbox people read. With plus addressing (Google Workspace supports

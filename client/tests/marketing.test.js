@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  designHasHindi, insertAt, insertNode, monthGrid, moveItem, needsValue, newBlock, newCondition, nodeSummary, pathTree,
-  percent, pick, removeNode, setLang, skipWords, sourceWords, triggerSummary, withIds,
+  BLOCKS, NUMBERS_BLOCKS, blockSummary, designHasHindi, fileSlug, insertAt, insertNode, monthGrid, moveItem, needsValue, newBlock, newCondition,
+  newItem, nodeSummary, pathTree, percent, pick, removeNode, setLang, skipWords, sourceWords, templateSource, triggerSummary, withIds, withoutExample,
 } from '../src/lib/marketing.js';
 
 test('blocks move to where they are dropped', () => {
@@ -23,12 +23,48 @@ test('every new block has an id and both languages ready', () => {
   assert.ok(design.blocks[0].id);
 });
 
+test('every brand section starts with content to edit, and figures start as examples to replace', () => {
+  const placed = Object.entries(BLOCKS).filter(([, b]) => b.group !== 'legacy').map(([type]) => type);
+  for (const type of placed) {
+    const block = newBlock(type);
+    assert.equal(block.type, type);
+    assert.equal(Boolean(block.example), NUMBERS_BLOCKS.includes(type), `${type} example flag`);
+    // nothing a new section offers is a free colour: only the brand's own choices
+    assert.doesNotMatch(JSON.stringify(block), /#[0-9a-f]{3,6}\b|"color"/i, `${type} has no colour of its own`);
+  }
+  assert.ok(!placed.includes('columns'), 'the older two-column block is not offered for new emails');
+  assert.equal(newBlock('hero').button.style, 'primary');
+  assert.equal(newBlock('stats').items.length, 2);
+  assert.deepEqual(Object.keys(newItem('data')).sort(), ['label', 'level', 'status', 'value']);
+  const edited = withoutExample({ ...newBlock('stats'), note: { en: 'Real', hi: '' } });
+  assert.equal('example' in edited, false);
+});
+
+test('the outline names each section by its own words', () => {
+  assert.equal(blockSummary({ type: 'hero', title: { en: 'Sow with the right dose', hi: 'सही मात्रा' } }), 'Sow with the right dose');
+  assert.equal(blockSummary({ type: 'hero', title: { en: 'Sow', hi: 'बुवाई' } }, 'hi'), 'बुवाई');
+  assert.equal(blockSummary({ type: 'stats', items: [{ value: '62%', label: 'low zinc' }, { value: '38', label: 'villages' }] }), '62% low zinc · 38 villages');
+  assert.equal(blockSummary({ type: 'details', items: [{ label: 'Date', value: '14 Nov' }] }), 'Date: 14 Nov');
+  assert.equal(blockSummary({ type: 'text', text: 'Hello **there**, [book](https://x.in)' }), 'Hello there, book');
+  assert.equal(blockSummary({ type: 'pulse' }), '');
+});
+
+test('templates are named for files and by where they came from', () => {
+  assert.equal(fileSlug('Rabi advisory — Sehore!'), 'rabi-advisory-sehore');
+  assert.equal(fileSlug(''), 'template');
+  assert.equal(templateSource('starter:welcome'), 'From a starter');
+  assert.equal(templateSource('upload:html'), 'Uploaded HTML');
+  assert.equal(templateSource(null), 'Designed here');
+});
+
 test('a field is read and written per language', () => {
   assert.equal(pick({ en: 'Hello', hi: 'नमस्ते' }, 'hi'), 'नमस्ते');
   assert.equal(pick('Hello', 'hi'), '', 'plain text is English');
   assert.deepEqual(setLang('Hello', 'hi', 'नमस्ते'), { en: 'Hello', hi: 'नमस्ते' });
   assert.equal(designHasHindi({ blocks: [{ type: 'text', text: { en: 'x', hi: '' } }] }), false);
   assert.equal(designHasHindi({ blocks: [{ type: 'text', text: { en: 'x', hi: 'नमस्ते' } }] }), true);
+  assert.equal(designHasHindi({ blocks: [{ type: 'cards', items: [{ title: { en: 'x', hi: 'ब' } }] }] }), true, 'Hindi inside a section’s items counts');
+  assert.equal(designHasHindi({ blocks: [{ type: 'text', text: { en: 'x' }, condition: { type: 'language', hi: 'x' } }] }), false);
 });
 
 test('adding a step keeps what came after it', () => {

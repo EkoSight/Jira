@@ -14,16 +14,18 @@ import { badRequest } from '../../lib/errors.js';
 export const MODEL = 'claude-opus-5-5';
 
 const TASKS = {
-  subjects: 'Write 5 different subject lines for this email. Each under 60 characters, clear and specific, no ALL CAPS, at most one emoji in total across all of them, nothing that reads like spam.',
+  subjects: 'Write 5 different subject lines for this email. Each under 60 characters, clear and specific, no ALL CAPS, no emoji, no exclamation marks, nothing that reads like spam.',
   preheader: 'Write 3 options for the preview text (preheader) shown after the subject in an inbox. Each 40–100 characters, adding to the subject rather than repeating it.',
-  rewrite: 'Rewrite this text to be clearer and warmer while keeping every fact, number, date and link exactly as given. Give 2 versions.',
+  rewrite: 'Rewrite this text to be clearer and more specific, in the brand voice, while keeping every fact, number, date and link exactly as given. Give 2 versions.',
   shorten: 'Make this text about half as long while keeping every fact, number, date and link exactly as given. Give 2 versions.',
   translate_hi: 'Translate this text into natural, simple Hindi (Devanagari script) suitable for farmers and business readers in India. Keep names, product names (Soil Doctor, EkoSight), numbers, dates, links and anything inside {{ }} exactly as written. Give 1 version.',
   translate_en: 'Translate this text into clear, simple Indian English. Keep names, numbers, dates, links and anything inside {{ }} exactly as written. Give 1 version.',
-  draft: 'Write a first draft of a short marketing email body (under 180 words) from this brief. Use short paragraphs, plain words, and one clear call to action. Use **bold** sparingly and [label](https://link) for links only where the brief gives a link. Give 2 versions.',
+  draft: 'Write a first draft of a short marketing email body (under 180 words) from this brief. Lead with the outcome for the reader, use short paragraphs and plain words, and end with one short call to action (for example "Book a soil test →"). Use **bold** sparingly and [label](https://link) for links only where the brief gives a link. Give 2 versions.',
 };
 
 const SYSTEM = `You help the team at EkoSight (maker of Soil Doctor, a soil-testing device and service for Indian agriculture) write marketing emails for customers, leads, farmer producer organizations (FPOs), farmers, students, partners and dealers.
+Write in the Soil Doctor brand voice: confident, specific and outcome-led, built on "Data → Intelligence → Decision" — what the soil data shows, what it means, what to do. Prefer concrete outcomes (kg per acre, rupees saved, days) to adjectives. Short, direct calls to action such as "Talk to us" or "Request a demo →". Respectful and warm to farmers, never salesy or hyped.
+Never use emoji, ALL CAPS, or more than one exclamation mark. No filler phrases ("revolutionary", "cutting-edge", "game-changer").
 Write honestly: never invent facts, prices, offers, dates, statistics or testimonials that the input does not contain. Keep merge tags such as {{first_name}} exactly as written.
 Answer only through the JSON format you are given.`;
 

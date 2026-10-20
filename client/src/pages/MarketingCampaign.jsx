@@ -6,38 +6,13 @@ import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '.
 import EmailBuilder, { cleanDesign } from '../components/marketing/EmailBuilder.jsx';
 import { AiAssist, CampaignBadge, LangSwitch, useMarketingMeta } from '../components/marketing/parts.jsx';
 import { CampaignReport } from '../components/marketing/MarketingReports.jsx';
+import { TemplatePicker } from '../components/marketing/MarketingTemplates.jsx';
 import { formatDate, fromDateTimeLocal, toDateTimeLocal } from '../lib/format.js';
 import { withIds } from '../lib/marketing.js';
 
 const EDITABLE = ['DRAFT', 'IN_REVIEW', 'APPROVED', 'SCHEDULED'];
 const STARTED = ['SENDING', 'TESTING', 'SENT', 'PAUSED', 'CANCELLED'];
 const VERSION_KEYS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-
-function TemplatePicker({ onPick, onClose }) {
-  const [data, setData] = useState(null);
-  useEffect(() => { api.mkt.get('/templates').then(setData).catch(() => setData({ starters: [], saved: [] })); }, []);
-  return (
-    <Modal title="Start from a template" onClose={onClose} size="lg">
-      {!data ? <Spinner /> : (
-        <div className="stack">
-          {[['Your templates', data.saved], ['Starter templates', data.starters]].map(([title, list]) => list.length > 0 && (
-            <div key={title} className="stack-sm">
-              <h3>{title}</h3>
-              <div className="mkt-template-grid">
-                {list.map((t) => (
-                  <button key={t.id || t.key} type="button" className="mkt-template card" onClick={() => onPick(t)}>
-                    <span className="mkt-template-name">{t.name}</span>
-                    <span className="small muted">{t.description || t.category}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Modal>
-  );
-}
 
 function Checks({ checks }) {
   if (!checks) return <Spinner label="Checking" />;
@@ -189,6 +164,7 @@ export default function MarketingCampaign() {
   const useTemplate = (t) => {
     set('design', withIds(t.design));
     if (t.subject && !draft.subject) { set('subject', t.subject.en || ''); set('subject_hi', t.subject.hi || ''); }
+    if (t.preheader && !draft.preheader) { set('preheader', t.preheader.en || ''); set('preheader_hi', t.preheader.hi || ''); }
     setBuilderKey((k) => k + 1);
     setPicking(false);
     toast.info(`Using “${t.name}” — remember to save`);
@@ -196,7 +172,10 @@ export default function MarketingCampaign() {
 
   const saveAsTemplate = async () => {
     try {
-      await api.mkt.post('/templates', { name: draft.name, category: 'GENERAL', description: draft.subject || '', design: cleanDesign(draft.design) });
+      await api.mkt.post('/templates', {
+        name: draft.name, category: 'GENERAL', description: `Saved from the campaign “${draft.name}”`, design: cleanDesign(draft.design),
+        subject: { en: draft.subject || '', hi: draft.subject_hi || '' }, preheader: { en: draft.preheader || '', hi: draft.preheader_hi || '' }, source: 'campaign',
+      });
       toast.success('Saved as a template');
     } catch (err) { toast.error(err); }
   };

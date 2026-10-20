@@ -480,7 +480,12 @@ permission. See `docs/EMAIL_MARKETING.md` for how the module works.
 | GET, POST, PATCH | `/marketing/topics[/:id]`, `/marketing/segments[/:id]` | view / manage |
 | POST | `/marketing/segments/preview` | view — `{ rules, audience_id }` → count and sample |
 | GET, POST, PATCH | `/marketing/forms[/:id]`; GET `/marketing/forms/:id/embed` | view / manage |
-| GET, POST, PATCH | `/marketing/templates[/:id]` | view / manage — starters are read-only |
+| GET, POST, PATCH | `/marketing/templates[/:id]` | view / manage — `{ name, category, description, subject: {en,hi}, preheader: {en,hi}, design, is_archived }`; starters are read-only. The list returns `{ starters, saved, categories }` |
+| GET | `/marketing/templates/:id/preview?lang=`, `/marketing/templates/starters/:key/preview?lang=` | view — `{ html, text }` for a sample reader |
+| GET | `/marketing/templates/:id/export`, `/marketing/templates/starters/:key/export` | view — a `taskflow.email-template` JSON file |
+| POST | `/marketing/templates/starters/:key/copy` | manage — `{ name? }` → the copy |
+| POST | `/marketing/templates/upload?filename=&name=&category=` | manage — body is the file (`application/octet-stream`, ≤8 MB): HTML or a TaskFlow export → `{ template, report: { notes: [{ tone, text }], … } }` |
+| POST | `/marketing/design-check` | view — `{ design, subject?, subject_hi?, languages? }` → `{ problems, warnings }`, the brand and sending checks |
 | GET, POST | `/marketing/assets` | view / manage — POST body is the image (`image/*`, ≤2 MB, `?filename`) |
 | POST | `/marketing/preview` | view — `{ design, subject, preheader, lang, contact_id }` → `{ html, text }` |
 | POST | `/marketing/test` | manage — a test of any design to ≤10 addresses |
@@ -526,6 +531,7 @@ permission. See `docs/EMAIL_MARKETING.md` for how the module works.
 | GET | `/m/confirm/:token` | double opt-in confirmation |
 | GET, POST | `/m/f/:publicId` | hosted signup form / submission (form post or JSON) |
 | GET | `/m/a/:publicId/:name` | an image used in emails |
+| GET | `/m/brand/:file` | the Soil Doctor images every email loads: `lockup-ink.png`, `lockup-paper.png`, `mark-96.png`, `mark-192.png`, `dot.png`, `pulse.png`, `watermark.png` |
 | POST | `/m/webhooks/ses` | SNS notifications; signature verified; only `AWS_SES_SNS_TOPIC_ARN` |
 | POST | `/m/webhooks/brevo/:secret` | Brevo events; secret must equal `EMAIL_WEBHOOK_SECRET` |
 | POST | `/m/inbound/:key` | replies from an inbound mail service; key must equal `MARKETING_INBOUND_KEY` |

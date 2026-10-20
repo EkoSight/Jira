@@ -7,7 +7,10 @@ import { asyncHandler, badRequest, conflict, forbidden, notFound } from '../lib/
 import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
 import { sendCsv } from '../lib/csv.js';
-import { BLOCK_TYPES, MERGE_TAGS, renderEmail } from '../lib/emailRender.js';
+import {
+  BLOCK_TYPES, BUTTON_STYLES, GROUNDS, HEADER_STYLES, MERGE_TAGS, TAG_TONES, TONES, checkDesign, pick, renderEmail,
+} from '../lib/emailRender.js';
+import { slug } from '../lib/emailImport.js';
 import { getSettings, updateSetting } from '../services/settings.js';
 import {
   localParts, logContactActivity, marketingSettings, normalizeEmail, publicBase, recordConsent, suppress,
@@ -22,7 +25,9 @@ import {
 } from '../services/marketing/audiences.js';
 import { OPERATORS, SEGMENT_FIELDS, compileRules, getSegment, listSegments, previewSegment, saveSegment } from '../services/marketing/segments.js';
 import { embedCode, listForms, saveForm } from '../services/marketing/forms.js';
-import { getTemplate, listAssets, listTemplates, saveAsset, saveTemplate } from '../services/marketing/templates.js';
+import {
+  copyStarter, exportStarter, exportTemplate, getStarter, getTemplate, importTemplate, listAssets, listTemplates, saveAsset, saveTemplate,
+} from '../services/marketing/templates.js';
 import {
   approveCampaign, calendar, cancelCampaign, duplicateCampaign, finishTest, getCampaign, listCampaigns, pauseCampaign,
   requestChanges, resumeCampaign, reviewChecks, saveCampaign, scheduleCampaign, submitForReview, unscheduleCampaign,
@@ -31,7 +36,7 @@ import {
   ACTIONS, CONDITIONS, NODE_TYPES, TASKFLOW_EVENTS, TRIGGERS, approveWorkflow, enrollManually, enrollmentsFor, getWorkflow,
   listWorkflows, saveWorkflow, setWorkflowStatus, submitWorkflow, validateWorkflow,
 } from '../services/marketing/automations.js';
-import { personFor, retryFailed, sendTest } from '../services/marketing/queue.js';
+import { brandFor, personFor, retryFailed, sendTest } from '../services/marketing/queue.js';
 import { recordEvent } from '../services/marketing/events.js';
 import { listFollowUps } from '../services/marketing/followups.js';
 import {
@@ -81,6 +86,7 @@ router.get('/meta', asyncHandler(async (req, res) => {
   ]);
   res.json({
     segment_fields: SEGMENT_FIELDS, operators: OPERATORS, custom_fields: fields, merge_tags: MERGE_TAGS, block_types: BLOCK_TYPES,
+    design_options: { header: HEADER_STYLES, ground: GROUNDS, button: BUTTON_STYLES, tone: TONES, tag_tone: TAG_TONES },
     triggers: TRIGGERS, taskflow_events: TASKFLOW_EVENTS, node_types: NODE_TYPES, conditions: CONDITIONS, actions: ACTIONS,
     audience_kinds: AUDIENCE_KINDS, audiences, topics, users, crm_segments: segments,
     providers: PROVIDER_LIST, provider: providerStatus(), ai: aiAvailable(), tracking_notes: TRACKING_NOTES,
@@ -360,10 +366,71 @@ router.get('/forms/:id/embed', asyncHandler(async (req, res) => {
 
 // ---------------------------------------------------------------- templates and images
 
+const download = (res, filename, data) => {
+  res.set({ 'Content-Type': 'application/json; charset=utf-8', 'Content-Disposition': `attachment; filename="${filename}"` });
+  res.send(JSON.stringify(data, null, 2));
+};
+const previewLang = (req) => (req.query.lang === 'hi' ? 'hi' : 'en');
+
 router.get('/templates', asyncHandler(async (req, res) => res.json(await listTemplates({ includeArchived: req.query.archived === 'true' }))));
+
+// the starters that ship with TaskFlow: previewed, copied, exported — never changed
+router.get('/templates/starters/:key/preview', asyncHandler(async (req, res) => {
+  const s = getStarter(String(req.params.key));
+  const lang = previewLang(req);
+  res.json(await preview({ design: s.design, subject: pick(s.subject, lang), preheader: pick(s.preheader, lang), lang, festival: lang === 'hi' ? 'दीपावली' : 'Diwali' }));
+}));
+router.get('/templates/starters/:key/export', asyncHandler(async (req, res) => {
+  const s = getStarter(String(req.params.key));
+  download(res, `${slug(s.name)}.json`, exportStarter(s.key));
+}));
+router.post('/templates/starters/:key/copy', manage, asyncHandler(async (req, res) => {
+  res.status(201).json({ template: await copyStarter(String(req.params.key), { name: req.body?.name }, req.currentUser) });
+}));
+
+/** An HTML file or a TaskFlow export, sent as the raw file. */
+router.post('/templates/upload', manage, express.raw({ type: () => true, limit: '8mb' }), asyncHandler(async (req, res) => {
+  let content = '';
+  if (Buffer.isBuffer(req.body)) content = req.body;
+  else if (typeof req.body === 'string') content = req.body;
+  else if (req.body && typeof req.body === 'object' && Object.keys(req.body).length) content = JSON.stringify(req.body);
+  const result = await importTemplate({
+    content, filename: String(req.query.filename || '').slice(0, 200), name: String(req.query.name || '').slice(0, 200), category: String(req.query.category || ''),
+  }, req.currentUser);
+  res.status(201).json(result);
+}));
+
 router.get('/templates/:id', asyncHandler(async (req, res) => res.json({ template: await getTemplate(id(req.params.id)) })));
+router.get('/templates/:id/preview', asyncHandler(async (req, res) => {
+  const t = await getTemplate(id(req.params.id));
+  const lang = previewLang(req);
+  res.json(await preview({ design: t.design, subject: pick(t.subject, lang), preheader: pick(t.preheader, lang), lang, festival: lang === 'hi' ? 'दीपावली' : 'Diwali' }));
+}));
+router.get('/templates/:id/export', asyncHandler(async (req, res) => {
+  const t = await getTemplate(id(req.params.id));
+  download(res, `${slug(t.name)}.json`, exportTemplate(t));
+}));
 router.post('/templates', manage, asyncHandler(async (req, res) => res.status(201).json({ template: await saveTemplate(null, req.body || {}, req.currentUser) })));
 router.patch('/templates/:id', manage, asyncHandler(async (req, res) => res.json({ template: await saveTemplate(id(req.params.id), req.body || {}, req.currentUser) })));
+
+/** The brand and sending checks for a design being edited, before it is saved or sent. */
+router.post('/design-check', asyncHandler(async (req, res) => {
+  const data = z.object({
+    design: z.object({ blocks: z.array(z.any()) }).passthrough(),
+    subject: z.string().max(500).optional(), subject_hi: z.string().max(500).optional(),
+    languages: z.array(z.enum(['en', 'hi'])).max(2).optional(),
+  }).parse(req.body);
+  const { rows: fields } = await query('SELECT key FROM mkt_fields');
+  const result = checkDesign(data.design, {
+    subject: data.subject || '', subjectHi: data.subject_hi || '', languages: data.languages || ['en'], customKeys: fields.map((f) => f.key),
+  });
+  // a template may be saved without a subject; the campaign made from it needs one
+  if (!String(data.subject || '').trim()) {
+    result.problems = result.problems.filter((p) => p !== 'The subject line is empty');
+    result.warnings.unshift('No subject line yet: campaigns made from this template will need one');
+  }
+  res.json(result);
+}));
 
 router.get('/assets', asyncHandler(async (req, res) => res.json({ assets: await listAssets() })));
 router.post('/assets', manage, express.raw({ type: ['image/*', 'application/octet-stream'], limit: '2mb' }), asyncHandler(async (req, res) => {
@@ -387,6 +454,7 @@ async function preview({ design, subject = '', preheader = '', lang = 'en', cont
   const rendered = renderEmail(design, {
     person: { ...person, language: lang }, lang, data, preheader, subject,
     footer: { company: settings.company, address: settings.postalAddress || '(postal address not set — Settings)', reason: { en: 'you are on our list.', hi: 'आप हमारी सूची में हैं।' } },
+    brand: brandFor(settings),
   });
   return { ...rendered, contact: { id: contact.id, email: contact.email, first_name: contact.first_name } };
 }
@@ -656,6 +724,8 @@ const settingsInput = z.object({
   enabled: z.boolean(),
   company: z.string().max(200),
   postalAddress: z.string().max(500),
+  website: z.string().max(300).refine((v) => v === '' || /^https:\/\//.test(v), 'The website must be an https address'),
+  tagline: z.string().max(120),
   defaultFromName: z.string().max(200),
   defaultFromEmail: z.string().max(320),
   defaultReplyTo: z.string().max(320),

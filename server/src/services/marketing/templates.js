@@ -1,8 +1,12 @@
 /**
  * Reusable email designs, and the images used in them.
  *
- * Starter templates ship with TaskFlow (English and Hindi, EkoSight's colours)
- * and are copied, never edited in place. Saved templates are the team's own.
+ * Starter templates ship with TaskFlow in the Soil Doctor brand (see
+ * starters.js) and are copied, never edited in place. Saved templates are the
+ * team's own: designed here, copied from a starter, saved from a campaign, or
+ * uploaded as HTML or a TaskFlow export. Whatever their source, they are sent
+ * through the brand frame, so every email follows the brand guideline.
+ *
  * Images are kept in the database and served from a public address, because
  * mail apps fetch them; only PNG, JPEG, GIF and WebP are accepted (SVG can
  * carry scripts and most mail apps do not show it).
@@ -11,112 +15,46 @@
 import crypto from 'node:crypto';
 import { query } from '../../db/pool.js';
 import { badRequest, notFound } from '../../lib/errors.js';
+import { cleanDesign, exportJson, prepareHtml, prepareJson } from '../../lib/emailImport.js';
 import { publicBase } from './core.js';
+import { CATEGORIES, STARTERS, STARTER_BY_KEY } from './starters.js';
 
-const BRAND = { background: '#eef2ee', contentBackground: '#ffffff', textColor: '#1f2a24', mutedColor: '#5b6b61', linkColor: '#1f7a4d', brandColor: '#1f7a4d', width: 600, logo: null };
-const SITE = 'https://soildoctor.in';
+export { STARTERS };
 
-const t = (en, hi) => ({ en, hi });
+const words = (value, max = 300) => {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') return value.trim() ? { en: value.trim().slice(0, max), hi: '' } : null;
+  if (typeof value === 'object') {
+    const en = String(value.en || '').trim().slice(0, max);
+    const hi = String(value.hi || '').trim().slice(0, max);
+    return en || hi ? { en, hi } : null;
+  }
+  return null;
+};
+const category = (value) => String(value || 'GENERAL').toUpperCase().replace(/[^A-Z0-9_]+/g, '_').slice(0, 40) || 'GENERAL';
+const exampleCount = (design) => (design?.blocks || []).filter((b) => b.example).length;
 
-export const STARTERS = [
-  {
-    key: 'newsletter', name: 'Monthly newsletter', category: 'NEWSLETTER',
-    description: 'A short round-up: one main story, two smaller ones and a link to read more.',
-    design: { settings: BRAND, blocks: [
-      { type: 'heading', text: t('This month at EkoSight', 'इस महीने EkoSight में') },
-      { type: 'text', text: t('Hello {{first_name|there}},\n\nHere is what is new with Soil Doctor this month.', 'नमस्ते {{first_name|}},\n\nइस महीने Soil Doctor में क्या नया है, यहाँ पढ़ें।') },
-      { type: 'heading', level: 2, text: t('The main story', 'मुख्य समाचार') },
-      { type: 'text', text: t('Write two or three sentences about the most important news.', 'सबसे ज़रूरी समाचार के बारे में दो-तीन वाक्य लिखें।') },
-      { type: 'button', text: t('Read more', 'और पढ़ें'), href: SITE, align: 'left' },
-      { type: 'divider' },
-      { type: 'columns', columns: [
-        { title: t('Story two', 'दूसरा समाचार'), text: t('A sentence or two.', 'एक-दो वाक्य।'), button_text: t('Read', 'पढ़ें'), button_href: SITE },
-        { title: t('Story three', 'तीसरा समाचार'), text: t('A sentence or two.', 'एक-दो वाक्य।'), button_text: t('Read', 'पढ़ें'), button_href: SITE },
-      ] },
-      { type: 'social', links: [{ network: 'website', url: SITE }] },
-    ] },
-  },
-  {
-    key: 'festival', name: 'Festival greeting', category: 'GREETING',
-    description: 'A warm greeting for a festival or the start of a season. {{festival}} is filled in by festival automations.',
-    subject: t('Warm wishes on {{festival|this festival}}', '{{festival|त्योहार}} की हार्दिक शुभकामनाएँ'),
-    design: { settings: BRAND, blocks: [
-      { type: 'heading', align: 'center', text: t('Happy {{festival|festival}}!', '{{festival|त्योहार}} की हार्दिक शुभकामनाएँ!') },
-      { type: 'text', align: 'center', text: t('Dear {{first_name|friend}},\n\nEveryone at EkoSight wishes you and your family joy, good health and a rich harvest.', 'प्रिय {{first_name|मित्र}},\n\nEkoSight परिवार की ओर से आपको और आपके परिवार को सुख, अच्छे स्वास्थ्य और भरपूर फसल की शुभकामनाएँ।') },
-      { type: 'spacer', height: 12 },
-      { type: 'text', align: 'center', text: t('With best wishes,\n**The EkoSight team**', 'शुभकामनाओं सहित,\n**EkoSight टीम**') },
-    ] },
-  },
-  {
-    key: 'product', name: 'Product update or offer', category: 'PRODUCT',
-    description: 'One new feature, device or offer, with a single clear action.',
-    design: { settings: BRAND, blocks: [
-      { type: 'heading', text: t('Something new from Soil Doctor', 'Soil Doctor से कुछ नया') },
-      { type: 'text', text: t('Hello {{first_name|there}},\n\nDescribe what is new and what it does for the reader in two short paragraphs.\n\n- The first benefit\n- The second benefit\n- The third benefit', 'नमस्ते {{first_name|}},\n\nदो छोटे अनुच्छेदों में बताएं कि नया क्या है और पाठक को इससे क्या लाभ है।\n\n- पहला लाभ\n- दूसरा लाभ\n- तीसरा लाभ') },
-      { type: 'button', text: t('See how it works', 'देखें यह कैसे काम करता है'), href: SITE, align: 'center' },
-    ] },
-  },
-  {
-    key: 'follow_up', name: 'Personal follow-up', category: 'FOLLOW_UP',
-    description: 'A plain, personal note to a lead — reads like an email from a person, which gets more replies.',
-    design: { settings: { ...BRAND, background: '#ffffff' }, blocks: [
-      { type: 'text', text: t('Hi {{first_name|there}},\n\nI wanted to follow up on our conversation about soil testing for {{organization|your farms}}.\n\nWould a short call this week help? Just reply to this email with a time that suits you.\n\nThanks,\nThe EkoSight team', 'नमस्ते {{first_name|}},\n\n{{organization|आपके खेतों}} के लिए मिट्टी जाँच पर हमारी बातचीत के बारे में मैं आपसे फिर बात करना चाहता था।\n\nक्या इस सप्ताह एक छोटी कॉल ठीक रहेगी? अपना सुविधाजनक समय बताते हुए इस ईमेल का जवाब दें।\n\nधन्यवाद,\nEkoSight टीम') },
-    ] },
-  },
-  {
-    key: 'careers', name: 'Jobs, internships and training', category: 'CAREERS',
-    description: 'Openings and training programmes for students and graduates.',
-    design: { settings: BRAND, blocks: [
-      { type: 'heading', text: t('Opportunities at EkoSight', 'EkoSight में अवसर') },
-      { type: 'text', text: t('Hello {{first_name|there}},\n\nWe are looking for people who want to work on soil health and agriculture technology.', 'नमस्ते {{first_name|}},\n\nहम ऐसे लोगों की तलाश में हैं जो मिट्टी के स्वास्थ्य और कृषि तकनीक पर काम करना चाहते हैं।') },
-      { type: 'columns', columns: [
-        { title: t('Role or programme', 'पद या कार्यक्रम'), text: t('Where, how long, and who it suits.', 'कहाँ, कितने समय के लिए, और किसके लिए।'), button_text: t('Apply', 'आवेदन करें'), button_href: SITE },
-        { title: t('Another opening', 'एक और अवसर'), text: t('Where, how long, and who it suits.', 'कहाँ, कितने समय के लिए, और किसके लिए।'), button_text: t('Apply', 'आवेदन करें'), button_href: SITE },
-      ] },
-      { type: 'text', text: t('Know someone who would be a good fit? Forward this email to them.', 'किसी ऐसे व्यक्ति को जानते हैं जो इसके लिए सही हो? यह ईमेल उन्हें भेजें।') },
-    ] },
-  },
-  {
-    key: 'industry', name: 'Industry update for FPOs', category: 'INDUSTRY',
-    description: 'Schemes, policy and soil-health news for farmer producer organizations and partners.',
-    design: { settings: BRAND, blocks: [
-      { type: 'heading', text: t('Industry update', 'उद्योग समाचार') },
-      { type: 'text', text: t('Dear {{first_name|member}},\n\nHere are the schemes, policy changes and soil-health news that matter to {{organization|your FPO}} this month.', 'प्रिय {{first_name|सदस्य}},\n\nइस महीने {{organization|आपके FPO}} के लिए ज़रूरी योजनाएँ, नीतिगत बदलाव और मिट्टी स्वास्थ्य समाचार।') },
-      { type: 'heading', level: 2, text: t('Schemes and deadlines', 'योजनाएँ और अंतिम तिथियाँ') },
-      { type: 'text', text: t('- Scheme name: what it offers and the last date\n- Scheme name: what it offers and the last date', '- योजना का नाम: क्या लाभ है और अंतिम तिथि\n- योजना का नाम: क्या लाभ है और अंतिम तिथि') },
-      { type: 'button', text: t('Talk to us about soil testing', 'मिट्टी जाँच के बारे में बात करें'), href: SITE, align: 'left' },
-    ] },
-  },
-  {
-    key: 'welcome', name: 'Welcome', category: 'WELCOME',
-    description: 'The first email after someone joins: who you are and what they will get.',
-    design: { settings: BRAND, blocks: [
-      { type: 'heading', text: t('Welcome to EkoSight', 'EkoSight में आपका स्वागत है') },
-      { type: 'text', text: t('Hello {{first_name|there}},\n\nThank you for joining us. We make Soil Doctor, which tests soil on the spot and tells farmers exactly what their fields need.\n\nHere is what you can expect from us:\n\n- Useful soil-health and crop advice\n- News about Soil Doctor\n- Nothing more than a few emails a month', 'नमस्ते {{first_name|}},\n\nहमसे जुड़ने के लिए धन्यवाद। हम Soil Doctor बनाते हैं, जो मौके पर मिट्टी की जाँच करके बताता है कि खेत को ठीक-ठीक क्या चाहिए।\n\nहमसे आपको मिलेगा:\n\n- मिट्टी और फसल पर उपयोगी सलाह\n- Soil Doctor से जुड़ी खबरें\n- महीने में बस कुछ ही ईमेल') },
-      { type: 'button', text: t('Visit Soil Doctor', 'Soil Doctor देखें'), href: SITE, align: 'left' },
-    ] },
-  },
-  {
-    key: 'reengage', name: 'Still interested?', category: 'REENGAGE',
-    description: 'For people who have not opened anything in months: one click to stay, or they can leave.',
-    design: { settings: BRAND, blocks: [
-      { type: 'heading', text: t('Do you still want to hear from us?', 'क्या आप अब भी हमसे जुड़े रहना चाहते हैं?') },
-      { type: 'text', text: t('Hello {{first_name|there}},\n\nWe have not heard from you in a while. If you would like to keep getting our emails, click below. If not, you can unsubscribe at the bottom of this email — no hard feelings.', 'नमस्ते {{first_name|}},\n\nकाफ़ी समय से आपसे संपर्क नहीं हुआ। यदि आप हमारे ईमेल पाते रहना चाहते हैं, तो नीचे क्लिक करें। यदि नहीं, तो इस ईमेल के नीचे से सदस्यता समाप्त कर सकते हैं।') },
-      { type: 'button', text: t('Yes, keep me on the list', 'हाँ, मुझे सूची में रखें'), href: SITE, align: 'center' },
-    ] },
-  },
-];
+export function getStarter(key) {
+  const starter = STARTER_BY_KEY[key];
+  if (!starter) throw notFound('Starter template not found');
+  return starter;
+}
 
 export async function listTemplates({ includeArchived = false } = {}) {
   const { rows } = await query(
-    `SELECT t.id, t.name, t.category, t.description, t.design, t.is_archived, t.created_at, t.updated_at, u.full_name AS created_by_name
+    `SELECT t.id, t.name, t.category, t.description, t.design, t.subject, t.preheader, t.source, t.is_archived,
+            t.created_at, t.updated_at, u.full_name AS created_by_name
        FROM mkt_templates t LEFT JOIN users u ON u.id = t.created_by
       WHERE ($1 OR t.is_archived = FALSE) ORDER BY t.updated_at DESC`,
     [includeArchived],
   );
   return {
-    starters: STARTERS.map((s) => ({ key: s.key, name: s.name, category: s.category, description: s.description, design: s.design, subject: s.subject || null })),
-    saved: rows,
+    starters: STARTERS.map((s) => ({
+      key: s.key, name: s.name, category: s.category, description: s.description, design: s.design,
+      subject: s.subject || null, preheader: s.preheader || null, examples: exampleCount(s.design),
+    })),
+    saved: rows.map((r) => ({ ...r, examples: exampleCount(r.design) })),
+    categories: CATEGORIES,
   };
 }
 
@@ -126,25 +64,102 @@ export async function getTemplate(id) {
   return rows[0];
 }
 
-export async function saveTemplate(id, { name, category, description, design, is_archived: archived }, actor) {
-  if (design !== undefined && (!design || !Array.isArray(design.blocks))) throw badRequest('The template has no design');
+/** A design as stored: known section types only and the frame settings the brand allows. */
+function storedDesign(design) {
+  try {
+    return cleanDesign(design, { strict: true }).design;
+  } catch (err) {
+    throw badRequest(err.message === 'The file has no email design in it' ? 'The template has no design' : err.message);
+  }
+}
+
+export async function saveTemplate(id, {
+  name, category: cat, description, design, subject, preheader, is_archived: archived, source,
+}, actor) {
+  const clean = design === undefined ? undefined : storedDesign(design);
   if (!id) {
-    if (!String(name || '').trim() || !design) throw badRequest('Give the template a name and some content');
+    if (!String(name || '').trim() || !clean) throw badRequest('Give the template a name and some content');
     const { rows } = await query(
-      `INSERT INTO mkt_templates (name, category, description, design, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [name.trim().slice(0, 200), String(category || 'GENERAL').toUpperCase().slice(0, 40), description || null, design, actor.id],
+      `INSERT INTO mkt_templates (name, category, description, design, subject, preheader, source, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [String(name).trim().slice(0, 200), category(cat), description ? String(description).slice(0, 500) : null, clean,
+        words(subject), words(preheader), source ? String(source).slice(0, 80) : 'designed', actor.id],
     );
     return rows[0];
   }
   const { rows } = await query(
     `UPDATE mkt_templates SET name = COALESCE($2, name), category = COALESCE($3, category), description = COALESCE($4, description),
-            design = COALESCE($5, design), is_archived = COALESCE($6, is_archived), updated_at = now()
+            design = COALESCE($5, design), is_archived = COALESCE($6, is_archived),
+            subject = CASE WHEN $7 THEN $8::jsonb ELSE subject END,
+            preheader = CASE WHEN $9 THEN $10::jsonb ELSE preheader END,
+            updated_at = now()
       WHERE id = $1 RETURNING *`,
-    [id, name?.trim() || null, category ? String(category).toUpperCase().slice(0, 40) : null, description ?? null, design ?? null, archived ?? null],
+    [id, String(name || '').trim().slice(0, 200) || null, cat ? category(cat) : null, description ?? null, clean ?? null, archived ?? null,
+      subject !== undefined, subject !== undefined ? words(subject) : null, preheader !== undefined, preheader !== undefined ? words(preheader) : null],
   );
   if (!rows[0]) throw notFound('Template not found');
   return rows[0];
 }
+
+/** A starter copied into the team's templates, to change freely. */
+export async function copyStarter(key, { name } = {}, actor) {
+  const s = getStarter(key);
+  return saveTemplate(null, {
+    name: String(name || '').trim() || s.name, category: s.category, description: s.description,
+    design: s.design, subject: s.subject, preheader: s.preheader, source: `starter:${s.key}`,
+  }, actor);
+}
+
+/**
+ * A template made elsewhere: an HTML file (from Mailchimp, Brevo, a designer)
+ * or a TaskFlow export (.json). Returns { template, report } — the report
+ * says, in plain words, what was changed to fit the brand.
+ */
+export async function importTemplate({ content, filename = '', name = '', category: cat = '' }, actor) {
+  const text = Buffer.isBuffer(content) ? content.toString('utf8') : String(content ?? '');
+  if (!text.trim()) throw badRequest('The file is empty');
+  const looksJson = /\.json$/i.test(filename) || /^\s*[[{]/.test(text);
+
+  if (looksJson) {
+    let data;
+    try { data = prepareJson(text); } catch (err) { throw badRequest(err.message); }
+    if (!data.design.blocks.length) throw badRequest('The file has no sections TaskFlow can use');
+    const template = await saveTemplate(null, {
+      name: String(name).trim() || data.name || 'Imported template', category: cat || data.category || 'GENERAL',
+      description: data.description, design: data.design, subject: data.subject, preheader: data.preheader, source: 'upload:json',
+    }, actor);
+    return { template, report: data.report };
+  }
+
+  if (!/<[a-z!]/i.test(text)) throw badRequest('Upload an HTML file (.html) or a TaskFlow template (.json)');
+  const prepared = prepareHtml(text, { filename });
+  let { html } = prepared;
+  // images that were inside the file are hosted, so mail apps can fetch them
+  let failed = 0;
+  for (const image of prepared.images) {
+    try {
+      const asset = await saveAsset({ buffer: image.buffer, filename: `${prepared.name}-image` }, actor);
+      html = html.split(image.token).join(asset.url);
+    } catch {
+      failed += 1;
+      html = html.split(image.token).join('');
+    }
+  }
+  if (failed) prepared.report.notes.push({ tone: 'warn', text: `${failed} embedded image${failed === 1 ? ' was' : 's were'} not a PNG, JPEG, GIF or WebP under 2 MB and ${failed === 1 ? 'was' : 'were'} left out.` });
+  if (!html.replace(/<[^>]+>/g, '').trim() && !/<img\b/i.test(html)) throw badRequest('The file has no email content in it');
+  if (Buffer.byteLength(html) > 900 * 1024) throw badRequest('The template is too large to send (over 900 KB once prepared). Gmail cuts off emails over about 100 KB.');
+
+  const template = await saveTemplate(null, {
+    name: String(name).trim() || prepared.name, category: cat || 'GENERAL',
+    description: `Uploaded from ${String(filename || 'an HTML file').slice(0, 120)}`,
+    design: { settings: { header: 'minimal', ground: 'sand' }, blocks: [{ type: 'html', full: true, html }] },
+    subject: prepared.subject || null, preheader: prepared.preheader || null, source: 'upload:html',
+  }, actor);
+  return { template, report: prepared.report };
+}
+
+export const exportTemplate = (template) => exportJson(template);
+export const exportStarter = (key) => exportJson({ ...getStarter(key) });
 
 // ---------------------------------------------------------------- images
 

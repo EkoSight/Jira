@@ -104,15 +104,19 @@ export async function overFrequencyLimit(client, contactId, settings, now = new 
 const CONFIRM_WORDS = {
   en: {
     subject: (a) => `Please confirm: ${a}`,
+    eyebrow: 'Confirm your email',
     heading: 'One more step',
-    body: (a) => `You asked to join **${a}**. Please confirm it was you, and we will start sending.\n\nIf you did not ask, ignore this email and nothing will happen.`,
-    button: 'Yes, subscribe me',
+    body: (a) => `You asked to join **${a}**. Please confirm it was you, and we will start sending.`,
+    after: 'If you did not ask, ignore this email and nothing will happen.',
+    button: 'Yes, subscribe me →',
   },
   hi: {
     subject: (a) => `कृपया पुष्टि करें: ${a}`,
+    eyebrow: 'अपना ईमेल पक्का करें',
     heading: 'बस एक कदम और',
-    body: (a) => `आपने **${a}** से जुड़ने का अनुरोध किया है। कृपया पुष्टि करें कि यह आप ही थे।\n\nयदि आपने अनुरोध नहीं किया, तो इस ईमेल को अनदेखा करें।`,
-    button: 'हाँ, मुझे जोड़ें',
+    body: (a) => `आपने **${a}** से जुड़ने का अनुरोध किया है। कृपया पुष्टि करें कि यह आप ही थे।`,
+    after: 'यदि आपने अनुरोध नहीं किया, तो इस ईमेल को अनदेखा करें।',
+    button: 'हाँ, मुझे जोड़ें →',
   },
 };
 
@@ -124,10 +128,9 @@ export async function contentFor(message, { campaign, workflow }) {
       const w = CONFIRM_WORDS[payload.language] || CONFIRM_WORDS.en;
       return {
         subject: w.subject(payload.audience), subject_hi: null, preheader: '',
-        design: { blocks: [
-          { type: 'heading', text: w.heading },
-          { type: 'text', text: w.body(payload.audience) },
-          { type: 'button', text: w.button, href: payload.confirm_url, align: 'center' },
+        design: { settings: { header: 'light', ground: 'sand' }, blocks: [
+          { type: 'hero', tone: 'sand', eyebrow: w.eyebrow, title: w.heading, text: w.body(payload.audience), button: { text: w.button, href: payload.confirm_url, style: 'primary' } },
+          { type: 'text', text: w.after },
         ] },
         tracking: false,
       };
@@ -160,6 +163,9 @@ export async function contentFor(message, { campaign, workflow }) {
   }
   return content;
 }
+
+/** Where the brand images are served, and the website the logo links to. */
+export const brandFor = (settings) => ({ base: `${publicBase()}/brand`, website: settings.website || 'https://soildoctor.in', tagline: settings.tagline ?? undefined });
 
 const hasHindi = (design) => JSON.stringify(design?.blocks || []).includes('"hi":"');
 
@@ -213,6 +219,7 @@ export async function renderMessage(client, message, { campaign = null, workflow
   const rendered = renderEmail(content.design, {
     person, lang, data, preheader: preheader || '', subject: subjectTemplate || '',
     footer: { company: settings.company, address: settings.postalAddress, reason },
+    brand: brandFor(settings),
     track: {
       openPixel: trackOpens ? `${base}/o/${message.token}.gif` : null,
       href: (url) => (trackClicks && links.has(url) ? `${base}/c/${message.token}/${links.get(url)}` : url),
