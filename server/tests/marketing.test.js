@@ -347,6 +347,11 @@ test('the DNS check reports SPF, DKIM and DMARC and what to fix', async () => {
   assert.equal(by.dmarc.status, 'missing');
   assert.match(by.dmarc.fix, /_dmarc\.ekosight\.com/);
   assert.equal(result.ready, false);
+  // a subdomain has no nameservers of its own; its records are still checked
+  const sub = await checkDomain('marketing.ekosight.com', { dkimSelectors: ['brevo1'] });
+  assert.equal(sub.error, undefined);
+  assert.ok(sub.checks.some((c) => c.key === 'dmarc'));
+  assert.doesNotMatch(sub.checks.find((c) => c.key === 'spf').fix, /_spf\.google\.com/, 'Google Workspace does not send from the subdomain');
   setResolverForTests(null);
 });
 

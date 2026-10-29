@@ -34,13 +34,25 @@ export async function checkDomain(domain, { dkimSelectors = [] } = {}) {
   const out = { domain: name, provider, checks: [] };
   // a domain that does not answer at all (or a server with no DNS) is not the
   // same as one with no records: say so rather than report everything missing
+  // a subdomain (marketing.ekosight.com) has no nameservers of its own, so
+  // the zone is found by walking up to the domain that does
   if (resolver.resolveNs) {
-    try {
-      await resolver.resolveNs(name);
-    } catch (err) {
-      return { ...out, ready: false, error: `${name} could not be looked up in DNS from this server (${err.code || err.message}). Check the spelling; if it is right, the server cannot reach DNS — check from your DNS provider’s dashboard instead.` };
+    const labels = name.split('.');
+    let lastError = null;
+    let found = false;
+    for (let i = 0; i < labels.length - 1 && !found; i += 1) {
+      try {
+        await resolver.resolveNs(labels.slice(i).join('.'));
+        found = true;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    if (!found) {
+      return { ...out, ready: false, error: `${name} could not be looked up in DNS from this server (${lastError?.code || lastError?.message}). Check the spelling; if it is right, the server cannot reach DNS — check from your DNS provider’s dashboard instead.` };
     }
   }
+  const subdomain = name.split('.').length > 2;
   const add = (key, label, status, detail, fix = null) => out.checks.push({ key, label, status, detail, fix });
 
   try {
@@ -48,7 +60,12 @@ export async function checkDomain(domain, { dkimSelectors = [] } = {}) {
     const spf = (await txt(name)).filter((r) => /^v=spf1\b/i.test(r));
     const include = SPF_INCLUDES[provider];
     if (!spf.length) {
-      add('spf', 'SPF', 'missing', 'No SPF record.', `Add a TXT record on ${name}: v=spf1 ${include ? `include:${include} ` : ''}include:_spf.google.com ~all`);
+      if (provider === 'ses' && subdomain) {
+        // SES checks SPF on its MAIL FROM domain; DMARC passes on DKIM either way
+        add('spf', 'SPF', 'warning', `No SPF record on ${name}.`, `Optional with Amazon SES: set a custom MAIL FROM domain (e.g. bounce.${name}) in SES and add the MX and TXT records it shows, or add a TXT record on ${name}: v=spf1 include:amazonses.com ~all`);
+      } else {
+        add('spf', 'SPF', 'missing', 'No SPF record.', `Add a TXT record on ${name}: v=spf1 ${include ? `include:${include} ` : ''}${subdomain ? '' : 'include:_spf.google.com '}~all`);
+      }
     } else if (spf.length > 1) {
       add('spf', 'SPF', 'problem', `There are ${spf.length} SPF records; receivers treat that as none.`, 'Merge them into one TXT record.');
     } else if (include && !spf[0].includes(include)) {
