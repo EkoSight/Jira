@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, downloadFile, fetchBlobUrl } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { EmptyState, Icon, Modal, Spinner } from '../ui.jsx';
+import { EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
 import { CALL_OUTCOME, CATEGORY, dayOf, localDay, money, when } from '../../lib/sales.js';
 import { Metric } from './parts.jsx';
 
@@ -54,8 +54,80 @@ function Drill({ metric, filters, onClose }) {
   );
 }
 
+const REPORT_NAMES = { summary: 'Summary', sources: 'Sources & campaigns', agents: 'People', stages: 'Stages' };
+const FREQUENCY = { DAILY: 'Every morning (yesterday)', WEEKLY: 'Every Monday (last week)', MONTHLY: 'On the 1st (last month)' };
+
+/** Reports sent on a schedule as in-app notices; each person's numbers stay within their own access. */
+function ReportSchedules({ meta, report, filters, onClose }) {
+  const toast = useToast();
+  const [list, setList] = useState(null);
+  const [form, setForm] = useState({ name: '', report: REPORT_NAMES[report] ? report : 'summary', frequency: 'WEEKLY', recipient_ids: [] });
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => { api.sales.get('/report-schedules').then((r) => setList(r.schedules)).catch((err) => { setList([]); toast.error(err); }); }, [toast]);
+  useEffect(load, [load]);
+  // the filters on screen, except the dates: each delivery covers its own period
+  const kept = Object.fromEntries(Object.entries(filters).filter(([k, v]) => v && !['from', 'to'].includes(k)));
+  const toggle = (id) => setForm({ ...form, recipient_ids: form.recipient_ids.includes(id) ? form.recipient_ids.filter((x) => x !== id) : [...form.recipient_ids, id] });
+  const save = async (e) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.sales.post('/report-schedules', { ...form, filters: kept });
+      toast.success('Scheduled');
+      setForm({ ...form, name: '', recipient_ids: [] });
+      load();
+    } catch (err) { toast.error(err); } finally { setBusy(false); }
+  };
+  const flip = async (x) => {
+    try { await api.sales.patch(`/report-schedules/${x.id}`, { is_enabled: !x.is_enabled }); load(); } catch (err) { toast.error(err); }
+  };
+  const people = meta.users.filter((u) => u.is_active);
+  return (
+    <Modal title="Send reports regularly" size="lg" onClose={onClose}>
+      <div className="stack">
+        <p className="small muted">Each person gets an in-app notice with the headline numbers for the period, counted only from the records they may open themselves. They can open Reports for the detail.</p>
+        {!list ? <Spinner /> : list.length > 0 && (
+          <div className="table-scroll">
+            <table className="data-table">
+              <thead><tr><th>Name</th><th>Report</th><th>When</th><th>To</th><th>Last sent</th><th /></tr></thead>
+              <tbody>
+                {list.map((x) => (
+                  <tr key={x.id} className={x.is_enabled ? '' : 'muted'}>
+                    <td>{x.name}</td><td>{REPORT_NAMES[x.report] || x.report}</td><td>{FREQUENCY[x.frequency]}</td>
+                    <td className="small">{x.recipients.map((r) => r.full_name + (r.is_active ? '' : ' (inactive)')).join(', ')}</td>
+                    <td className="small">{x.last_sent_on ? dayOf(x.last_sent_on) : 'Not yet'}</td>
+                    <td><button type="button" className="btn btn-sm" onClick={() => flip(x)}>{x.is_enabled ? 'Pause' : 'Resume'}</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <form className="stack-sm" onSubmit={save}>
+          <h3 className="small">New schedule</h3>
+          <Field label="Name"><input className="input" required minLength={2} maxLength={120} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Weekly sales summary" /></Field>
+          <div className="grid-2">
+            <Field label="Report"><select className="select" value={form.report} onChange={(e) => setForm({ ...form, report: e.target.value })}>{Object.entries(REPORT_NAMES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+            <Field label="When"><select className="select" value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value })}>{Object.entries(FREQUENCY).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select></Field>
+          </div>
+          <div className="small muted">Filters kept from the screen: {Object.keys(kept).length ? Object.entries(kept).map(([k, v]) => `${k.replace('_id', '').replace('_', ' ')} ${k === 'owner_id' ? people.find((u) => String(u.id) === String(v))?.full_name || v : v}`).join(' · ') : 'none'}</div>
+          <div className="field">
+            <span className="small">Send to</span>
+            <div className="row wrap" style={{ gap: 6 }}>
+              {people.map((u) => <button key={u.id} type="button" aria-pressed={form.recipient_ids.includes(u.id)} className={`kind-chip${form.recipient_ids.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggle(u.id)}>{u.full_name}</button>)}
+            </div>
+          </div>
+          <div className="row"><button type="submit" className="btn btn-primary btn-sm" disabled={busy || !form.recipient_ids.length}>Schedule</button></div>
+        </form>
+      </div>
+    </Modal>
+  );
+}
+
 export function Reports({ meta }) {
   const toast = useToast();
+  const { can } = useAuth();
+  const [scheduling, setScheduling] = useState(false);
   const [filters, setFilters] = useState({ from: `${localDay(0).slice(0, 8)}01`, to: localDay(0), currency: meta.settings.calendar?.currency || 'INR', owner_id: '', category: '', pipeline: '', source_id: '' });
   const [tab, setTab] = useState('summary');
   const [data, setData] = useState(null);
@@ -86,7 +158,9 @@ export function Reports({ meta }) {
         <select className="select" aria-label="Owner" value={filters.owner_id} onChange={(e) => setFilters({ ...filters, owner_id: e.target.value })}><option value="">Everyone I can see</option>{meta.users.filter((u) => u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}</select>
         <select className="select" aria-label="Source" value={filters.source_id} onChange={(e) => setFilters({ ...filters, source_id: e.target.value })}><option value="">Any source</option>{meta.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
         <input className="input" aria-label="Currency" style={{ width: 70 }} maxLength={3} value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value.toUpperCase() })} />
+        {can('crm.settings') && <button type="button" className="btn btn-sm" onClick={() => setScheduling(true)}><Icon name="bell" size={13} /> Send regularly</button>}
       </div>
+      {scheduling && <ReportSchedules meta={meta} report={tab} filters={filters} onClose={() => setScheduling(false)} />}
       <div className="tabs tabs-scroll" role="tablist">
         {[['summary', 'Summary'], ['sources', 'Sources & campaigns'], ['agents', 'People'], ['stages', 'Stages'], ['targets', 'Targets']].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
       </div>

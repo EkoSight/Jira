@@ -435,6 +435,32 @@ router.post('/targets', settingsOnly, asyncHandler(async (req, res) => {
   res.status(201).json({ target: rows[0] });
 }));
 
+router.get('/report-schedules', settingsOnly, asyncHandler(async (req, res) => {
+  const { rows } = await query(
+    `SELECT s.*, u.full_name AS created_by_name,
+            (SELECT COALESCE(json_agg(json_build_object('id', r.id, 'full_name', r.full_name, 'is_active', r.is_active) ORDER BY r.full_name), '[]')
+               FROM users r WHERE r.id = ANY(s.recipient_ids)) AS recipients
+       FROM crm_report_schedules s LEFT JOIN users u ON u.id = s.created_by ORDER BY s.is_enabled DESC, s.name`,
+  );
+  res.json({ schedules: rows });
+}));
+
+router.patch('/report-schedules/:id', settingsOnly, asyncHandler(async (req, res) => {
+  const d = z.object({
+    name: z.string().min(2).max(120).optional(), is_enabled: z.boolean().optional(),
+    recipient_ids: z.array(z.number().int().positive()).min(1).max(50).optional(),
+  }).parse(req.body);
+  const { rows } = await query(
+    `UPDATE crm_report_schedules SET name = COALESCE($2, name), is_enabled = COALESCE($3, is_enabled),
+            recipient_ids = COALESCE($4::int[], recipient_ids), updated_at = now()
+      WHERE id = $1 RETURNING *`,
+    [id(req.params.id), d.name ?? null, d.is_enabled ?? null, d.recipient_ids ?? null],
+  );
+  if (!rows[0]) throw notFound('Schedule not found');
+  await recordAuditEvent(null, { action: 'REPORT_SCHEDULE_CHANGED', entityType: 'SETTINGS', entityId: rows[0].id, actorId: req.currentUser.id, detail: d });
+  res.json({ schedule: rows[0] });
+}));
+
 router.post('/report-schedules', settingsOnly, asyncHandler(async (req, res) => {
   const d = z.object({
     name: z.string().min(2).max(120), report: z.enum(['summary', 'sources', 'agents', 'stages']), frequency: z.enum(['DAILY', 'WEEKLY', 'MONTHLY']),
@@ -444,7 +470,8 @@ router.post('/report-schedules', settingsOnly, asyncHandler(async (req, res) => 
     `INSERT INTO crm_report_schedules (name, report, filters, frequency, recipient_ids, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
     [d.name, d.report, d.filters, d.frequency, d.recipient_ids, req.currentUser.id],
   );
-  res.status(201).json({ schedule: rows[0], note: 'Delivered as an in-app notification linking to the report, which each recipient sees within their own access.' });
+  await recordAuditEvent(null, { action: 'REPORT_SCHEDULE_CREATED', entityType: 'SETTINGS', entityId: rows[0].id, actorId: req.currentUser.id, detail: d });
+  res.status(201).json({ schedule: rows[0], note: 'Sent as an in-app notice to each recipient, with numbers limited to what that person may see.' });
 }));
 
 // ---------------------------------------------------------------- saved views

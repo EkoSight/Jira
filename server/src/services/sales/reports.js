@@ -11,9 +11,11 @@
  * Nothing here claims history it does not have. Pipeline "as of" a past date
  * would need snapshots the CRM does not keep, so it is not offered.
  */
-import { query } from '../../db/pool.js';
+import { query, withTransaction } from '../../db/pool.js';
 import { badRequest } from '../../lib/errors.js';
-import { localDate, money, salesSettings, scopeCondition } from './core.js';
+import { hasPermission } from '../../lib/permissions.js';
+import { notify } from '../activity.js';
+import { crmScope, localDate, money, salesSettings, scopeCondition } from './core.js';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -362,4 +364,81 @@ export async function drill(metric, input, scope, { limit = 5000 } = {}) {
       WHERE ${b.deal} AND ${d.where(b)} ORDER BY o.closed_at DESC NULLS LAST, o.expected_close NULLS LAST LIMIT ${Number(limit)}`, b.params,
   );
   return { kind: 'deal', filters: f, rows };
+}
+
+// ---------------------------------------------------------------- scheduled reports
+
+const addDays = (day, n) => {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const dayLabel = (day) => new Date(`${day}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+const REPORT_LABELS = { summary: 'Summary', sources: 'Sources & campaigns', agents: 'People', stages: 'Stages' };
+
+/**
+ * The last complete period for a schedule, and the day the current one began:
+ * a schedule is due once its last delivery is before that day. A weekly report
+ * covers Monday–Sunday, a monthly one the calendar month.
+ */
+export function reportPeriod(frequency, today) {
+  if (frequency === 'DAILY') return { start: today, from: addDays(today, -1), to: addDays(today, -1) };
+  if (frequency === 'WEEKLY') {
+    const monday = addDays(today, -((new Date(`${today}T00:00:00Z`).getUTCDay() + 6) % 7));
+    return { start: monday, from: addDays(monday, -7), to: addDays(monday, -1) };
+  }
+  const first = `${today.slice(0, 8)}01`;
+  const last = addDays(first, -1);
+  return { start: first, from: `${last.slice(0, 8)}01`, to: last };
+}
+
+function headline(s) {
+  const c = s.filters.currency;
+  const cash = (v) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: c, maximumFractionDigits: 0 }).format(Number(v));
+  const parts = [
+    `${s.leads.captured} lead${s.leads.captured === 1 ? '' : 's'} in, ${s.leads.converted_in_period} converted`,
+    `${s.outcomes.won} won, ${s.outcomes.lost} lost`,
+  ];
+  if (s.outcomes.commercial_bookings !== null) parts.push(`bookings ${cash(s.outcomes.commercial_bookings)}`);
+  if (s.outcomes.csr_committed !== null) parts.push(`CSR committed ${cash(s.outcomes.csr_committed)}`);
+  if (s.money.commercial_receipts !== null || s.money.csr_receipts !== null) {
+    parts.push(`received ${cash(Number(s.money.commercial_receipts || 0) + Number(s.money.csr_receipts || 0))}`);
+  }
+  parts.push(`${s.work.followups_overdue} follow-up${s.work.followups_overdue === 1 ? '' : 's'} overdue now`);
+  return parts.join(' · ');
+}
+
+/**
+ * Sends each schedule that is due as an in-app notice to each recipient. The
+ * numbers in a notice are computed with that recipient's own visibility, so a
+ * schedule never shows anyone records they could not open themselves; people
+ * who are inactive or have no CRM access are skipped. One delivery per period:
+ * the row is locked while it is sent and marked in the same transaction.
+ */
+export async function sendScheduledReports(now = new Date()) {
+  const settings = await salesSettings();
+  const today = localDate(now, settings.calendar?.timezone || 'Asia/Kolkata');
+  const { rows: candidates } = await query('SELECT id FROM crm_report_schedules WHERE is_enabled = TRUE ORDER BY id');
+  let sent = 0;
+  for (const { id } of candidates) {
+    await withTransaction(async (client) => {
+      const { rows: [s] } = await client.query('SELECT * FROM crm_report_schedules WHERE id = $1 AND is_enabled = TRUE FOR UPDATE SKIP LOCKED', [id]);
+      if (!s) return;
+      const period = reportPeriod(s.frequency, today);
+      if (s.last_sent_on && s.last_sent_on >= period.start) return;
+      const { rows: people } = await client.query(
+        `SELECT id, role, department_id, extra_permissions, revoked_permissions FROM users WHERE id = ANY($1::int[]) AND is_active = TRUE`, [s.recipient_ids],
+      );
+      const range = period.from === period.to ? dayLabel(period.from) : `${dayLabel(period.from)} – ${dayLabel(period.to)}`;
+      for (const person of people) {
+        if (!hasPermission(person, 'crm.view')) continue;
+        const summary = await salesSummary({ ...s.filters, from: period.from, to: period.to }, await crmScope(person));
+        const more = s.report === 'summary' ? '' : ` Open Sales CRM → Reports → ${REPORT_LABELS[s.report] || s.report} for the detail.`;
+        await notify(client, { userId: person.id, type: 'crm_report', title: `${s.name}: ${range}`, body: `${headline(summary)}.${more}` });
+        sent += 1;
+      }
+      await client.query('UPDATE crm_report_schedules SET last_sent_on = $2, updated_at = now() WHERE id = $1', [s.id, today]);
+    });
+  }
+  return sent;
 }

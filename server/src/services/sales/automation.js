@@ -21,6 +21,7 @@ import { query, withTransaction } from '../../db/pool.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { notify } from '../activity.js';
 import { expireQuotes } from './quotes.js';
+import { sendScheduledReports } from './reports.js';
 import { autoAssignLead, reassignLead } from './assignment.js';
 import { createFollowUp } from './followups.js';
 import { startHandover } from './deals.js';
@@ -378,7 +379,7 @@ async function emitOnce(client, type, entityType, entityId, key, payload = {}) {
 export async function scanTimers(now = new Date()) {
   const settings = await salesSettings();
   const f = settings.followUps || {};
-  const out = { reminders: 0, overdue: 0, stale_leads: 0, stale_deals: 0, first_response: 0, deadlines: 0, payments: 0, renewals: 0, expired_quotes: 0, recordings_cleared: 0 };
+  const out = { reminders: 0, overdue: 0, stale_leads: 0, stale_deals: 0, first_response: 0, deadlines: 0, payments: 0, renewals: 0, expired_quotes: 0, recordings_cleared: 0, reports_sent: 0 };
   await withTransaction(async (client) => {
     // reminders before a follow-up is due
     const { rows: due } = await client.query(
@@ -503,5 +504,6 @@ export async function scanTimers(now = new Date()) {
     out.recordings_cleared = rowCount;
   });
   out.expired_quotes = await expireQuotes();
+  out.reports_sent = await sendScheduledReports(now);
   return out;
 }

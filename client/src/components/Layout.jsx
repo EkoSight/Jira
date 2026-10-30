@@ -48,7 +48,7 @@ const ATTENDANCE_TYPES = {
 // email marketing's notices (approvals waiting, a contact reaching a step)
 const MARKETING_TYPES = { marketing_review: '/marketing?tab=overview', marketing: '/marketing?tab=contacts' };
 // the sales CRM's notices without a lead or organization on them
-const SALES_TYPES = { crm_approval: '/sales?tab=approvals', crm_automation: '/sales', crm_reminder: '/sales', crm_escalation: '/sales?tab=day&team=1' };
+const SALES_TYPES = { crm_approval: '/sales?tab=approvals', crm_automation: '/sales', crm_reminder: '/sales', crm_escalation: '/sales?tab=day&team=1', crm_report: '/sales?tab=reports' };
 const noticeRoute = (type) => ATTENDANCE_TYPES[type] || MARKETING_TYPES[type] || SALES_TYPES[type] || null;
 
 // picked by route rather than position, so adding a nav item never silently

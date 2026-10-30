@@ -10,7 +10,8 @@
  *      repeated upload, invalid rows and their corrections, undo that keeps
  *      later work; exports limited to permitted columns, formulas neutralised
  *   J  reports on a small known dataset, with drill-downs that reconcile and
- *      totals limited to what the person may see
+ *      totals limited to what the person may see; scheduled reports sent once
+ *      per period, each recipient's numbers within their own access
  */
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,6 +24,7 @@ import { query, closePool } from '../src/db/pool.js';
 import { hashPassword } from '../src/lib/password.js';
 import { processEvents, runDue, scanTimers, evaluate } from '../src/services/sales/automation.js';
 import { processImports } from '../src/services/sales/imports.js';
+import { reportPeriod, sendScheduledReports } from '../src/services/sales/reports.js';
 
 let server;
 let baseUrl;
@@ -489,4 +491,44 @@ test('J: reports on a known dataset reconcile with their drill-downs, keep curre
   ok(await call('GET', `/sales/reports/sources?${q}`, { token: tokens.admin }));
   const people = ok(await call('GET', `/sales/reports/agents?${q}`, { token: tokens.admin }));
   assert.equal(people.rows.find((r) => r.id === ids.saumya).won, 3);
+});
+
+test('J: a scheduled report reaches each recipient once per period, with numbers limited to what they may see', async (t) => {
+  if (skip(t)) return;
+  // periods are the last complete day, Monday–Sunday week and calendar month
+  assert.deepEqual(reportPeriod('DAILY', '2026-10-30'), { start: '2026-10-30', from: '2026-10-29', to: '2026-10-29' });
+  assert.deepEqual(reportPeriod('WEEKLY', '2026-10-30'), { start: '2026-10-26', from: '2026-10-19', to: '2026-10-25' });
+  assert.deepEqual(reportPeriod('WEEKLY', '2026-10-26'), { start: '2026-10-26', from: '2026-10-19', to: '2026-10-25' });
+  assert.deepEqual(reportPeriod('MONTHLY', '2026-03-01'), { start: '2026-03-01', from: '2026-02-01', to: '2026-02-28' });
+
+  const body = { name: 'Saumya daily', report: 'summary', frequency: 'DAILY', recipient_ids: [ids.admin, ids.outsider, ids.rupendra], filters: { owner_id: ids.saumya } };
+  assert.equal((await call('POST', '/sales/report-schedules', { token: tokens.rupendra, body })).status, 403, 'only CRM settings may schedule');
+  const schedule = ok(await call('POST', '/sales/report-schedules', { token: tokens.admin, body }), 201).schedule;
+  const list = ok(await call('GET', '/sales/report-schedules', { token: tokens.admin })).schedules;
+  assert.deepEqual(list.find((x) => x.id === schedule.id).recipients.map((r) => r.id).sort(), [ids.admin, ids.outsider, ids.rupendra].sort());
+
+  // tomorrow's run reports today, where test J left a known set of Saumya's deals
+  const tomorrow = new Date(Date.now() + 86400000);
+  const notices = async (userId) => (await query(`SELECT title, body FROM notifications WHERE user_id = $1 AND type = 'crm_report' ORDER BY id`, [userId])).rows;
+  assert.equal(await sendScheduledReports(tomorrow), 3);
+  const [admin] = await notices(ids.admin);
+  assert.match(admin.title, /^Saumya daily: /);
+  assert.match(admin.body, /3 won, 1 lost/);
+  assert.match(admin.body, /bookings ₹1,80,000/, 'INR bookings only; the USD deal is not added in');
+  const [outsider] = await notices(ids.outsider);
+  assert.match(outsider.body, /0 won, 0 lost/, 'someone who cannot see Saumya\'s deals is told nothing about them');
+  assert.doesNotMatch(outsider.body, /bookings/);
+  const [rep] = await notices(ids.rupendra);
+  assert.match(rep.body, /0 won/, 'a sales agent sees only their own records by default');
+
+  // the same period is not sent twice; a paused schedule sends nothing
+  assert.equal(await sendScheduledReports(tomorrow), 0);
+  assert.equal((await notices(ids.admin)).length, 1);
+  ok(await call('PATCH', `/sales/report-schedules/${schedule.id}`, { token: tokens.admin, body: { is_enabled: false } }));
+  assert.equal(await sendScheduledReports(new Date(Date.now() + 2 * 86400000)), 0);
+
+  // the timer scan is what sends them
+  ok(await call('PATCH', `/sales/report-schedules/${schedule.id}`, { token: tokens.admin, body: { is_enabled: true } }));
+  const scan = await scanTimers(new Date(Date.now() + 2 * 86400000));
+  assert.equal(scan.reports_sent, 3);
 });
