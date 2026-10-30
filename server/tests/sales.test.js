@@ -108,6 +108,9 @@ before(async () => {
     const login = await call('POST', '/auth/login', { body: { email: `sales-${key}@test.local`, password: 'Password123!' } });
     tokens[key] = login.body.token;
   }
+  // record-level access starts off (nobody loses sight of a record on upgrade); these journeys run with it on
+  const on = await call('PUT', '/sales/settings', { token: tokens.admin, body: { visibility: { agents: 'OWN', enforced: true } } });
+  assert.equal(on.status, 200, JSON.stringify(on.body));
 });
 
 after(async () => {
@@ -642,6 +645,13 @@ test('B: a CSR commitment in its own pipeline, with funder and implementer, kept
 test('I: people outside a record cannot read or change it through the API, whatever the screen shows', async (t) => {
   if (skip(t)) return;
   const { account, deal } = ids.coromandel;
+  // with record-level access off — how an upgraded installation starts — everyone with CRM access sees what they saw before
+  ok(await call('PUT', '/sales/settings', { token: tokens.admin, body: { visibility: { enforced: false } } }));
+  assert.equal((await call('GET', `/opportunities/${deal}`, { token: tokens.outsider })).status, 200);
+  assert.equal((await call('GET', `/accounts/${account}`, { token: tokens.outsider })).status, 200);
+  assert.ok(ok(await call('GET', '/accounts', { token: tokens.outsider })).accounts.some((a) => a.id === account), 'the organization is in their list as before');
+  ok(await call('PUT', '/sales/settings', { token: tokens.admin, body: { visibility: { enforced: true } } }));
+  assert.equal((await call('GET', '/sales/meta', { token: tokens.admin })).body.settings.visibility.agents, 'OWN', 'switching it back on keeps the chosen level');
   // the outsider (another team) and an agent who does not own it
   assert.equal((await call('GET', `/opportunities/${deal}`, { token: tokens.outsider })).status, 403);
   assert.equal((await call('GET', `/accounts/${account}`, { token: tokens.outsider })).status, 403);

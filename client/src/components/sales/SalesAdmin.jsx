@@ -29,7 +29,7 @@ function Setup({ meta, goTo }) {
   if (!state) return <Spinner />;
   const s = meta.settings;
   const items = [
-    ['general', 'Confirm who sees what', `Sales agents see ${s.visibility?.agents === 'ALL' ? 'everything' : s.visibility?.agents === 'TEAM' ? 'their team’s records' : 'their own and shared records'}. Managers see their teams.`, true],
+    ['general', 'Decide who sees what', s.visibility?.enforced ? `Sales agents see ${s.visibility?.agents === 'ALL' ? 'everything' : s.visibility?.agents === 'TEAM' ? 'their department’s records' : 'their own and shared records'}; managers see their departments.` : 'Record-level access is off: everyone with CRM access sees every record, as before. Recommended: agents see their own and shared records.', s.visibility?.enforced === true],
     ['general', 'Confirm the calendar', s.calendar?.confirmed ? `${s.calendar.timezone}, ${s.calendar.currency}, working ${s.calendar.workStart}–${s.calendar.workEnd}` : 'Time zone, currency, financial year and working hours are proposed defaults until you confirm them.', Boolean(s.calendar?.confirmed)],
     ['remediation', 'Classify existing organizations', state.remediation.organizations.length ? `${state.remediation.organizations.length} existing organization(s) have no confirmed category yet (${state.remediation.organizations.filter((o) => o.flagged).length} look like retailers or FPOs).` : 'Every organization has a confirmed category.', state.remediation.organizations.length === 0],
     ['pipelines', 'Review the two pipelines', 'Stage names, probabilities, required fields and approval gates.', true],
@@ -61,12 +61,12 @@ function General({ meta, onSaved }) {
   const toast = useToast();
   const s = meta.settings;
   const [f, setF] = useState(() => ({
-    visibility: s.visibility?.agents || 'OWN', legacy: s.routing?.legacyUnclassified || 'INCLUDE', excluded: s.routing?.excludedDestination || 'TELECRM',
+    visibility: s.visibility?.agents || 'OWN', enforced: s.visibility?.enforced === true, legacy: s.routing?.legacyUnclassified || 'INCLUDE', excluded: s.routing?.excludedDestination || 'TELECRM',
     ...s.calendar, workingDays: s.calendar?.workingDays || [1, 2, 3, 4, 5, 6], ...Object.fromEntries(Object.entries(s.followUps || {}).map(([k, v]) => [`fu_${k}`, v])),
     ...Object.fromEntries(Object.entries(s.quotes || {}).map(([k, v]) => [`q_${k}`, v ?? ''])),
   }));
   const submit = () => save(toast, api.sales.put('/settings', {
-    visibility: { agents: f.visibility }, routing: { legacyUnclassified: f.legacy, excludedDestination: f.excluded },
+    visibility: { agents: f.visibility, enforced: f.enforced }, routing: { legacyUnclassified: f.legacy, excludedDestination: f.excluded },
     calendar: { timezone: f.timezone, currency: f.currency, fyStartMonth: Number(f.fyStartMonth), workingDays: f.workingDays, workStart: f.workStart, workEnd: f.workEnd, useAttendanceHolidays: f.useAttendanceHolidays !== false, confirmed: true },
     followUps: { firstResponseHours: Number(f.fu_firstResponseHours), overdueEscalateHours: Number(f.fu_overdueEscalateHours), staleLeadDays: Number(f.fu_staleLeadDays), staleOpportunityDays: Number(f.fu_staleOpportunityDays) },
     quotes: { validityDays: Number(f.q_validityDays), terms: f.q_terms, legalName: f.q_legalName, address: f.q_address, email: f.q_email, phone: f.q_phone, website: f.q_website, taxId: f.q_taxId, taxIdLabel: f.q_taxIdLabel || 'GSTIN' },
@@ -76,8 +76,14 @@ function General({ meta, onSaved }) {
     <div className="stack">
       <div className="card card-pad stack">
         <h3>Who sees what</h3>
-        <Field label="Sales agents see" hint="Managers see their departments; administrators see everything. Narrowing this hides other people’s records from agents on every screen, list, report and export.">
-          <select className="select" value={f.visibility} onChange={(e) => setF({ ...f, visibility: e.target.value })}>
+        {!s.visibility?.enforced && <div className="mkt-callout is-warning small">Record-level access is off: everyone with CRM access sees every organization, deal and lead, as before the sales CRM. Choose what sales agents see, switch it on and save. Tell the team first — agents and managers will then see fewer records.</div>}
+        <Field label="Record-level access" hint="Off keeps what everyone saw before. On applies the choice below, and managers see their own and granted departments; administrators always see everything.">
+          <select className="select" value={f.enforced ? 'on' : 'off'} onChange={(e) => setF({ ...f, enforced: e.target.value === 'on' })}>
+            <option value="off">Off — everyone with CRM access sees every record</option><option value="on">On — limit what agents and managers see</option>
+          </select>
+        </Field>
+        <Field label="Sales agents see" hint="Applies once record-level access is on. Narrowing this hides other people’s records from agents on every screen, list, report and export.">
+          <select className="select" value={f.visibility} disabled={!f.enforced} onChange={(e) => setF({ ...f, visibility: e.target.value })}>
             <option value="OWN">Their own leads and deals, and ones shared with them</option><option value="TEAM">Everything in their department</option><option value="ALL">Everything</option>
           </select>
         </Field>

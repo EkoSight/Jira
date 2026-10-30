@@ -41,7 +41,7 @@ const TOPICS = [
     id: 'admin', who: 'Administrator', title: 'Setting it up',
     body: [
       'Sales CRM → Settings → Setup checklist walks through everything. Each line opens its section; nothing changes until you save there.',
-      'Visibility, routing & calendar: decide whether sales agents see only their own records (the default), their department, or everything. Confirm the time zone, currency, financial year and working hours — they start as proposed defaults.',
+      'Visibility, routing & calendar: record-level access starts off, so after the upgrade everyone with CRM access still sees every record, as before. When the team is ready, choose what sales agents see (their own and shared records is recommended; or their department, or everything), switch record-level access on and save. Managers then see their own and granted departments. Confirm the time zone, currency, financial year and working hours too — they start as proposed defaults.',
       'Existing records to classify: organizations from before categories are listed with a suggestion and the reason for it. Confirm in bulk or choose a category. They are never reclassified or deleted automatically.',
       'Pipelines & stages: rename, reorder, set probabilities, required fields, allowed next stages, ageing and approval gates. Renaming keeps the stage and its history. Retiring a stage that holds deals asks where they go and records the move on each deal.',
       'Assignment: rules run in order (take turns, fewest open leads, by region or speciality, a fixed person, the organization’s owner). Set a fallback owner and capacity per person; people on leave are skipped. Use “Who would get it?” to check before switching a rule on.',

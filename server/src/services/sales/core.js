@@ -185,6 +185,9 @@ export async function crmScope(user) {
   if (!user) return { all: false, userId: 0, departmentIds: [], own: true };
   if (user.role === 'admin' || hasPermission(user, 'crm.view.all')) return { all: true, userId: user.id };
   const settings = await salesSettings();
+  // until an administrator switches record-level access on, everyone with CRM
+  // access sees every record, as before the sales CRM
+  if (settings.visibility?.enforced !== true) return { all: true, userId: user.id };
   const departmentIds = new Set(user.department_id ? [user.department_id] : []);
   if (hasPermission(user, 'crm.view.team')) {
     const { rows } = await query('SELECT department_id FROM attendance_team_access WHERE manager_id = $1', [user.id]);

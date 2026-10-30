@@ -178,8 +178,11 @@ export const DEFAULT_SETTINGS = {
         excludedDestination: 'TELECRM',
       },
       // what a sales agent (role "member") sees: their own and shared records
-      // ('OWN'), their department's ('TEAM'), or everything ('ALL')
-      visibility: { agents: 'OWN' },
+      // ('OWN'), their department's ('TEAM'), or everything ('ALL'); managers
+      // see their departments. Record-level access starts off (`enforced`), so
+      // nobody loses sight of a record they could open before this release;
+      // an administrator switches it on in Sales CRM → Settings.
+      visibility: { agents: 'OWN', enforced: false },
       calendar: {
         timezone: 'Asia/Kolkata',
         currency: 'INR',

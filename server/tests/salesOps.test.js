@@ -113,6 +113,8 @@ before(async () => {
   for (const key of ['admin', 'manager', 'rupendra', 'saumya', 'outsider']) {
     tokens[key] = (await call('POST', '/auth/login', { body: { email: `ops-${key}@test.local`, password: 'Password123!' } })).body.token;
   }
+  // record-level access starts off on upgrade; these checks run with it on
+  ok(await call('PUT', '/sales/settings', { token: tokens.admin, body: { visibility: { agents: 'OWN', enforced: true } } }));
   // a lead with a phone, owned by Rupendra
   const r = await call('POST', '/sales/leads', { token: tokens.rupendra, body: { category: 'B2B_CORPORATE', organization_name: 'Coromandel Agro', contact_name: 'Priya Nair', phone: '9876543210', owner_user_id: ids.rupendra } });
   ids.lead = r.body.lead.id;

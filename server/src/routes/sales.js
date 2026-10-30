@@ -512,7 +512,7 @@ router.delete('/watchers/:type/:entityId/:userId', asyncHandler(async (req, res)
 
 router.put('/settings', settingsOnly, asyncHandler(async (req, res) => {
   const data = z.object({
-    visibility: z.object({ agents: z.enum(['OWN', 'TEAM', 'ALL']) }).optional(),
+    visibility: z.object({ agents: z.enum(['OWN', 'TEAM', 'ALL']).optional(), enforced: z.boolean().optional() }).optional(),
     routing: z.object({ legacyUnclassified: z.enum(['INCLUDE', 'EXCLUDE']).optional(), excludedDestination: z.enum(['TELECRM', 'TRIAGE']).optional() }).optional(),
     calendar: z.object({
       timezone: z.string().max(60).optional(), currency: z.string().length(3).optional(), fyStartMonth: z.number().int().min(1).max(12).optional(),
