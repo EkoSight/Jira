@@ -563,7 +563,7 @@ export async function expireQuotes() {
 export async function pendingApprovalsFor(user) {
   const { rows } = await query(
     `SELECT ap.id, ap.quote_id, ap.reasons, ap.requested_at, q.number, q.version, q.kind, q.total, q.currency, q.max_discount_pct,
-            o.id AS opportunity_id, o.name AS opportunity_name, a.name AS account_name, ru.full_name AS requested_by_name
+            o.id AS opportunity_id, o.account_id, o.name AS opportunity_name, a.name AS account_name, ru.full_name AS requested_by_name
        FROM crm_approvals ap JOIN crm_quotes q ON q.id = ap.quote_id JOIN opportunities o ON o.id = q.opportunity_id
        JOIN accounts a ON a.id = o.account_id LEFT JOIN users ru ON ru.id = ap.requested_by
       WHERE ap.status = 'PENDING' AND ($1 = ANY(ap.approver_ids) OR $2)

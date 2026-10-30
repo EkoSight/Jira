@@ -244,6 +244,14 @@ export default function Pipeline() {
   // board, list, map, tree and dashboard are five ways of reading one dataset;
   // the week, the reviews and the correspondence inbox are the weekly rhythm
   const [view, setView] = useState('board');
+  // which pipeline the board shows: B2B corporate (as before) or CSR / NGO
+  const [pipeline, setPipeline] = useState(() => {
+    try { return localStorage.getItem('taskflow:pipeline') === 'csr' ? 'csr' : 'b2b'; } catch { return 'b2b'; }
+  });
+  const choosePipeline = (key) => {
+    setPipeline(key);
+    try { localStorage.setItem('taskflow:pipeline', key); } catch { /* not kept */ }
+  };
   const [reviewScope, setReviewScope] = useState('mine');
   const [pending, setPending] = useState(0);
   // these have their own controls; the board's filters do not apply to them
@@ -262,8 +270,9 @@ export default function Pipeline() {
       next_owner_id: owedByMe ? user?.id : undefined,
       state: stateFilter || undefined,
       account_type: typeFilter || undefined,
+      pipeline,
     }),
-    [ownerFilter, departmentFilter, mine, owedByMe, user?.id, stateFilter, typeFilter],
+    [ownerFilter, departmentFilter, mine, owedByMe, user?.id, stateFilter, typeFilter, pipeline],
   );
 
   const load = useCallback(() => {
@@ -298,7 +307,15 @@ export default function Pipeline() {
     <div className="stack" style={{ gap: 14 }}>
       <div className="row-between wrap">
         <div>
-          <h1>B2B Pipeline</h1>
+          <div className="row wrap" style={{ gap: 10 }}>
+            <h1>{pipeline === 'csr' ? 'CSR / NGO pipeline' : 'B2B pipeline'}</h1>
+            <div className="row" role="group" aria-label="Which pipeline" style={{ gap: 4 }}>
+              {[['b2b', 'B2B corporate'], ['csr', 'CSR / NGO']].map(([key, label]) => (
+                <button key={key} type="button" aria-pressed={pipeline === key}
+                  className={`kind-chip${pipeline === key ? ' is-active' : ''}`} onClick={() => choosePipeline(key)}>{label}</button>
+              ))}
+            </div>
+          </div>
           <div className="small muted row wrap" style={{ gap: 6 }}>
             <span>
               {board.total} live deal{board.total === 1 ? '' : 's'} across {board.organizations} organization

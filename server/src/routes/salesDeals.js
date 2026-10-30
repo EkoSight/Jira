@@ -176,6 +176,14 @@ router.get('/opportunities/:id/sales', asyncHandler(async (req, res) => {
             WHERE (renewal_of_id = $1 OR id = $2) AND is_archived = FALSE`, [dealId, row.renewal_of_id ?? 0]),
     query('SELECT id, key, name FROM crm_pipelines WHERE id = $1', [row.pipeline_id]),
   ]);
+  // who to call or message about this deal: its primary contact, else the organization's
+  const { rows: contact } = await query(
+    `SELECT c.id, c.full_name, c.phone, c.email FROM account_contacts c
+      LEFT JOIN opportunity_contacts oc ON oc.contact_id = c.id AND oc.opportunity_id = $1
+      WHERE c.account_id = $2 AND c.is_active = TRUE
+      ORDER BY (oc.role = 'PRIMARY') DESC NULLS LAST, (oc.contact_id IS NOT NULL) DESC, c.is_primary DESC, c.id LIMIT 1`,
+    [dealId, row.account_id],
+  );
   res.json({
     pipeline: pipeline.rows[0] || null,
     opportunity_type: row.opportunity_type,
@@ -193,6 +201,7 @@ router.get('/opportunities/:id/sales', asyncHandler(async (req, res) => {
     engagement: engagement.rows[0] ? await getEngagement(engagement.rows[0].id) : null,
     renewal_of: renewals.rows.find((r) => r.id === row.renewal_of_id) || null,
     renewal: renewals.rows.find((r) => r.renewal_of_id === dealId) || null,
+    contact: contact[0] || null,
     can_work: await canWorkOnOpportunity(req.currentUser, row),
   });
 }));

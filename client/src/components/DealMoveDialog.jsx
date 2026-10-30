@@ -41,6 +41,7 @@ export default function DealMoveDialog({ opportunity, stages, initialStageId = '
   const [saving, setSaving] = useState(false);
 
   const from = stages.find((s) => s.id === opportunity.stage_id) || null;
+  const pipelineOf = opportunity.pipeline_id || from?.pipeline_id || null;
   const to = stages.find((s) => String(s.id) === String(stageId)) || null;
   const isWon = to?.kind === 'won';
   const isLost = to?.kind === 'lost';
@@ -131,7 +132,9 @@ export default function DealMoveDialog({ opportunity, stages, initialStageId = '
           <select className="select" value={stageId} autoFocus={!initialStageId}
             onChange={(e) => { setStageId(e.target.value); setServerMissing(null); setOverride(''); }}>
             <option value="">Pick a stage…</option>
-            {stages.filter((s) => s.id !== opportunity.stage_id).map((s) => (
+            {stages.filter((s) => s.id !== opportunity.stage_id && !s.retired_at
+              // a deal moves only within its own pipeline
+              && (!pipelineOf || !s.pipeline_id || s.pipeline_id === pipelineOf)).map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>

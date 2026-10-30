@@ -106,7 +106,10 @@ export async function createFollowUp(client, {
   await logTaskActivity(client, { taskId: task.id, actorId: actor?.id ?? null, action: 'created', meta: { followup: kind, origin } });
   if (leadId) {
     await refreshLeadNextFollowUp(client, leadId);
-    await logLeadActivity(client, leadId, { type: 'FOLLOWUP', subject: `${task.title} — due ${due.toISOString()}`, actorId: actor?.id ?? null, taskId: task.id, meta: { kind } });
+    // the due time in the CRM's own time zone, as people read it
+    const tz = (await salesSettings()).calendar?.timezone || 'Asia/Kolkata';
+    const dueText = due.toLocaleString('en-IN', { timeZone: tz, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+    await logLeadActivity(client, leadId, { type: 'FOLLOWUP', subject: `${task.title} — due ${dueText}`, actorId: actor?.id ?? null, taskId: task.id, meta: { kind, due_at: due.toISOString() } });
   }
   if (ownerId && ownerId !== actor?.id) {
     await notify(client, { userId: ownerId, type: 'crm_followup', title: `Follow-up: ${task.title}`, body: `Due ${due.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`, taskId: task.id, leadId, accountId });

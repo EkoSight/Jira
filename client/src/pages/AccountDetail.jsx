@@ -152,7 +152,7 @@ export default function AccountDetail() {
   return (
     <div className="stack" style={{ gap: 16 }}>
       <div className="row small muted">
-        <Link to="/pipeline" className="btn-link">B2B Pipeline</Link>
+        <Link to="/pipeline" className="btn-link">Pipeline</Link>
         <span>/</span>
         <span className="truncate">{account.name}</span>
       </div>
@@ -195,7 +195,8 @@ export default function AccountDetail() {
                 title={liveDeals.length > 1 ? `Moves ${mainDeal.name} — open Opportunities to move another deal` : undefined}
                 onChange={(e) => e.target.value && moveStage(e.target.value)}>
                 <option value="">{liveDeals.length > 1 ? 'Move main deal…' : 'Move stage…'}</option>
-                {stages.filter((s) => s.id !== mainDeal.stage_id).map((s) => (
+                {stages.filter((s) => s.id !== mainDeal.stage_id && !s.retired_at
+                  && (!s.pipeline_id || s.pipeline_id === (mainDeal.pipeline_id || stages.find((x) => x.id === mainDeal.stage_id)?.pipeline_id))).map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>

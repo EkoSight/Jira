@@ -22,7 +22,8 @@ const NAV = [
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
   { to: '/attendance', label: 'Attendance', icon: 'clock' },
   { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },
-  { to: '/pipeline', label: 'B2B Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
+  { to: '/sales', label: 'Sales CRM', icon: 'target', permission: 'crm.view', module: 'crm' },
+  { to: '/pipeline', label: 'Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
   { to: '/marketing', label: 'Email marketing', icon: 'mail', permission: 'marketing.view', module: 'marketing' },
   { to: '/notes', label: 'My notes', icon: 'note', permission: 'note.use' },
   { to: '/team', label: 'Team', icon: 'team', permission: 'user.view' },
@@ -46,7 +47,9 @@ const ATTENDANCE_TYPES = {
 
 // email marketing's notices (approvals waiting, a contact reaching a step)
 const MARKETING_TYPES = { marketing_review: '/marketing?tab=overview', marketing: '/marketing?tab=contacts' };
-const noticeRoute = (type) => ATTENDANCE_TYPES[type] || MARKETING_TYPES[type] || null;
+// the sales CRM's notices without a lead or organization on them
+const SALES_TYPES = { crm_approval: '/sales?tab=approvals', crm_automation: '/sales', crm_reminder: '/sales', crm_escalation: '/sales?tab=day&team=1' };
+const noticeRoute = (type) => ATTENDANCE_TYPES[type] || MARKETING_TYPES[type] || SALES_TYPES[type] || null;
 
 // picked by route rather than position, so adding a nav item never silently
 // reshuffles the phone tab bar
@@ -312,12 +315,15 @@ export default function Layout({ children }) {
                   borderBottomColor: 'var(--border)',
                   width: '100%',
                   textAlign: 'left',
-                  cursor: n.task_id || n.objective_id || n.account_id || noticeRoute(n.type) ? 'pointer' : 'default',
+                  cursor: n.task_id || n.objective_id || n.account_id || n.crm_lead_id || noticeRoute(n.type) ? 'pointer' : 'default',
                 }}
                 onClick={() => {
                   if (n.task_id) {
                     setShowNotifications(false);
                     setOpenTaskId(n.task_id);
+                  } else if (n.crm_lead_id) {
+                    setShowNotifications(false);
+                    navigate(`/sales/leads/${n.crm_lead_id}`);
                   } else if (n.objective_id) {
                     setShowNotifications(false);
                     navigate(`/goals/${n.objective_id}`);
@@ -339,6 +345,7 @@ export default function Layout({ children }) {
                     : n.type === 'feature_request' || n.type === 'feature_update' ? 'bulb'
                     : n.type === 'okr_digest' || n.type === 'okr_department' || n.type === 'okr_check_in' ? 'target'
                     : n.type === 'crm_digest' || n.type === 'crm_activity' || n.type === 'crm_assigned' ? 'pipeline'
+                    : String(n.type).startsWith('crm_') ? 'target'
                     : ATTENDANCE_TYPES[n.type] ? 'clock'
                     : MARKETING_TYPES[n.type] ? 'mail'
                     : 'bell'

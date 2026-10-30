@@ -104,6 +104,29 @@ export async function downloadFile(url, filename) {
   setTimeout(() => URL.revokeObjectURL(href), 10_000);
 }
 
+/** POSTs a JSON body and saves the file that comes back (an export made from a selection). */
+export async function postDownload(url, body, filename) {
+  const token = tokenStore.get();
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(body || {}),
+  });
+  if (!response.ok) {
+    let message = `Download failed (${response.status})`;
+    try { message = (await response.json()).error || message; } catch { /* not JSON */ }
+    throw new ApiError(message, response.status);
+  }
+  const href = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+}
+
 /** A body that is not JSON — a CSV file, an image — sent as it is. */
 async function rawRequest(method, path, body, contentType) {
   const token = tokenStore.get();
@@ -502,6 +525,17 @@ export const api = {
     del: (path, params) => request('DELETE', `/marketing${path}${qs(params)}`),
     send: (path, body, contentType, params) => rawRequest('POST', `/marketing${path}${qs(params)}`, body, contentType),
     url: (path, params) => `${BASE}/marketing${path}${qs(params)}`,
+  },
+
+  // The sales CRM: one namespace, paths relative to /sales
+  sales: {
+    get: (path, params) => request('GET', `/sales${path}${qs(params)}`),
+    post: (path, body) => request('POST', `/sales${path}`, body || {}),
+    patch: (path, body) => request('PATCH', `/sales${path}`, body || {}),
+    put: (path, body) => request('PUT', `/sales${path}`, body || {}),
+    del: (path, params) => request('DELETE', `/sales${path}${qs(params)}`),
+    send: (path, body, contentType, params) => rawRequest('POST', `/sales${path}${qs(params)}`, body, contentType),
+    url: (path, params) => `${BASE}/sales${path}${qs(params)}`,
   },
 
   notifications: () => request('GET', '/notifications'),

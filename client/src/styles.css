@@ -3982,3 +3982,52 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .mkt-cal-key.is-festival::before { background: var(--series-2); }
 .mkt-cal-key.is-automation::before { background: var(--ink-muted); }
 @media (max-width: 640px) { .mkt-cal-day { min-height: 64px; padding: 3px; } .mkt-cal-item { font-size: 10px; padding: 1px 3px; } }
+
+/* ---------------------------------------------------------------- sales CRM */
+.stack-xs { display: flex; flex-direction: column; gap: 2px; }
+.critical-text { color: var(--critical-text); }
+.warning-text { color: var(--warning-text); }
+.sales-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 0; border-bottom: 1px solid var(--border); min-width: 0; }
+.sales-row:last-child { border-bottom: 0; }
+.sales-bulk { gap: 6px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--brand-wash); position: sticky; top: 0; z-index: 2; }
+.sales-table td { white-space: normal; }
+.sales-table .sales-lead-cell { min-width: 200px; }
+.sales-table tr.is-late td:first-child, .data-table tr.is-late td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
+.sales-cards { display: none; flex-direction: column; gap: 6px; }
+.sales-card { text-align: left; width: 100%; }
+@media (max-width: 720px) {
+  .sales-table-wrap { display: none; }
+  .sales-cards { display: flex; }
+  .sales-row .btn { min-height: 36px; }
+}
+.sales-facts .stat-label { font-size: 10.5px; }
+.sales-dl { display: grid; gap: 6px; margin: 0; }
+.sales-dl-row { display: grid; grid-template-columns: minmax(110px, 30%) 1fr; gap: 10px; font-size: 13px; }
+.sales-dl-row dt { color: var(--ink-muted); }
+.sales-dl-row dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 520px) { .sales-dl-row { grid-template-columns: 1fr; gap: 0; } }
+.sales-timeline-item { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.sales-timeline-item:last-child { border-bottom: 0; }
+.sales-next { padding: 10px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); }
+.sales-metric .sales-define { margin-left: 6px; font-size: 11px; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--border-strong); display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
+.sales-metric button.stat-value { font-size: 26px; font-weight: 680; text-align: left; padding: 0; color: var(--brand); text-decoration: underline dotted; text-underline-offset: 4px; }
+.sales-definition { white-space: normal; max-width: 34ch; }
+.sales-lines .input, .sales-lines .select { min-width: 0; height: 32px; }
+.sales-deal { padding: 2px 0; }
+.wa-thread { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow-y: auto; padding: 4px; }
+.wa-msg { max-width: 82%; padding: 8px 10px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); }
+.wa-msg.is-out { align-self: flex-end; background: var(--brand-wash); border-color: transparent; }
+.wa-msg.is-in { align-self: flex-start; }
+.sales-settings { display: flex; gap: 16px; align-items: flex-start; }
+.sales-settings-nav { display: flex; flex-direction: column; gap: 2px; width: 220px; flex: none; position: sticky; top: 8px; }
+.sales-settings-link { text-align: left; padding: 7px 10px; border-radius: var(--radius-sm); background: none; border: 0; color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer; }
+.sales-settings-link:hover { background: var(--surface-2); }
+.sales-settings-link.is-active { background: var(--brand-wash); color: var(--brand); font-weight: 600; }
+.sales-settings-link:focus-visible, .sales-help-head:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+@media (max-width: 860px) {
+  .sales-settings { flex-direction: column; }
+  .sales-settings-nav { flex-direction: row; overflow-x: auto; width: 100%; position: static; }
+  .sales-settings-link { white-space: nowrap; }
+}
+.sales-help-head { width: 100%; background: none; border: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.sales-help-body p { margin: 0; line-height: 1.55; max-width: 72ch; }

@@ -1,9 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Field, Modal } from './ui.jsx';
 import { NextActionFields, nextActionBody, nextActionDraft, nextActionProblem } from './DealParts.jsx';
 import { INDIAN_STATES } from '../lib/crm.js';
+import { CATEGORY, ELIGIBLE, EXCLUDED } from '../lib/sales.js';
+
+const PIPELINE_KEY = { B2B_CORPORATE: 'b2b', CSR_NGO: 'csr' };
 
 /**
  * Adding or editing a lead. A lead often starts as little more than a company
@@ -14,15 +18,33 @@ import { INDIAN_STATES } from '../lib/crm.js';
  * Editing does not touch the next action: that belongs to each deal, and is
  * changed on the deal, so there is one place it lives.
  */
-export default function AccountDialog({ account, stages = [], onClose, onSaved }) {
+export default function AccountDialog({ account, stages: given = [], onClose, onSaved }) {
+  // every pipeline's stages, so the starting stage follows the category chosen
+  const [stages, setStages] = useState(given);
+  useEffect(() => {
+    if (account) return;
+    api.accountStages().then((d) => {
+      setStages(d.stages);
+      // keep the chosen stage only if it belongs to the category's pipeline
+      setForm((c) => {
+        const key = PIPELINE_KEY[c.lead_category] || 'b2b';
+        if (d.stages.some((x) => String(x.id) === String(c.stage_id) && x.pipeline_key === key)) return c;
+        const first = d.stages.find((x) => x.kind === 'open' && !x.retired_at && x.pipeline_key === key);
+        return { ...c, stage_id: first?.id || '' };
+      });
+    }).catch(() => {});
+  }, [account]);
   const { user } = useAuth();
   const { departments, users } = useRefData();
   const toast = useToast();
+  const navigate = useNavigate();
   const editing = Boolean(account);
 
   const [form, setForm] = useState(() => ({
+    // which side of the TeleCRM boundary it is on; existing records may not have one yet
+    lead_category: account?.lead_category || (editing ? '' : 'B2B_CORPORATE'),
     name: account?.name || '',
-    stage_id: account?.stage_id || stages[0]?.id || '',
+    stage_id: account?.stage_id || stages.find((x) => !x.pipeline_key || x.pipeline_key === 'b2b')?.id || stages[0]?.id || '',
     owner_user_id: account?.owner_user_id ?? user.id,
     follower_user_id: account?.follower_user_id ?? '',
     department_id: account?.department_id ?? user.department_id ?? '',
@@ -63,7 +85,9 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
     if (needsReason && reason.trim().length < 3) {
       return toast.error(ownerChanging ? 'Say why it is changing hands' : 'Say why the expected value changed');
     }
+    if (!editing && !form.lead_category) return toast.error('Choose what kind of organization this is');
     const payload = {
+      ...(form.lead_category && form.lead_category !== (account?.lead_category || '') ? { lead_category: form.lead_category } : {}),
       name: form.name.trim(),
       owner_user_id: form.owner_user_id ? Number(form.owner_user_id) : null,
       follower_user_id: form.follower_user_id ? Number(form.follower_user_id) : null,
@@ -91,6 +115,13 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
       const result = editing
         ? await api.updateAccount(account.id, payload)
         : await api.createAccount(payload);
+      // a retailer, FPO or individual is not added here: it goes to the TeleCRM queue as a lead
+      if (result.routed) {
+        toast.success(result.message || 'Sent to the TeleCRM queue');
+        onClose();
+        if (result.lead?.id) navigate(`/sales/leads/${result.lead.id}`);
+        return undefined;
+      }
       toast.success(editing ? 'Saved' : 'Lead added');
       onSaved(result.account);
       onClose();
@@ -117,6 +148,23 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
       }
     >
       <div className="stack" style={{ gap: 14 }}>
+        <Field label="What kind of organization is this? *"
+          hint={EXCLUDED.includes(form.lead_category)
+            ? `${CATEGORY[form.lead_category].label} enquiries are handled in TeleCRM. Saving sends this to the TeleCRM queue instead of the pipeline.`
+            : editing && !account?.lead_category ? 'An existing organization: confirming its category keeps it in the right pipeline and reports.'
+              : 'B2B corporate and CSR/NGO organizations are worked in Taskflow.'}>
+          <select className="select" value={form.lead_category} onChange={(e) => {
+            const category = e.target.value;
+            const first = stages.find((x) => x.kind === 'open' && x.pipeline_key === (PIPELINE_KEY[category] || 'b2b'));
+            set({ lead_category: category, ...(first && !editing ? { stage_id: first.id } : {}) });
+          }}>
+            {editing && !account?.lead_category && <option value="">Not confirmed yet</option>}
+            {ELIGIBLE.map((k) => <option key={k} value={k}>{CATEGORY[k].label}</option>)}
+            <optgroup label="Handled in TeleCRM">
+              {EXCLUDED.map((k) => <option key={k} value={k}>{CATEGORY[k].label}</option>)}
+            </optgroup>
+          </select>
+        </Field>
         <Field label="Company / lead name">
           <input className="input" value={form.name} autoFocus onChange={(e) => set({ name: e.target.value })}
             placeholder="Acme Agro Pvt Ltd" />
@@ -166,11 +214,11 @@ export default function AccountDialog({ account, stages = [], onClose, onSaved }
           </Field>
         </div>
 
-        {!editing && (
+        {!editing && !EXCLUDED.includes(form.lead_category) && (
           <Field label="Starting stage">
             <select className="select" value={form.stage_id} onChange={(e) => set({ stage_id: e.target.value })}>
-              {stages.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
+              {stages.filter((x) => !x.retired_at && x.kind === 'open' && (!x.pipeline_key || x.pipeline_key === (PIPELINE_KEY[form.lead_category] || 'b2b'))).map((x) => (
+                <option key={x.id} value={x.id}>{x.name}</option>
               ))}
             </select>
           </Field>

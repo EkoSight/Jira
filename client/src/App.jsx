@@ -24,6 +24,8 @@ import Payroll from './pages/Payroll.jsx';
 const Marketing = lazy(() => import('./pages/Marketing.jsx'));
 const MarketingCampaign = lazy(() => import('./pages/MarketingCampaign.jsx'));
 const MarketingAutomation = lazy(() => import('./pages/MarketingAutomation.jsx'));
+const Sales = lazy(() => import('./pages/Sales.jsx'));
+const SalesLead = lazy(() => import('./pages/SalesLead.jsx'));
 import { AttendanceProvider } from './state/attendance.jsx';
 
 function Protected({ permission, children }) {
@@ -79,6 +81,22 @@ function Shell() {
           element={
             <Protected permission="okr.view">
               <ObjectiveDetail />
+            </Protected>
+          }
+        />
+        <Route
+          path="/sales"
+          element={
+            <Protected permission="crm.view">
+              <Suspense fallback={<Spinner label="Opening the sales CRM" />}><Sales /></Suspense>
+            </Protected>
+          }
+        />
+        <Route
+          path="/sales/leads/:id"
+          element={
+            <Protected permission="crm.view">
+              <Suspense fallback={<Spinner label="Opening the lead" />}><SalesLead /></Suspense>
             </Protected>
           }
         />

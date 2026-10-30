@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
+import DealSales from './sales/DealSales.jsx';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import DealMoveDialog from './DealMoveDialog.jsx';
@@ -117,7 +118,13 @@ function NewOpportunityDialog({ accountId, stages, relationshipOwnerId, onClose,
             <select className="select" value={form.stage_id}
               onChange={(e) => set({ stage_id: e.target.value })}>
               <option value="">First stage</option>
-              {stages.filter((s) => s.kind === 'open').map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              {/* grouped by pipeline: the stage chosen decides which pipeline the deal is in */}
+              {[...new Set(stages.filter((s) => s.kind === 'open' && !s.retired_at).map((s) => s.pipeline_name || 'Pipeline'))].map((group) => (
+                <optgroup key={group} label={group}>
+                  {stages.filter((s) => s.kind === 'open' && !s.retired_at && (s.pipeline_name || 'Pipeline') === group)
+                    .map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </optgroup>
+              ))}
             </select>
           </Field>
           <Field label="Expected close">
@@ -1464,6 +1471,9 @@ function DealBody({ summary, canEditList, onChanged, onMove }) {
           <Clocks opportunity={opportunity} />
         </div>
       </div>
+      <hr className="divider" />
+      {/* the sales CRM: pipeline, CSR detail, organizations, quotations, payments, delivery, renewal */}
+      <DealSales opportunity={opportunity} onChanged={changed} />
       <hr className="divider" />
       <CommitmentsPanel opportunity={opportunity} commitments={detail?.commitments} canEdit={canEdit} onChanged={changed} />
       <hr className="divider" />
