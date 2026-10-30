@@ -16,6 +16,7 @@
  *   default or one a person set with a reason, and the API says which.
  */
 
+import { accountEligibleSql, legacyIncluded, pipelineId, scopeCondition } from './sales/core.js';
 import { query } from '../db/pool.js';
 import { badRequest, forbidden, notFound } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
@@ -100,11 +101,12 @@ export const COMMERCIAL_COLUMNS = `
   (SELECT COUNT(*)::int FROM opportunity_orders r
     WHERE r.opportunity_id = o.id AND r.status = 'ACCEPTED') AS order_count,
   (SELECT SUM(r.amount) FROM opportunity_orders r
-    WHERE r.opportunity_id = o.id AND r.status = 'ACCEPTED') AS booked_value,
+    WHERE r.opportunity_id = o.id AND r.status = 'ACCEPTED' AND r.currency = o.currency) AS booked_value,
   (SELECT SUM(i.amount) FROM opportunity_invoices i
-    WHERE i.opportunity_id = o.id AND i.status = 'ISSUED') AS invoiced_value,
-  (SELECT SUM(pm.amount) FROM opportunity_payments pm
-    WHERE pm.opportunity_id = o.id AND pm.is_void = FALSE) AS cash_received`;
+    WHERE i.opportunity_id = o.id AND i.status = 'ISSUED' AND i.currency = o.currency) AS invoiced_value,
+  -- in the deal's own currency: an amount in another currency is never added to it
+  (SELECT SUM(CASE WHEN pm.kind = 'REFUND' THEN -pm.amount ELSE pm.amount END) FROM opportunity_payments pm
+    WHERE pm.opportunity_id = o.id AND pm.is_void = FALSE AND pm.currency = o.currency) AS cash_received`;
 
 export const OPPORTUNITY_SELECT = `
   SELECT o.*,
@@ -382,6 +384,11 @@ export async function listOpportunities(filters = {}) {
     const term = push(`%${filters.search}%`);
     where.push(`(o.name ILIKE ${term} OR a.name ILIKE ${term})`);
   }
+  // the sales CRM: one pipeline at a time, only what this person may see, and
+  // only organizations on Taskflow's side of the TeleCRM line
+  if (filters.pipelineId) where.push(`o.pipeline_id = ${push(Number(filters.pipelineId))}`);
+  if (filters.scope) where.push(scopeCondition(filters.scope, 'opportunity', 'o', push));
+  if (filters.eligibleOnly) where.push(accountEligibleSql('a', filters.includeLegacy !== false));
 
   const limit = Math.min(Number(filters.limit) || 300, 1000);
   const { rows } = await query(
@@ -804,14 +811,18 @@ export async function setNextAction(client, {
  * deal is now on the board because it is live, whatever the organization is.
  */
 export async function dealBoard(filters = {}) {
+  // one pipeline's board: the B2B pipeline unless another is asked for
+  const boardPipeline = filters.pipelineId || await pipelineId();
+  const includeLegacy = filters.includeLegacy ?? await legacyIncluded();
   const [{ rows: stages }, deals] = await Promise.all([
     query(
       `SELECT id, name, slug, kind, color, position, default_probability,
               requires_contact, requires_next_action, requires_value,
-              entry_rules, exit_rules, entry_expectations
-         FROM account_stages WHERE is_active = TRUE ORDER BY position, id`,
+              entry_rules, exit_rules, entry_expectations, pipeline_id, aging_days, approval_gate, counts_in_forecast, allowed_to
+         FROM account_stages WHERE is_active = TRUE AND retired_at IS NULL AND pipeline_id = $1 ORDER BY position, id`,
+      [boardPipeline],
     ),
-    listOpportunities({ ...filters, statuses: ['ACTIVE', 'ON_HOLD', 'NURTURE'], limit: 1000 }),
+    listOpportunities({ ...filters, pipelineId: boardPipeline, eligibleOnly: true, includeLegacy, statuses: ['ACTIVE', 'ON_HOLD', 'NURTURE'], limit: 1000 }),
   ]);
 
   const params = [];
@@ -822,6 +833,9 @@ export async function dealBoard(filters = {}) {
   };
   if (filters.ownerId) where.push(`o.owner_user_id = ${push(Number(filters.ownerId))}`);
   if (filters.departmentId) where.push(`a.department_id = ${push(Number(filters.departmentId))}`);
+  where.push(`o.pipeline_id = ${push(boardPipeline)}`);
+  if (filters.scope) where.push(scopeCondition(filters.scope, 'opportunity', 'o', push));
+  where.push(accountEligibleSql('a', includeLegacy));
   const { rows: settled } = await query(
     `SELECT o.stage_id, o.status, COUNT(*)::int AS n
        FROM opportunities o JOIN accounts a ON a.id = o.account_id
@@ -860,6 +874,7 @@ export async function dealBoard(filters = {}) {
       count: settled.filter((r) => r.stage_id === stage.id).reduce((sum, r) => sum + r.n, 0),
     })),
     all_stages: stages,
+    pipeline_id: boardPipeline,
     paused,
     misplaced,
     total: live.length,

@@ -40,7 +40,7 @@ export async function commercialRecord(opportunityId) {
     query(`${withNames('opportunity_orders', 'r')} ORDER BY r.received_on DESC, r.id DESC`, [opportunityId]),
     query(
       `SELECT i.*, u.full_name AS created_by_name, r.reference AS order_reference,
-              (SELECT SUM(pm.amount) FROM opportunity_payments pm
+              (SELECT SUM(CASE WHEN pm.kind = 'REFUND' THEN -pm.amount ELSE pm.amount END) FROM opportunity_payments pm
                 WHERE pm.invoice_id = i.id AND pm.is_void = FALSE) AS paid
          FROM opportunity_invoices i
          LEFT JOIN users u ON u.id = i.created_by
@@ -80,7 +80,8 @@ export async function commercialRecord(opportunityId) {
       booked: sum(orders.rows, (r) => r.status === 'ACCEPTED'),
       booked_incomplete: liveOrders.some((r) => r.amount === null),
       invoiced: sum(invoices.rows, (i) => i.status === 'ISSUED'),
-      cash_received: sum(payments.rows, (p) => !p.is_void),
+      // a refund is its own record and counts against cash, never as a negative receipt
+      cash_received: sum(payments.rows.map((p) => (p.kind === 'REFUND' ? { ...p, amount: -Number(p.amount) } : p)), (p) => !p.is_void),
     },
   };
 }
@@ -277,7 +278,7 @@ export async function refreshFinancialStatus(client, opportunityId) {
     `SELECT o.financial_status,
             (SELECT SUM(i.amount) FROM opportunity_invoices i
               WHERE i.opportunity_id = o.id AND i.status = 'ISSUED') AS invoiced,
-            (SELECT SUM(p.amount) FROM opportunity_payments p
+            (SELECT SUM(CASE WHEN p.kind = 'REFUND' THEN -p.amount ELSE p.amount END) FROM opportunity_payments p
               WHERE p.opportunity_id = o.id AND p.is_void = FALSE) AS paid
        FROM opportunities o WHERE o.id = $1`,
     [opportunityId],
@@ -330,7 +331,7 @@ export async function commercialTotals({ start, end, departmentId = null, ownerI
          AND x.status = 'ISSUED' AND x.issued_on >= $1::date AND x.issued_on < $2::date) AS invoiced,
        (SELECT COUNT(*)::int FROM opportunity_payments x ${scope}
          AND x.is_void = FALSE AND x.received_on >= $1::date AND x.received_on < $2::date) AS payments,
-       (SELECT SUM(x.amount) FROM opportunity_payments x ${scope}
+       (SELECT SUM(CASE WHEN x.kind = 'REFUND' THEN -x.amount ELSE x.amount END) FROM opportunity_payments x ${scope}
          AND x.is_void = FALSE AND x.received_on >= $1::date AND x.received_on < $2::date) AS cash_received,
        (SELECT COUNT(*)::int FROM opportunity_proposals x ${scope}
          AND x.status <> 'WITHDRAWN' AND x.sent_on >= $1::date AND x.sent_on < $2::date) AS proposals`,

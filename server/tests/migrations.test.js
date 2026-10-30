@@ -68,6 +68,28 @@ test('every migration after the first is additive only', async () => {
   }
 });
 
+test('a check constraint redefined later still allows every value it allowed before', async () => {
+  // Widening a CHECK means dropping and re-adding it. Re-adding it with a value
+  // missing fails the migration on a database that already holds that value,
+  // and rejects new rows of that kind afterwards.
+  const files = (await fs.readdir(migrationsDir)).filter((f) => f.endsWith('.sql')).sort();
+  const allowed = new Map();
+  const definition = /ADD CONSTRAINT (\w+)\s+CHECK \((\w+) IN \(([^)]*)\)\)/g;
+  for (const file of files) {
+    const sql = await fs.readFile(path.join(migrationsDir, file), 'utf8');
+    for (const [, name, column, list] of sql.matchAll(definition)) {
+      const values = new Set([...list.matchAll(/'([^']*)'/g)].map((m) => m[1]));
+      const before = allowed.get(name);
+      if (before) {
+        const lost = [...before.values].filter((v) => !values.has(v));
+        assert.deepEqual(lost, [], `${file} redefines ${name} (${column}) without ${lost.join(', ')}, which ${before.file} allowed`);
+      }
+      allowed.set(name, { values, file });
+    }
+  }
+  assert.ok(allowed.size > 0);
+});
+
 test('running the migrations on a populated database preserves every row', async (t) => {
   if (skipIfUnavailable(t)) return;
 

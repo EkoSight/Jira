@@ -131,7 +131,7 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
       [start, end],
     ),
     query(
-      `SELECT pm.id, pm.reference, pm.received_on, pm.amount, pm.opportunity_id, o.name, o.account_id,
+      `SELECT pm.id, pm.reference, pm.received_on, CASE WHEN pm.kind = 'REFUND' THEN -pm.amount ELSE pm.amount END AS amount, pm.opportunity_id, o.name, o.account_id,
               a.name AS account_name
          FROM opportunity_payments pm JOIN opportunities o ON o.id = pm.opportunity_id
          JOIN accounts a ON a.id = o.account_id

@@ -79,7 +79,7 @@ export async function investorSummary({ from, to, anonymise = false, now = new D
       [start, end],
     ),
     query(
-      `SELECT pm.id, pm.received_on, pm.amount, o.account_id
+      `SELECT pm.id, pm.received_on, CASE WHEN pm.kind = 'REFUND' THEN -pm.amount ELSE pm.amount END AS amount, o.account_id
          FROM opportunity_payments pm JOIN opportunities o ON o.id = pm.opportunity_id
          JOIN accounts a ON a.id = o.account_id
         WHERE pm.is_void = FALSE AND pm.received_on >= $1::date AND pm.received_on <= $2::date
@@ -90,7 +90,7 @@ export async function investorSummary({ from, to, anonymise = false, now = new D
       `SELECT o.id,
               (SELECT SUM(i.amount) FROM opportunity_invoices i
                 WHERE i.opportunity_id = o.id AND i.status = 'ISSUED' AND i.issued_on <= $1::date) AS invoiced,
-              (SELECT SUM(pm.amount) FROM opportunity_payments pm
+              (SELECT SUM(CASE WHEN pm.kind = 'REFUND' THEN -pm.amount ELSE pm.amount END) FROM opportunity_payments pm
                 WHERE pm.opportunity_id = o.id AND pm.is_void = FALSE AND pm.received_on <= $1::date) AS collected
          FROM opportunities o JOIN accounts a ON a.id = o.account_id
         WHERE o.is_archived = FALSE AND a.is_archived = FALSE

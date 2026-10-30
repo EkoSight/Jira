@@ -50,7 +50,7 @@ async function outcomesFor(dealIds, week) {
     query(`SELECT opportunity_id, reference, amount, received_on FROM opportunity_orders
             WHERE status = 'ACCEPTED' AND opportunity_id = ANY($1::int[])
               AND received_on >= $2::date AND received_on < $3::date`, [dealIds, week.start, week.end]),
-    query(`SELECT opportunity_id, amount, received_on FROM opportunity_payments
+    query(`SELECT opportunity_id, CASE WHEN kind = 'REFUND' THEN -amount ELSE amount END AS amount, received_on FROM opportunity_payments
             WHERE is_void = FALSE AND opportunity_id = ANY($1::int[])
               AND received_on >= $2::date AND received_on < $3::date`, [dealIds, week.start, week.end]),
     query(`SELECT opportunity_id, what, status, resolved_at, created_at FROM customer_commitments

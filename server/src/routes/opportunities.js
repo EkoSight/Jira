@@ -1,3 +1,6 @@
+import { EXCLUDED_CATEGORIES, assertVisible, crmScope, pipelineId } from '../services/sales/core.js';
+import { applySalesFields, defaultOpportunityType, salesDealShape } from '../services/sales/deals.js';
+import { placeNewDeal } from '../services/sales/pipelines.js';
 import { Router } from 'express';
 import { z } from 'zod';
 
@@ -26,6 +29,13 @@ import { COMMITMENT_OUTCOMES, addCommitment, listCommitments, resolveCommitment 
 import { escalateDeal, mustBeAbleToEscalate } from '../services/pipelineWorkload.js';
 
 const router = Router();
+
+// a deal outside what the person may see is refused on every route that names one
+router.use('/:id(\\d+)', asyncHandler(async (req, res, next) => {
+  await assertVisible(req.currentUser, 'opportunity', Number(req.params.id), 'Opportunity');
+  next();
+}));
+
 
 /** Loads the raw row plus what the permission check needs. */
 async function loadOpportunity(id) {
@@ -142,6 +152,9 @@ const opportunityInput = z.object({
 
   // why a value or an owner changed, kept on the deal's history
   reason: z.string().max(2000).nullable().optional(),
+
+  // the sales CRM's fields: pipeline, kind of deal, CSR / NGO detail, attribution
+  ...salesDealShape,
 });
 
 // ---------------------------------------------------------------- list
@@ -150,6 +163,8 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const opportunities = await listOpportunities({
+      scope: await crmScope(req.currentUser),
+      pipelineId: req.query.pipeline ? await pipelineId(req.query.pipeline) : null,
       accountId: req.query.account_id,
       ownerId: req.query.owner_id,
       nextOwnerId: req.query.next_owner_id,
@@ -176,6 +191,8 @@ router.get(
   '/board',
   asyncHandler(async (req, res) => {
     res.json(await dealBoard({
+      scope: await crmScope(req.currentUser),
+      pipelineId: req.query.pipeline ? await pipelineId(req.query.pipeline) : null,
       ownerId: req.query.owner_id,
       nextOwnerId: req.query.next_owner_id,
       departmentId: req.query.department_id,
@@ -276,14 +293,17 @@ router.post(
     if (data.owner_user_id) await mustBeActiveUser(data.owner_user_id);
     if (data.escalation_owner_id) await mustBeActiveUser(data.escalation_owner_id);
 
-    let stageId = data.stage_id;
-    if (!stageId) {
-      const { rows } = await query(
-        `SELECT id FROM account_stages WHERE is_active = TRUE
-          ORDER BY is_default DESC, position ASC LIMIT 1`,
-      );
-      stageId = rows[0]?.id ?? null;
+    // TeleCRM's categories and unclassified organizations do not take deals here
+    if (EXCLUDED_CATEGORIES.includes(account.lead_category) || ['EXCLUDED', 'NEEDS_CLASSIFICATION'].includes(account.routing_status)) {
+      throw badRequest(account.routing_status === 'NEEDS_CLASSIFICATION'
+        ? 'Classify this organization before opening a deal with it'
+        : 'This organization is handled in TeleCRM, not in the TaskFlow pipeline', { code: 'CATEGORY_EXCLUDED' });
     }
+    // the deal's pipeline: the stage named, else the pipeline named, else the organization's category
+    const placed = await placeNewDeal({ query }, {
+      stageId: data.stage_id ?? null, pipeline: data.pipeline ?? null, category: account.lead_category,
+    });
+    const stageId = placed.stageId;
 
     const created = await withTransaction(async (client) => {
       const { rows } = await client.query(
@@ -343,6 +363,12 @@ router.post(
         [opportunity.id, givesNextAction ? data.next_step_owner_id : null, req.currentUser.id,
           data.escalation_owner_id ?? null],
       );
+      // the sales CRM's parts: pipeline, kind of deal, CSR detail, attribution
+      await applySalesFields(client, opportunity.id, {
+        ...data,
+        pipeline_id: placed.pipelineId,
+        opportunity_type: data.opportunity_type ?? await defaultOpportunityType(client, account, placed.pipelineId),
+      });
 
       await recordHistory(client, {
         opportunityId: opportunity.id,
@@ -542,6 +568,11 @@ router.patch(
         });
       }
 
+      if (data.pipeline !== undefined && String(data.pipeline) !== String(existing.pipeline_id)) {
+        throw badRequest('Move a deal to another pipeline with "Change pipeline", which picks its new stage');
+      }
+      await applySalesFields(client, id, data, { actorId: req.currentUser.id, reason, existing });
+
       await syncAccountMirror(client, existing.account_id);
     });
 
@@ -653,6 +684,8 @@ const stageInput = z.object({
   reason: z.string().max(1000).optional(),
   // settlement detail, required by the rules below when the stage is terminal
   outcome_reason: z.string().max(2000).optional(),
+  // the configured lost reason, for reports
+  lost_reason_code: z.string().max(60).optional(),
   revisit_on: z.string().min(8).nullable().optional(),
   agreement_type: z.string().max(120).optional(),
   agreement_date: z.string().min(8).optional(),

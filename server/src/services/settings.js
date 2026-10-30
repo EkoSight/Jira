@@ -162,6 +162,98 @@ export const DEFAULT_SETTINGS = {
     escalation: {
       afterDays: 3,
     },
+    // The sales CRM: intake, routing, assignment, follow-ups, automation and
+    // integrations. Every value here is an initial default to confirm, not a
+    // business policy TaskFlow has decided.
+    sales: {
+      // Taskflow holds B2B corporate and CSR / NGO leads; retailers, FPOs and
+      // individuals belong in TeleCRM
+      routing: {
+        // organizations that existed before categories: kept in the pipeline
+        // until an administrator confirms their category ('INCLUDE'), or kept
+        // out of forecasts and totals until then ('EXCLUDE')
+        legacyUnclassified: 'INCLUDE',
+        // where retailer, FPO and individual leads go: the TeleCRM hand-off
+        // list, or a review queue first
+        excludedDestination: 'TELECRM',
+      },
+      // what a sales agent (role "member") sees: their own and shared records
+      // ('OWN'), their department's ('TEAM'), or everything ('ALL')
+      visibility: { agents: 'OWN' },
+      calendar: {
+        timezone: 'Asia/Kolkata',
+        currency: 'INR',
+        // the financial year starts in this month (4 = April)
+        fyStartMonth: 4,
+        // 1 = Monday … 7 = Sunday
+        workingDays: [1, 2, 3, 4, 5, 6],
+        workStart: '09:30',
+        workEnd: '18:30',
+        // public holidays come from the attendance holiday list
+        useAttendanceHolidays: true,
+        // false until an administrator has confirmed these defaults
+        confirmed: false,
+      },
+      followUps: {
+        // a new lead nobody has contacted in this many working hours is raised
+        firstResponseHours: 4,
+        // a follow-up this many hours overdue is raised to the owner's manager
+        overdueEscalateHours: 24,
+        // a lead with no two-way contact for this long is stale
+        staleLeadDays: 7,
+        // an open deal with no two-way contact for this long is stale, unless
+        // its stage sets its own aging
+        staleOpportunityDays: 14,
+        // where follow-up tasks are filed when the owner has no department
+        departmentId: null,
+      },
+      assignment: {
+        enabled: true,
+        // who gets a lead no rule could place; blank: it stays unassigned and
+        // the people who can assign are told
+        fallbackUserId: null,
+        // a new enquiry from an organization someone already owns goes to them
+        keepAccountOwner: true,
+      },
+      // fields required on top of the minimum, by category
+      required: {
+        lead: { B2B_CORPORATE: [], CSR_NGO: [] },
+      },
+      automation: {
+        // outbound messages from automation stay off until an admin has
+        // tested the rules and switched this on
+        liveSends: false,
+        // automation that triggers automation stops at this depth
+        maxDepth: 3,
+      },
+      calls: {
+        // 'none' (dial on your own phone, log by hand), 'exotel', or 'webhook'
+        // (any provider posting TaskFlow's signed call-event format)
+        provider: 'none',
+        recordings: true,
+        recordingRetentionDays: 365,
+      },
+      whatsapp: {
+        // the Meta WhatsApp Business Platform (Cloud API)
+        enabled: false,
+        messageRetentionDays: null,
+      },
+      // the default quotation terms and validity
+      quotes: {
+        validityDays: 30,
+        terms: 'Prices are exclusive of taxes unless stated. Valid until the date shown.',
+        brand: 'Soil Doctor',
+        // printed on quotations and proposals; blank lines are left out. Tax
+        // registration numbers are for an administrator to fill in.
+        legalName: '',
+        address: '',
+        email: '',
+        phone: '',
+        website: 'soildoctor.in',
+        taxId: '',
+        taxIdLabel: 'GSTIN',
+      },
+    },
   },
   // Email marketing. Nothing is sent until a provider is set up on the server
   // and the sender, address and footer below are filled in.

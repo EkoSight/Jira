@@ -1,3 +1,4 @@
+import { accountEligibleSql, legacyIncluded, pipelineId, scopeCondition } from './sales/core.js';
 import { query } from '../db/pool.js';
 import { hasPermission } from '../lib/permissions.js';
 
@@ -109,13 +110,19 @@ export const canEditAccount = (user, account) =>
 
 // ---------------------------------------------------------------- stages
 
-export async function listStages({ activeOnly = true } = {}) {
+export async function listStages({ activeOnly = true, pipeline = null } = {}) {
+  const where = [];
+  const params = [];
+  if (activeOnly) where.push('s.is_active = TRUE');
+  if (pipeline) { params.push(pipeline); where.push(`s.pipeline_id = $${params.length}`); }
   const { rows } = await query(
-    `SELECT s.*, (SELECT COUNT(*)::int FROM accounts a
-                   WHERE a.stage_id = s.id AND a.is_archived = FALSE) AS account_count
-       FROM account_stages s
-      ${activeOnly ? 'WHERE s.is_active = TRUE' : ''}
+    `SELECT s.*, p.key AS pipeline_key, p.name AS pipeline_name,
+            (SELECT COUNT(*)::int FROM accounts a
+              WHERE a.stage_id = s.id AND a.is_archived = FALSE) AS account_count
+       FROM account_stages s LEFT JOIN crm_pipelines p ON p.id = s.pipeline_id
+      ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
       ORDER BY s.position, s.id`,
+    params,
   );
   return rows;
 }
@@ -146,6 +153,10 @@ export async function listAccounts(filters = {}) {
   // "none" asks for the leads nobody has placed yet, which is its own answer
   if (filters.state === 'none') where.push(`NULLIF(TRIM(a.state), '') IS NULL`);
   else if (filters.state) where.push(`LOWER(TRIM(a.state)) = LOWER(TRIM(${push(filters.state)}))`);
+  // the sales CRM: what this person may see, and Taskflow's side of the TeleCRM line
+  if (filters.scope) where.push(scopeCondition(filters.scope, 'account', 'a', push));
+  if (filters.eligibleOnly) where.push(accountEligibleSql('a', filters.includeLegacy !== false));
+  if (filters.category) where.push(`a.lead_category = ${push(filters.category)}`);
 
   const limit = Math.min(Number(filters.limit) || 500, 1000);
   const { rows } = await query(
@@ -164,9 +175,10 @@ export async function getAccount(id) {
 
 /** The board: open accounts grouped by the stage they sit in. */
 export async function pipeline(filters = {}) {
+  const board = filters.pipelineId || await pipelineId();
   const [stages, accounts] = await Promise.all([
-    listStages(),
-    listAccounts({ ...filters }),
+    listStages({ pipeline: board }),
+    listAccounts({ ...filters, eligibleOnly: true, includeLegacy: filters.includeLegacy ?? await legacyIncluded() }),
   ]);
 
   const byStage = new Map(stages.map((s) => [s.id, []]));
@@ -198,7 +210,7 @@ export async function pipeline(filters = {}) {
  * real exchange with a real person resets the follow-up clock — otherwise
  * tidying up a record looks like working the relationship.
  */
-const EXTERNAL_TYPES = new Set(['EMAIL', 'CALL', 'PPT', 'PROPOSAL', 'MEETING', 'DEMO', 'IN_PERSON']);
+const EXTERNAL_TYPES = new Set(['EMAIL', 'CALL', 'PPT', 'PROPOSAL', 'MEETING', 'DEMO', 'IN_PERSON', 'WHATSAPP']);
 
 /** Exchanges that, when they took place, mean the customer engaged. */
 const TWO_WAY_TYPES = new Set(['CALL', 'MEETING', 'DEMO', 'IN_PERSON']);
@@ -209,7 +221,7 @@ const TWO_WAY_TYPES = new Set(['CALL', 'MEETING', 'DEMO', 'IN_PERSON']);
  * conversation that actually happened.
  */
 const DEFAULT_OUTCOME = {
-  EMAIL: 'SENT', PPT: 'SENT', PROPOSAL: 'SENT',
+  EMAIL: 'SENT', PPT: 'SENT', PROPOSAL: 'SENT', WHATSAPP: 'SENT',
   CALL: 'COMPLETED', MEETING: 'COMPLETED', DEMO: 'COMPLETED', IN_PERSON: 'COMPLETED',
 };
 
@@ -219,6 +231,7 @@ export async function logActivity(client, {
   opportunityId = null, engagementId = null, meetingId = null, contactId = null,
   channel = null, direction = null, outcome = null, externalParticipants = null,
   isExternal = null, source = null, externalRef = null,
+  leadId = null, callId = null, messageId = null, quoteId = null,
 }) {
   const runner = client || { query };
 
@@ -235,15 +248,15 @@ export async function logActivity(client, {
     `INSERT INTO account_activities
        (account_id, type, actor_id, subject, body, next_step, task_id, occurred_at, meta,
         opportunity_id, engagement_id, meeting_id, contact_id, channel, direction,
-        outcome, external_participants, is_external, source, external_ref)
+        outcome, external_participants, is_external, source, external_ref, lead_id, call_id, message_id, quote_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8, now()),$9,
-             $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
+             $10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
      RETURNING *`,
     [
       accountId, type, actorId, subject, body, nextStep, taskId, occurredAt, meta,
       opportunityId, engagementId, meetingId, contactId, channel, resolvedDirection,
       resolvedOutcome, externalParticipants, external, source ?? (type === 'STAGE_CHANGE' ? 'SYSTEM' : null),
-      externalRef,
+      externalRef, leadId, callId, messageId, quoteId,
     ],
   );
 

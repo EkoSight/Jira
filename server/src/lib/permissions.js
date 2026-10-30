@@ -54,6 +54,22 @@ export const PERMISSIONS = {
   'crm.manage.any': 'Edit any account, not only their own',
   'crm.activity.log': 'Log activities and move a deal along',
   'crm.stages.manage': 'Create and edit pipeline stages',
+  // The sales CRM. What an agent sees is their own and shared records (see the
+  // visibility setting); managers see their teams; these widen or add powers.
+  'crm.view.all': 'See every CRM record, not only their own or their teams\'',
+  'crm.view.team': 'See the CRM records of their own and granted departments',
+  'crm.assign': 'Assign and reassign leads and deals, and make bulk changes',
+  'crm.routing': 'Classify leads and manage the TeleCRM hand-off',
+  'crm.import': 'Import leads, organizations and contacts',
+  'crm.export': 'Export CRM lists',
+  'crm.export.sensitive': 'Include phone numbers, emails and registration ids in exports',
+  'crm.merge': 'Merge duplicate leads, organizations and contacts',
+  'crm.approve': 'Approve quotations and proposals',
+  'crm.finance': 'Verify payments, record refunds and corrections, and set currency rates',
+  'crm.recordings': 'Listen to call recordings of other people\'s calls',
+  'crm.audit': 'See the CRM audit history',
+  'crm.settings': 'Configure pipelines, assignment, scoring, sources, catalogue, templates and integrations',
+  'crm.automation': 'Create, test and switch on CRM automation',
 
   // Everyone records and sees their own attendance; these are about other people.
   // A manager sees only the departments granted to them and their direct reports.
@@ -116,6 +132,15 @@ export const ROLE_PERMISSIONS = {
     'crm.manage.any',
     'crm.activity.log',
     'crm.stages.manage',
+    'crm.view.team',
+    'crm.assign',
+    'crm.routing',
+    'crm.import',
+    'crm.export',
+    'crm.merge',
+    'crm.approve',
+    'crm.recordings',
+    'crm.audit',
     'attendance.team',
     'attendance.location',
     'attendance.approve',

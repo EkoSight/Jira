@@ -29,6 +29,8 @@ import { assertSafeUrl } from '../lib/uploads.js';
 import { logActivity } from './crm.js';
 import { dealEvidence, missingForMove, nextActionGaps, today } from './dealRules.js';
 import { recordHistory, setNextAction, syncAccountMirror } from './opportunities.js';
+import { emitEvent } from './sales/core.js';
+import { checkPipelineMove, terminalStage } from './sales/pipelines.js';
 
 /** A stage with where the deal is coming from, for the history line. */
 export async function loadStageMove(stageId, fromStageId, runner = { query }) {
@@ -42,13 +44,27 @@ export async function loadStageMove(stageId, fromStageId, runner = { query }) {
   return rows[0];
 }
 
-/** The stage a won deal goes to. */
-export async function wonStage() {
-  const { rows } = await query(
-    `SELECT id FROM account_stages WHERE kind = 'won' AND is_active = TRUE
-      ORDER BY position LIMIT 1`,
+/** The stage a won deal goes to: its own pipeline's Won stage. */
+export async function wonStage(pipelineId = null) {
+  return terminalStage(pipelineId, 'won', { query });
+}
+
+/**
+ * What a closed deal does to its pending CRM follow-ups: they are cancelled,
+ * with the reason on each. Ordinary TaskFlow tasks on the deal (delivery
+ * work, kickoff tasks) are left alone.
+ */
+async function closeFollowUps(client, opportunityId, reason) {
+  const { rows: status } = await client.query(`SELECT id FROM workflow_statuses WHERE stage = 'cancelled' AND is_active = TRUE ORDER BY position LIMIT 1`);
+  const { rows } = await client.query(
+    `UPDATE tasks SET crm_cancel_reason = $2, updated_at = now(),
+            status_id = COALESCE($3, status_id), is_archived = CASE WHEN $3::int IS NULL THEN TRUE ELSE is_archived END
+      WHERE opportunity_id = $1 AND followup_kind IS NOT NULL AND completed_at IS NULL AND is_archived = FALSE
+        AND crm_cancel_reason IS NULL
+      RETURNING id`,
+    [opportunityId, reason, status[0]?.id ?? null],
   );
-  return rows[0]?.id ?? null;
+  return rows.length;
 }
 
 /**
@@ -69,6 +85,8 @@ export async function moveOpportunityStage(client, {
 
   const status = stage.kind === 'won' ? 'WON' : stage.kind === 'lost' ? 'LOST' : 'ACTIVE';
   const isReversal = stage.position < (stage.from_position ?? 0);
+  // a closed deal brought back is a reopening, counted and kept on its history
+  const reopening = ['WON', 'LOST'].includes(opportunity.status) && status === 'ACTIVE';
 
   await client.query(
     `UPDATE opportunities
@@ -81,7 +99,11 @@ export async function moveOpportunityStage(client, {
             agreed_value = COALESCE($8::numeric, agreed_value),
             financial_status = COALESCE($9, financial_status),
             closed_at = CASE WHEN $10 IN ('won','lost') THEN now() ELSE NULL END,
-            updated_at = now()
+            updated_at = now(),
+            pipeline_id = COALESCE(pipeline_id, $12),
+            lost_reason_code = CASE WHEN $10 = 'lost' THEN COALESCE($13, lost_reason_code) ELSE lost_reason_code END,
+            reopened_count = reopened_count + CASE WHEN $14 THEN 1 ELSE 0 END,
+            reopened_at = CASE WHEN $14 THEN now() ELSE reopened_at END
       WHERE id = $11`,
     [
       stage.id, status,
@@ -89,6 +111,7 @@ export async function moveOpportunityStage(client, {
       data.agreement_type ?? null, data.agreement_date ?? null, data.agreement_link ?? null,
       data.agreed_value ?? null, data.financial_status ?? null,
       stage.kind, opportunity.id,
+      stage.pipeline_id ?? null, data.lost_reason_code ?? null, reopening,
     ],
   );
 
@@ -120,8 +143,29 @@ export async function moveOpportunityStage(client, {
     },
   });
 
+  if (reopening) {
+    await recordHistory(client, {
+      opportunityId: opportunity.id, field: 'reopened', from: opportunity.status, to: 'ACTIVE',
+      reason: data.reason ?? null, actorId: actor.id,
+    });
+  }
+  if (status !== 'ACTIVE') {
+    const cancelled = await closeFollowUps(client, opportunity.id, status === 'WON' ? 'Deal won' : 'Deal lost');
+    if (cancelled) {
+      await recordHistory(client, {
+        opportunityId: opportunity.id, field: 'follow_ups', from: `${cancelled} open`, to: 'cancelled',
+        reason: `Deal ${status.toLowerCase()}`, actorId: actor.id,
+      });
+    }
+  }
+
   await syncAccountMirror(client, opportunity.account_id);
-  return { status, isReversal };
+  const payload = { from: stage.from_name, to: stage.name, stage_id: stage.id, pipeline_id: stage.pipeline_id ?? null, status, reopened: reopening };
+  await emitEvent(client, { type: 'opportunity.stage_changed', entityType: 'OPPORTUNITY', entityId: opportunity.id, actorId: actor.id, payload });
+  if (status === 'WON' || status === 'LOST') {
+    await emitEvent(client, { type: `opportunity.${status.toLowerCase()}`, entityType: 'OPPORTUNITY', entityId: opportunity.id, actorId: actor.id, payload });
+  }
+  return { status, isReversal, reopened: reopening };
 }
 
 // ---------------------------------------------------------------- evidence captured on the move
@@ -279,8 +323,17 @@ export async function applyStageMove(client, { opportunityId, stageId, data = {}
     current = rows[0];
   }
 
+  // the pipeline's own rules: the same pipeline, an allowed transition, a live stage
+  const pipelineCheck = await checkPipelineMove(client, { opportunity: current, from, to: stage });
+  if (pipelineCheck.hard.length) {
+    throw badRequest(pipelineCheck.hard.join('; '), { code: 'STAGE_NOT_ALLOWED', problems: pipelineCheck.hard });
+  }
+
   const evidence = await dealEvidence(opportunityId, client);
-  const missing = missingForMove({ opportunity: current, from, to: stage, evidence });
+  const missing = [
+    ...missingForMove({ opportunity: current, from, to: stage, evidence }),
+    ...pipelineCheck.soft.map((m) => ({ ...m, phase: 'entry', stage: stage.name })),
+  ];
   let evidenceMissing = null;
   if (missing.length) {
     const mayOverride = hasPermission(actor, 'crm.manage.any');

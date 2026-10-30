@@ -34,8 +34,35 @@ import { describeRules, followUpRules, leadFigures } from '../services/leadFigur
 import { ensureFolders } from '../services/resources.js';
 import { crmDashboard, managerSummaries, mapView, ownershipTree } from '../services/crmDashboard.js';
 import { analysePipeline } from '../services/accountInsights.js';
+import {
+  EXCLUDED_CATEGORIES, LEAD_CATEGORIES, ORG_ROLES, ORG_TYPES, PIPELINE_FOR_CATEGORY, accountEligibleSql, assertVisible, companyDomain,
+  crmScope, isEligible, legacyIncluded, pipelineId, scopeCondition,
+} from '../services/sales/core.js';
+import { classifyAccount } from '../services/sales/routing.js';
+import { createLead } from '../services/sales/leads.js';
 
 const router = Router();
+
+/**
+ * The sales CRM's visibility, applied to the organization screens: a record
+ * outside what the person may see is "not found", and the aggregate views are
+ * narrowed to their own records (agents) or their teams (managers).
+ */
+async function scoped(req) {
+  const scope = await crmScope(req.currentUser);
+  let departmentId = req.query.department_id ? Number(req.query.department_id) : null;
+  let ownerId = req.query.owner_id ? Number(req.query.owner_id) : null;
+  if (!scope.all) {
+    if (scope.own) ownerId = req.currentUser.id;
+    else if (!departmentId || !scope.departmentIds.includes(departmentId)) departmentId = scope.departmentIds[0] ?? -1;
+  }
+  return { scope, departmentId, ownerId };
+}
+
+router.use('/:id(\\d+)', asyncHandler(async (req, res, next) => {
+  await assertVisible(req.currentUser, 'account', Number(req.params.id), 'Organization');
+  next();
+}));
 
 const slugify = (value) =>
   value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -76,6 +103,17 @@ const accountInput = z.object({
   relationship_summary: z.string().max(20000).nullable().optional(),
   why_it_matters: z.string().max(20000).nullable().optional(),
   relationship_potential: z.number().min(0).nullable().optional(),
+
+  // the sales CRM: which side of the Taskflow / TeleCRM line the organization is on,
+  // what kind of organization it is and the roles it plays for us
+  lead_category: z.enum(LEAD_CATEGORIES).optional(),
+  org_type: z.enum(ORG_TYPES).nullable().optional(),
+  org_roles: z.array(z.enum(ORG_ROLES)).optional(),
+  industry: z.string().max(120).nullable().optional(),
+  city: z.string().max(120).nullable().optional(),
+  pincode: z.string().max(12).nullable().optional(),
+  country: z.string().max(80).nullable().optional(),
+  registration_ids: z.record(z.string().max(80)).optional(),
 });
 
 const contactInput = z.object({
@@ -102,7 +140,10 @@ const contactInput = z.object({
 router.get(
   '/pipeline',
   asyncHandler(async (req, res) => {
+    const { scope } = await scoped(req);
     const board = await pipeline({
+      scope,
+      pipelineId: req.query.pipeline ? await pipelineId(req.query.pipeline) : null,
       ownerId: req.query.owner_id,
       departmentId: req.query.department_id,
       type: req.query.type || 'LEAD',
@@ -137,10 +178,7 @@ router.get(
   '/insights',
   asyncHandler(async (req, res) => {
     res.json(
-      await analyseAccounts({
-        ownerId: req.query.owner_id,
-        departmentId: req.query.department_id,
-      }),
+      await analyseAccounts(await scoped(req)),
     );
   }),
 );
@@ -185,17 +223,20 @@ router.post(
         entry_rules: stageRules,
         exit_rules: stageRules,
         quiet_after_days: quietAfter,
+        // which pipeline it belongs to; the default (B2B) pipeline when not said
+        pipeline_id: z.number().int().positive().optional(),
       })
       .parse(req.body);
 
+    const stagePipeline = data.pipeline_id ?? await pipelineId();
     const { rows } = await query(
-      `INSERT INTO account_stages (name, slug, kind, color, position, entry_rules, exit_rules, quiet_after_days)
+      `INSERT INTO account_stages (name, slug, kind, color, position, entry_rules, exit_rules, quiet_after_days, pipeline_id)
        VALUES ($1,$2,COALESCE($3,'open'),COALESCE($4,'#64748b'),
                COALESCE($5,(SELECT COALESCE(MAX(position),0)+1 FROM account_stages)),
-               COALESCE($6::text[], '{}'), COALESCE($7::text[], '{}'), $8)
+               COALESCE($6::text[], '{}'), COALESCE($7::text[], '{}'), $8, $9)
        RETURNING *`,
       [data.name, slugify(data.name), data.kind ?? null, data.color ?? null, data.position ?? null,
-        data.entry_rules ?? null, data.exit_rules ?? null, data.quiet_after_days ?? null],
+        data.entry_rules ?? null, data.exit_rules ?? null, data.quiet_after_days ?? null, stagePipeline],
     );
     res.status(201).json({ stage: rows[0] });
   }),
@@ -247,8 +288,9 @@ router.patch(
 router.get(
   '/nudges',
   asyncHandler(async (req, res) => {
+    const { departmentId, scope } = await scoped(req);
     res.json(await analysePipeline({
-      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
+      departmentId: scope.own ? (req.currentUser.department_id ?? -1) : departmentId,
     }));
   }),
 );
@@ -312,7 +354,10 @@ router.delete(
 router.get(
   '/',
   asyncHandler(async (req, res) => {
+    const { scope } = await scoped(req);
     const accounts = await listAccounts({
+      scope,
+      category: req.query.category,
       type: req.query.type,
       stageId: req.query.stage_id,
       ownerId: req.query.owner_id,
@@ -397,11 +442,37 @@ router.post(
   asyncHandler(async (req, res) => {
     const data = accountInput.parse(req.body);
 
-    // a new lead lands in the first open stage unless one is named
+    // Retailers, FPOs and individuals belong in TeleCRM, and an organization whose
+    // category nobody knows waits for review: neither becomes a Taskflow
+    // organization. Both are kept as leads — routed, never dropped — and the
+    // response says where they went.
+    if (data.lead_category && !isEligible(data.lead_category)) {
+      const { lead } = await createLead({
+        category: data.lead_category, organization_name: data.name, contact_name: data.contact_name, email: data.contact_email,
+        phone: data.contact_phone, website: data.website, state: data.state, city: data.city, enquiry: data.description,
+      }, { actor: req.currentUser, channel: 'ORGANIZATION_FORM' });
+      return res.status(202).json({
+        routed: lead.destination, lead,
+        message: EXCLUDED_CATEGORIES.includes(data.lead_category)
+          ? `${data.name} was not added to the pipeline: ${lead.category_label} leads belong in TeleCRM. It is on the TeleCRM hand-off list as ${lead.ref}.`
+          : `${data.name} is waiting for classification as ${lead.ref}; it joins the pipeline once its category is confirmed.`,
+      });
+    }
+
+    // a new lead lands in its category's pipeline, at the first open stage unless one is named
     let stageId = data.stage_id;
-    if (!stageId) {
+    const pipelineKey = PIPELINE_FOR_CATEGORY[data.lead_category] || 'b2b';
+    if (stageId) {
       const { rows } = await query(
-        `SELECT id FROM account_stages WHERE is_active = TRUE ORDER BY is_default DESC, position ASC LIMIT 1`,
+        `SELECT p.key FROM account_stages s JOIN crm_pipelines p ON p.id = s.pipeline_id WHERE s.id = $1`, [stageId],
+      );
+      if (rows[0] && data.lead_category && rows[0].key !== pipelineKey) throw badRequest('That stage belongs to the other pipeline');
+    } else {
+      const { rows } = await query(
+        `SELECT s.id FROM account_stages s JOIN crm_pipelines p ON p.id = s.pipeline_id
+          WHERE s.is_active = TRUE AND s.retired_at IS NULL AND s.kind = 'open' AND p.key = $1
+          ORDER BY s.is_default DESC, s.position ASC LIMIT 1`,
+        [pipelineKey],
       );
       stageId = rows[0]?.id ?? null;
     }
@@ -440,14 +511,30 @@ router.post(
       );
       const created = rows[0];
 
+      // where it sits relative to TeleCRM, and what kind of organization it is.
+      // Created without a category (an older API client): queued for an
+      // administrator's confirmation like the organizations that predate categories.
+      await client.query(
+        `UPDATE accounts SET lead_category = $2, routing_status = $3, category_source = $4,
+                category_set_at = CASE WHEN $2::text IS NULL THEN NULL ELSE now() END, category_set_by = CASE WHEN $2::text IS NULL THEN NULL ELSE $5::int END,
+                org_type = $6, org_roles = COALESCE($7::text[], '{}'), industry = $8, city = $9, pincode = $10, country = $11,
+                registration_ids = COALESCE($12, '{}'::jsonb), domain = $13
+          WHERE id = $1`,
+        [created.id, data.lead_category ?? null, data.lead_category ? 'ACTIVE' : 'LEGACY_UNCONFIRMED',
+          data.lead_category ? 'MANUAL' : 'UNSPECIFIED', req.currentUser.id, data.org_type ?? null, data.org_roles ?? null,
+          data.industry ?? null, data.city ?? null, data.pincode ?? null, data.country ?? null, data.registration_ids ?? null,
+          companyDomain(data.website)],
+      );
+
       // Every new organization starts with one opportunity, because a lead with
       // nowhere to record a deal is a contact list entry. The migration gave one
       // to every lead that already existed; this keeps that true going forward.
       const { rows: oppRows } = await client.query(
         `INSERT INTO opportunities
            (account_id, name, stage_id, owner_user_id, estimated_value, currency,
-            next_step, next_step_due, created_by)
-         VALUES ($1,$2,$3,$4,$5::numeric,COALESCE($6,'INR'),$7,$8::date,$9)
+            next_step, next_step_due, created_by, pipeline_id, opportunity_type, engagement_model)
+         VALUES ($1,$2,$3,$4,$5::numeric,COALESCE($6,'INR'),$7,$8::date,$9,
+                 (SELECT id FROM crm_pipelines WHERE key = $10), $11, $12)
          RETURNING id`,
         [
           created.id,
@@ -459,6 +546,9 @@ router.post(
           data.next_step ?? null,
           data.next_step_due ?? null,
           req.currentUser.id,
+          pipelineKey,
+          data.lead_category === 'CSR_NGO' ? 'CSR_FUNDING' : data.lead_category ? 'NEW_BUSINESS' : null,
+          data.lead_category === 'CSR_NGO' ? 'CSR_PROJECT' : 'COMMERCIAL',
         ],
       );
       await client.query('UPDATE accounts SET primary_opportunity_id = $1 WHERE id = $2',
@@ -526,6 +616,8 @@ const TRACKED = [
   'segment_id', 'logo_url', 'banner_url', 'linkedin_url', 'hq_address', 'state',
   'operating_regions', 'crops', 'tags', 'relationship_summary', 'why_it_matters',
   'relationship_potential',
+  // the sales CRM's organization facts (the category goes through the boundary, below)
+  'org_type', 'org_roles', 'industry', 'city', 'pincode', 'country',
 ];
 
 router.patch(
@@ -577,6 +669,17 @@ router.patch(
         { code: 'NEXT_ACTION_INVALID' });
     }
 
+    // a category change is a routing decision: into TeleCRM's side (or out of
+    // review) is for the people who route leads
+    const categoryChanging = data.lead_category !== undefined && data.lead_category !== existing.lead_category;
+    if (categoryChanging && (!isEligible(data.lead_category) || (existing.lead_category && !isEligible(existing.lead_category)))
+        && !hasPermission(req.currentUser, 'crm.routing')) {
+      throw forbidden('Moving an organization to or from TeleCRM\'s categories is for the people who route leads');
+    }
+    if (data.registration_ids !== undefined && !hasPermission(req.currentUser, 'crm.manage.any') && existing.owner_user_id !== req.currentUser.id) {
+      throw forbidden('Registration and tax ids can be changed by the organization\'s lead or a pipeline manager');
+    }
+
     const fields = [];
     const params = [];
     for (const key of TRACKED) {
@@ -585,9 +688,14 @@ router.patch(
       params.push(data[key] === '' ? null : data[key]);
       fields.push(`${key} = $${params.length}`);
     }
-    if (!fields.length && !nextOnDeal) throw badRequest('Nothing to update');
+    if (data.registration_ids !== undefined) { params.push(data.registration_ids); fields.push(`registration_ids = $${params.length}`); }
+    if (data.website !== undefined) { params.push(companyDomain(data.website)); fields.push(`domain = $${params.length}`); }
+    if (!fields.length && !nextOnDeal && !categoryChanging) throw badRequest('Nothing to update');
 
     await withTransaction(async (client) => {
+      if (categoryChanging) {
+        await classifyAccount(client, id, { category: data.lead_category, actor: req.currentUser, reason, source: 'MANUAL' });
+      }
       if (fields.length) {
         params.push(id);
         await client.query(
@@ -778,7 +886,7 @@ router.post(
       if (!won) throw badRequest('That deal does not belong to this organization');
     }
 
-    const wonStageId = won && won.status !== 'WON' ? await wonStage() : null;
+    const wonStageId = won && won.status !== 'WON' ? await wonStage(won.pipeline_id) : null;
     if (won && won.status !== 'WON' && !wonStageId) {
       throw badRequest('There is no Won stage to move the deal into — ask an admin to add one');
     }
@@ -1300,8 +1408,10 @@ router.get(
 router.get(
   '/views/map',
   asyncHandler(async (req, res) => {
+    const { departmentId, ownerId } = await scoped(req);
     res.json(await mapView({
-      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
+      departmentId,
+      ownerId,
       segmentId: req.query.segment_id ? Number(req.query.segment_id) : null,
     }));
   }),
@@ -1320,6 +1430,7 @@ router.get(
   '/views/states',
   asyncHandler(async (req, res) => {
     const rules = await followUpRules();
+    const { scope } = await scoped(req);
     const params = [];
     const where = ['a.is_archived = FALSE'];
     const push = (value) => {
@@ -1329,6 +1440,8 @@ router.get(
     if (req.query.department_id) where.push(`a.department_id = ${push(Number(req.query.department_id))}`);
     if (req.query.segment_id) where.push(`a.segment_id = ${push(Number(req.query.segment_id))}`);
     if (req.query.owner_id) where.push(`a.owner_user_id = ${push(Number(req.query.owner_id))}`);
+    where.push(scopeCondition(scope, 'account', 'a', push));
+    where.push(accountEligibleSql('a', await legacyIncluded()));
 
     const { rows } = await query(
       `SELECT a.id, a.name, a.type, NULLIF(TRIM(a.state), '') AS state, a.hq_address,
@@ -1392,9 +1505,8 @@ router.get(
   '/views/tree',
   requirePermission('report.view'),
   asyncHandler(async (req, res) => {
-    res.json(await ownershipTree({
-      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
-    }));
+    const { departmentId } = await scoped(req);
+    res.json(await ownershipTree({ departmentId }));
   }),
 );
 
@@ -1403,10 +1515,11 @@ router.get(
 router.get(
   '/dashboard/b2b',
   asyncHandler(async (req, res) => {
+    const { departmentId, ownerId } = await scoped(req);
     res.json(await crmDashboard({
       month: req.query.month,
-      ownerId: req.query.owner_id,
-      departmentId: req.query.department_id,
+      ownerId,
+      departmentId,
       segmentId: req.query.segment_id,
     }));
   }),
@@ -1417,10 +1530,8 @@ router.get(
   '/dashboard/people',
   requirePermission('report.view'),
   asyncHandler(async (req, res) => {
-    res.json(await managerSummaries({
-      month: req.query.month,
-      departmentId: req.query.department_id ? Number(req.query.department_id) : null,
-    }));
+    const { departmentId } = await scoped(req);
+    res.json(await managerSummaries({ month: req.query.month, departmentId }));
   }),
 );
 

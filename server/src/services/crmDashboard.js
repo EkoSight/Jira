@@ -11,6 +11,7 @@
  * per deal, non-commercial work contributes nothing, and a blank is not a zero.
  */
 
+import { accountEligibleSql } from './sales/core.js';
 import { query } from '../db/pool.js';
 import { decorateOpportunity } from './opportunities.js';
 import { decorateEngagement } from './engagements.js';
@@ -69,6 +70,8 @@ const scopeClause = (filters, params) => {
   if (filters.ownerId) where.push(`o.owner_user_id = ${push(Number(filters.ownerId))}`);
   if (filters.departmentId) where.push(`a.department_id = ${push(Number(filters.departmentId))}`);
   if (filters.segmentId) where.push(`a.segment_id = ${push(Number(filters.segmentId))}`);
+  // retailer, FPO and individual leads are TeleCRM's: never in Taskflow's totals
+  where.push(accountEligibleSql('a', filters.includeLegacy !== false));
   return where;
 };
 
@@ -496,7 +499,7 @@ export async function ownershipTree({ departmentId = null } = {}) {
  * invented — an organization without one stays in the unmapped list rather than
  * being dropped from the page or guessed onto the map.
  */
-export async function mapView({ departmentId = null, segmentId = null } = {}) {
+export async function mapView({ departmentId = null, segmentId = null, ownerId = null } = {}) {
   const { rows } = await query(
     `SELECT a.id, a.name, a.type, a.segment_id, a.owner_user_id,
             seg.name AS segment_name, seg.color AS segment_color,
@@ -516,8 +519,10 @@ export async function mapView({ departmentId = null, segmentId = null } = {}) {
       WHERE a.is_archived = FALSE
         AND ($1::int IS NULL OR a.department_id = $1::int)
         AND ($2::int IS NULL OR a.segment_id = $2::int)
+        AND ($3::int IS NULL OR a.owner_user_id = $3::int OR a.follower_user_id = $3::int)
+        AND ${accountEligibleSql('a')}
       ORDER BY a.name`,
-    [departmentId, segmentId],
+    [departmentId, segmentId, ownerId],
   );
 
   const mapped = [];

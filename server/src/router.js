@@ -30,6 +30,9 @@ import { requireAttendance } from './services/attendance.js';
 import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
 import marketingRoutes from './routes/marketing.js';
 import marketingPublicRoutes from './routes/marketingPublic.js';
+import salesRoutes from './routes/sales.js';
+import salesPublicRoutes from './routes/salesPublic.js';
+import salesDealRoutes from './routes/salesDeals.js';
 import { requireMarketingEnabled } from './middleware/marketing.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
@@ -53,6 +56,8 @@ export function createTaskFlowRouter() {
   // preference pages, signup forms, images, delivery reports. Always on, so a
   // link in an email already sent keeps working.
   router.use('/m', marketingPublicRoutes);
+  // the sales CRM's lead capture and provider webhooks, reached without signing in
+  router.use('/s', requireCrmEnabled, salesPublicRoutes);
 
   // everything below needs a signed-in caller
   router.use(authenticate, touchActivity);
@@ -100,6 +105,10 @@ export function createTaskFlowRouter() {
   // the week's record, weekly reviews and imported correspondence
   router.use('/crm', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), crmWeeklyRoutes);
   router.use('/crm', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), crmControlsRoutes);
+  // the sales CRM: leads, routing, assignment, follow-ups, quotes, communications, reports
+  router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesRoutes);
+  // pipelines, quotations, approvals, handover, renewals and payments
+  router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesDealRoutes);
 
   // email marketing, mounted the same way — off cleanly when disabled
   router.use('/marketing', requireAttendance, requireMarketingEnabled, requirePermission('marketing.view'), marketingRoutes);
