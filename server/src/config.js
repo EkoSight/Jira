@@ -113,6 +113,38 @@ export const config = {
     return readEmailEnv();
   },
 
+  // The sales CRM's providers. Secrets live only here, in the server's
+  // environment; Settings shows whether each is configured, never the value.
+  get sales() {
+    return {
+      whatsapp: {
+        accessToken: process.env.WHATSAPP_ACCESS_TOKEN || '',
+        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || '',
+        businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '',
+        appSecret: process.env.WHATSAPP_APP_SECRET || '',
+        verifyToken: process.env.WHATSAPP_VERIFY_TOKEN || '',
+        graphVersion: process.env.WHATSAPP_GRAPH_VERSION || 'v21.0',
+        // a sandbox (test) number is labelled as such everywhere
+        sandbox: bool(process.env.WHATSAPP_SANDBOX, false),
+      },
+      exotel: {
+        accountSid: process.env.EXOTEL_ACCOUNT_SID || '',
+        apiKey: process.env.EXOTEL_API_KEY || '',
+        apiToken: process.env.EXOTEL_API_TOKEN || '',
+        subdomain: process.env.EXOTEL_SUBDOMAIN || 'api.exotel.com',
+        callerId: process.env.EXOTEL_CALLER_ID || '',
+        // Exotel does not sign its callbacks; a secret in the callback URL is checked instead
+        callbackSecret: process.env.EXOTEL_CALLBACK_SECRET || '',
+      },
+      // any other telephony system posting call events, signed with HMAC-SHA256
+      callWebhookSecret: process.env.CALL_WEBHOOK_SECRET || '',
+      workerEnabled: bool(process.env.SALES_WORKER, true),
+      workerIntervalSeconds: int(process.env.SALES_WORKER_INTERVAL_SECONDS, 30),
+      // development only: simulated provider events, never on in production
+      simulate: bool(process.env.SALES_SIMULATE_PROVIDERS, false),
+    };
+  },
+
   jobs: {
     // background deadline / black-mark scanner
     enabled: bool(process.env.ENABLE_SCANNER, true),

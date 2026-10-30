@@ -1,8 +1,13 @@
+import crypto from 'node:crypto';
 import express, { Router } from 'express';
+import { config } from '../config.js';
 import { asyncHandler } from '../lib/errors.js';
 import { escapeHtml as e } from '../lib/emailRender.js';
 import { page } from '../services/marketing/publicPages.js';
 import { FORM_WHO, captureWithKey, getForm, keyFromRequest, submitForm } from '../services/sales/capture.js';
+import {
+  applyCallEvent, applyWhatsAppWebhook, readExotelEvent, readGenericCallEvent, validSignature,
+} from '../services/sales/comms.js';
 
 /**
  * What the outside world reaches for the sales CRM, with no sign-in: lead
@@ -45,6 +50,66 @@ router.post('/hooks/:key', json, form, async (req, res) => {
     accepted(res, await captureWithKey(key, req.body, { ip: req.ip }));
   } catch (err) {
     fail(res, err);
+  }
+});
+
+// ---------------------------------------------------------------- provider webhooks
+
+const sameSecret = (a, b) => {
+  const x = Buffer.from(String(a || ''));
+  const y = Buffer.from(String(b || ''));
+  return x.length > 0 && x.length === y.length && crypto.timingSafeEqual(x, y);
+};
+
+/** Meta's verification handshake when the webhook is registered. */
+router.get('/whatsapp', (req, res) => {
+  const w = config.sales.whatsapp;
+  if (req.query['hub.mode'] === 'subscribe' && w.verifyToken && sameSecret(req.query['hub.verify_token'], w.verifyToken)) {
+    return res.status(200).type('text/plain').send(String(req.query['hub.challenge'] ?? ''));
+  }
+  return res.status(403).json({ error: 'Verification failed' });
+});
+
+/** Messages and statuses, signed by Meta over the raw body (X-Hub-Signature-256). */
+router.post('/whatsapp', json, async (req, res) => {
+  const w = config.sales.whatsapp;
+  if (!w.appSecret || !validSignature(w.appSecret, req.rawBody, req.get('x-hub-signature-256'))) {
+    return res.status(401).json({ error: 'Signature does not match' });
+  }
+  try {
+    res.json({ ok: true, ...(await applyWhatsAppWebhook(req.body)) });
+  } catch (err) {
+    console.error('[taskflow] WhatsApp webhook failed:', err.message);
+    // a 500 makes Meta retry, and each event is applied once however often it arrives
+    res.status(500).json({ error: 'Not processed; it will be retried' });
+  }
+});
+
+/** Any telephony system: JSON signed with HMAC-SHA256 in X-TaskFlow-Signature. */
+router.post('/calls/hook', json, async (req, res) => {
+  if (!config.sales.callWebhookSecret || !validSignature(config.sales.callWebhookSecret, req.rawBody, req.get('x-taskflow-signature'))) {
+    return res.status(401).json({ error: 'Signature does not match' });
+  }
+  try {
+    const r = await applyCallEvent('call-webhook', readGenericCallEvent(req.body || {}));
+    res.json({ ok: true, duplicate: r.duplicate, call_id: r.call?.id ?? null });
+  } catch (err) {
+    const status = err.status || 500;
+    res.status(status).json({ error: status >= 500 ? 'Not processed; retry with the same event_id' : err.message });
+  }
+});
+
+/** Exotel's status callback. Exotel does not sign it, so the URL carries a secret. */
+router.post('/calls/exotel/:secret', form, json, async (req, res) => {
+  if (!sameSecret(req.params.secret, config.sales.exotel.callbackSecret)) return res.status(404).end();
+  try {
+    const ev = readExotelEvent(req.body || {});
+    if (!ev.providerCallId) return res.status(400).json({ error: 'CallSid missing' });
+    const r = await applyCallEvent('exotel', ev);
+    res.json({ ok: true, duplicate: r.duplicate });
+  } catch (err) {
+    console.error('[taskflow] Exotel callback failed:', err.message);
+    res.status(500).json({ error: 'Not processed' });
   }
 });
 

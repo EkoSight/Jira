@@ -177,7 +177,7 @@ export async function addParty(client, { opportunityId, accountId, role, notes =
   );
   if (rows[0].inserted) {
     // an organization's roles are kept on it too, so a funder is findable as one
-    const orgRole = { FUNDER: 'CSR_FUNDER', IMPLEMENTING_PARTNER: 'IMPLEMENTING_PARTNER', REFERRAL: 'REFERRAL_SOURCE', BUYER: 'CUSTOMER', PAYING: 'CUSTOMER' }[role];
+    const orgRole = { FUNDER: 'CSR_FUNDER', IMPLEMENTING_PARTNER: 'IMPLEMENTING_PARTNER', REFERRAL: 'REFERRAL_SOURCE', BUYER: 'COMMERCIAL_CUSTOMER', PAYING: 'COMMERCIAL_CUSTOMER', PARTNER: 'CHANNEL_PARTNER' }[role];
     if (orgRole) {
       await client.query(
         `UPDATE accounts SET org_roles = ARRAY(SELECT DISTINCT unnest(org_roles || ARRAY[$2::text])), updated_at = now() WHERE id = $1 AND NOT ($2 = ANY(org_roles))`,

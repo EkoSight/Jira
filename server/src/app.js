@@ -14,7 +14,13 @@ export function createApp() {
   const app = express();
 
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({
+    limit: '1mb',
+    // provider webhooks are signed over the exact bytes sent, so those keep them
+    verify: (req, res, buf) => {
+      if (req.originalUrl?.startsWith(`${config.apiPrefix}/s/`)) req.rawBody = buf;
+    },
+  }));
 
   // CORS only guards the API. Static assets are same-origin, and rejecting an
   // unknown origin here means "no CORS headers", never a 500.

@@ -194,7 +194,7 @@ export async function recordAssignment(client, {
  * Assigns an eligible lead that has no owner. A lead that already has one
  * keeps it — retries and duplicate submissions do not move it.
  */
-export async function autoAssignLead(client, leadId, { actor = null, origin = 'USER', depth = 0 } = {}) {
+export async function autoAssignLead(client, leadId, { actor = null, origin = 'USER', depth = 0, causeRuleId = null } = {}) {
   const { rows } = await client.query('SELECT * FROM crm_leads WHERE id = $1 FOR UPDATE', [leadId]);
   const lead = rows[0];
   if (!lead || lead.owner_user_id || lead.destination !== 'TASKFLOW' || lead.is_archived) {
@@ -236,12 +236,12 @@ export async function autoAssignLead(client, leadId, { actor = null, origin = 'U
     `INSERT INTO crm_lead_activities (lead_id, type, direction, subject, body, actor_id, meta) VALUES ($1,'ASSIGNMENT','INTERNAL',$2,$3,$4,$5)`,
     [leadId, `Assigned to ${owner[0]?.full_name}`, choice.explain.decided_by?.why, actor?.id ?? null, { explain: choice.explain }],
   );
-  await emitEvent(client, { type: 'lead.assigned', entityType: 'LEAD', entityId: leadId, origin, depth, actorId: actor?.id ?? null, payload: { owner_user_id: choice.userId } });
+  await emitEvent(client, { type: 'lead.assigned', entityType: 'LEAD', entityId: leadId, origin, depth, ruleId: causeRuleId, actorId: actor?.id ?? null, payload: { owner_user_id: choice.userId } });
   return { userId: choice.userId, explain: choice.explain };
 }
 
 /** A person moves a lead to someone else, with a reason; the history keeps both. */
-export async function reassignLead(client, leadId, { toUserId, reason = null, actor, method = 'MANUAL', origin = 'USER', depth = 0 }) {
+export async function reassignLead(client, leadId, { toUserId, reason = null, actor, method = 'MANUAL', origin = 'USER', depth = 0, causeRuleId = null }) {
   const { rows } = await client.query('SELECT * FROM crm_leads WHERE id = $1 FOR UPDATE', [leadId]);
   const lead = rows[0];
   if (!lead) return null;
@@ -274,7 +274,7 @@ export async function reassignLead(client, leadId, { toUserId, reason = null, ac
         AND assignee_id IS NOT DISTINCT FROM $3`,
     [leadId, toUserId, lead.owner_user_id],
   );
-  await emitEvent(client, { type: 'lead.reassigned', entityType: 'LEAD', entityId: leadId, origin, depth, actorId: actor?.id ?? null, payload: { from: lead.owner_user_id, to: toUserId } });
+  await emitEvent(client, { type: 'lead.reassigned', entityType: 'LEAD', entityId: leadId, origin, depth, ruleId: causeRuleId, actorId: actor?.id ?? null, payload: { from: lead.owner_user_id, to: toUserId } });
   return { ...lead, owner_user_id: toUserId };
 }
 

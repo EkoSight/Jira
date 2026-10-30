@@ -62,7 +62,7 @@ export async function refreshLeadNextFollowUp(client, leadId) {
 /** A new follow-up on a lead, organization or deal. */
 export async function createFollowUp(client, {
   leadId = null, accountId = null, opportunityId = null, kind = 'CALL', title = null, dueAt, assigneeId = null, priority = 'MEDIUM',
-  notes = null, actor, recurrence = 'none', reminderMinutes = 15, origin = 'USER', depth = 0, automationRunId = null,
+  notes = null, actor, recurrence = 'none', reminderMinutes = 15, origin = 'USER', depth = 0, automationRunId = null, causeRuleId = null,
 }) {
   if (!FOLLOWUP_KINDS.includes(kind)) throw badRequest('Unknown kind of follow-up');
   const due = new Date(dueAt);
@@ -111,7 +111,7 @@ export async function createFollowUp(client, {
   if (ownerId && ownerId !== actor?.id) {
     await notify(client, { userId: ownerId, type: 'crm_followup', title: `Follow-up: ${task.title}`, body: `Due ${due.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`, taskId: task.id, leadId, accountId });
   }
-  await emitEvent(client, { type: 'followup.created', entityType: 'TASK', entityId: task.id, origin, depth, actorId: actor?.id ?? null, payload: { lead_id: leadId, account_id: accountId, opportunity_id: opportunityId, kind } });
+  await emitEvent(client, { type: 'followup.created', entityType: 'TASK', entityId: task.id, origin, depth, ruleId: causeRuleId, actorId: actor?.id ?? null, payload: { lead_id: leadId, account_id: accountId, opportunity_id: opportunityId, kind } });
   return task;
 }
 

@@ -4,6 +4,7 @@ import { runMigrations } from './db/migrate.js';
 import { startDeadlineScanner, stopDeadlineScanner } from './jobs/deadlineScanner.js';
 import { startChatWorker, stopChatWorker } from './jobs/chatWorker.js';
 import { startMarketingWorker, stopMarketingWorker } from './jobs/marketingWorker.js';
+import { startSalesWorker, stopSalesWorker } from './jobs/salesWorker.js';
 import { closePool } from './db/pool.js';
 import { reportStartupFailure } from './lib/dbErrors.js';
 import { backfillAccountImages } from './services/accountImages.js';
@@ -46,6 +47,7 @@ async function main() {
     startDeadlineScanner();
     startChatWorker();
     startMarketingWorker();
+    startSalesWorker();
   }
 
   const shutdown = async (signal) => {
@@ -53,6 +55,7 @@ async function main() {
     stopDeadlineScanner();
     stopChatWorker();
     stopMarketingWorker();
+    stopSalesWorker();
     server.close(async () => {
       await closePool();
       process.exit(0);
