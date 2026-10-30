@@ -684,3 +684,36 @@ test('I: people outside a record cannot read or change it through the API, whate
   assert.equal((await call('POST', '/s/leads', { headers: { authorization: 'Bearer tfk_any' }, body: { name: 'x' } })).status, 404);
   ok(await call('PUT', '/settings/crm', { token: tokens.admin, body: { value: { ...crm, enabled: true } } }));
 });
+
+test('F15: a lead score shows each part, lists what is unknown, and an override needs permission and a reason', async (t) => {
+  if (skip(t)) return;
+  const created = ok(await call('POST', '/sales/leads', { token: tokens.rupendra, body: { category: 'B2B_CORPORATE', organization_name: 'Score Test Agro', contact_name: 'Asha', phone: '9811100001', owner_user_id: ids.rupendra } }), 201).lead;
+  // nothing asked yet: a low score that says why, not a hidden zero
+  let detail = ok(await call('GET', `/sales/leads/${created.id}`, { token: tokens.rupendra }));
+  assert.equal(detail.score.score, 0);
+  assert.deepEqual(detail.score.missing.sort(), ['Budget known', 'Buying timeline', 'Decision maker engaged', 'Fit with what we sell', 'Requirement clarity'].sort());
+  assert.ok(detail.score.breakdown.every((b) => typeof b.note === 'string' && b.note.length > 0), 'every part carries a plain explanation');
+
+  // answers recorded: (25×1 + 15×1 + 15×1 + 15×1 + 15×0.75) ÷ 100 weights = 81.3% → 81; nothing missing
+  ok(await call('PATCH', `/sales/leads/${created.id}`, { token: tokens.rupendra, body: { fit: 'STRONG', need_clarity: 'CLEAR', budget_confirmed: true, decision_maker_engaged: true, timeline: 'QUARTER' } }));
+  detail = ok(await call('GET', `/sales/leads/${created.id}`, { token: tokens.rupendra }));
+  assert.equal(detail.score.score, 81);
+  assert.deepEqual(detail.score.missing, []);
+  assert.equal(detail.lead.score, 81, 'the stored score follows the answers');
+
+  // overriding: not for an agent; a manager must say why; clearing it returns to the computed score
+  assert.equal((await call('PATCH', `/sales/leads/${created.id}`, { token: tokens.rupendra, body: { score_override: 95, score_override_reason: 'Board already approved' } })).status, 403);
+  const noReason = await call('PATCH', `/sales/leads/${created.id}`, { token: tokens.manager, body: { score_override: 95 } });
+  assert.equal(noReason.status, 400);
+  ok(await call('PATCH', `/sales/leads/${created.id}`, { token: tokens.manager, body: { score_override: 95, score_override_reason: 'Board already approved the budget' } }));
+  detail = ok(await call('GET', `/sales/leads/${created.id}`, { token: tokens.manager }));
+  assert.equal(detail.lead.score_override, 95);
+  assert.equal(detail.lead.score_override_reason, 'Board already approved the budget');
+  assert.equal(detail.lead.score, 81, 'the computed score is kept beside the override');
+  ok(await call('PATCH', `/sales/leads/${created.id}`, { token: tokens.manager, body: { score_override: null } }));
+  assert.equal(ok(await call('GET', `/sales/leads/${created.id}`, { token: tokens.manager })).lead.score_override, null);
+
+  // TeleCRM's categories are not scored
+  const retailer = (await call('POST', '/sales/leads', { token: tokens.rupendra, body: { category: 'RETAILER', organization_name: 'Score Test Store', contact_name: 'Ravi', phone: '9811100002' } })).body.lead;
+  assert.equal(retailer.score ?? null, null);
+});

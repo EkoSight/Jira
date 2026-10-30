@@ -9,10 +9,18 @@ marked **[Brief]**.
 The workbook contained only the module and feature lists — no embedded
 instructions, macros or comments.
 
-Status key: **Verified** (automated test and browser journey pass) ·
-**Built, awaiting verification** · **Blocked: <dependency>** · **Not started**.
-Statuses are updated at the end of each milestone; the last update is at the
-bottom of this file.
+Status key:
+
+- **Verified**: an automated test and a browser walk-through both pass.
+- **Tested**: an automated test passes; not walked in the browser.
+- **Built, awaiting live verification**: works against test stand-ins, not yet
+  against the real provider.
+- **Partial**: what is missing is named.
+- **Blocked**: waiting on a named dependency.
+- **Not built**.
+
+All verification is in the development environment; nothing has been run
+against production. The last update is at the bottom of this file.
 
 ---
 
@@ -59,7 +67,7 @@ record-level visibility, merging.
 |---|---|---|---|
 | D1 | **Lead category** is stored on every inbound lead and organization: `B2B_CORPORATE`, `CSR_NGO` (eligible) and `RETAILER`, `FPO`, `INDIVIDUAL` (TeleCRM), plus `UNCLASSIFIED`. Destination is derived from the category on the server and cannot be set directly. | One rule, enforced in one function used by every entry path | Categories are fixed in code; routing destinations of the excluded categories are configurable only between "TeleCRM hand-off" and "review queue" |
 | D2 | **Existing organizations are not reclassified.** They keep `lead_category = NULL` and are marked *legacy — awaiting confirmation*. They stay in the pipeline (so nothing existing breaks) and are listed in a remediation queue with a *suggested* category (from segment and name) that an admin confirms. Confirming an excluded category takes the record out of active workflows; nothing is deleted. | Brief: preserve, flag, admin-led remediation; never silently reinterpret | Setting `crm.routing.legacyUnclassified` = `INCLUDE` (default) or `EXCLUDE` |
-| D3 | **Visibility**: Sales Agents (role `member`) see the records they own, follow, are collaborators/watchers on, or owe the next action on; Managers see their own department and any departments granted to them; Admins see everything. Enforced in list, detail, search, board, dashboard, reports and exports. | Brief §15 | Setting `crm.visibility.agents` = `OWN` (default) / `TEAM` / `ALL`. **This narrows what members saw before this release** — see Q4 |
+| D3 | **Visibility**: when record-level access is on, Sales Agents (role `member`) see the records they own, follow, are collaborators/watchers on, or owe the next action on; Managers see their own department and any departments granted to them; Admins see everything. Enforced in list, detail, search, board, dashboard, reports and exports. **Record-level access starts off** (see D16). | Brief §15 | Settings → Visibility: on/off, and `agents` = `OWN` (recommended) / `TEAM` / `ALL`. See Q4 |
 | D4 | **Teams = departments.** Managers' team reach reuses `attendance_team_access`. | No second team structure | — |
 | D5 | **Follow-ups are TaskFlow tasks** with a follow-up kind, outcome and lead link; there is no separate CRM to-do list. Meetings stay `crm_meetings`. | Brief §6: no duplicate follow-up records | — |
 | D6 | **Delivery handover on Won = the existing engagement** (one per deal, idempotent) plus milestone tasks, now with a handover review step and the payment/reporting schedule. | Reuse; TaskFlow has no separate "project" object | — |
@@ -71,6 +79,9 @@ record-level visibility, merging.
 | D12 | Money is `NUMERIC(16,2)` in the database and integer paise in JavaScript arithmetic; amounts in different currencies are never added; conversion happens only with an admin-entered rate and date, and the report says so. | Brief §9 | Settings → CRM → Currencies |
 | D13 | Quotation/proposal PDFs carry the **Soil Doctor** brand (same assets as email). | Existing brand guideline | Q7 |
 | D14 | Live outbound automation (WhatsApp sends) is **off** until an admin switches it on after a test run. | Brief §11 | Settings → Automation |
+| D15 | **Organizations created without a category** (an older API client, or the existing form path before it asked) are created exactly as before (201, in the pipeline) and marked `LEGACY_UNCONFIRMED` with `category_source = 'UNSPECIFIED'`, so they join the classification queue like the organizations that predate categories. | Existing API contracts keep working; nothing is guessed | — |
+| D16 | **Record-level access starts off.** Until an administrator switches it on, everyone with CRM access sees every record, as before the release. Turning it on applies D3 everywhere at once. | Narrowing what people see on deploy day, before anyone decided it, would break existing work (brief: nothing existing may break) | Settings → Visibility. The setup checklist shows it as open until decided |
+| D17 | **Scheduled reports are in-app notices**, not emails, with numbers computed separately for each recipient's access. | No CRM mail path exists yet; a notice cannot leak data to an address outside TaskFlow | Email delivery can be added later |
 
 ---
 
@@ -81,7 +92,7 @@ Work continues on the defaults above; answers change configuration, not code.
 1. **Calling provider** — do you use Exotel, Knowlarity, MyOperator, Ozonetel, Twilio, or SIM-based calling (as TeleCRM does)? Which numbers, and may calls be recorded?
 2. **WhatsApp** — is there a WhatsApp Business Account on Meta directly, or through a provider (Interakt, Gupshup, AiSensy, WATI)? Which phone number and which approved templates?
 3. **TeleCRM** — can you get TeleCRM API documentation and a key? Until then the hand-off is an export.
-4. **Visibility** — confirm that sales agents should see only their own and shared records (D3). Today every CRM user sees everything.
+4. **Visibility** — when should record-level access be switched on, and should sales agents see only their own and shared records (D3, D16)? Until then every CRM user sees everything, as today.
 5. **Approvals** — discount and value thresholds for quotation approval, and who approves.
 6. **Calendar** — confirm Asia/Kolkata, INR, April–March, working days and hours.
 7. **PDF branding** — Soil Doctor (default) or EkoSight letterhead on quotations; GSTIN and bank details to print.
@@ -90,76 +101,121 @@ Work continues on the defaults above; answers change configuration, not code.
 
 ---
 
+
 ## 4. Requirements matrix
 
-Columns: requirement · existing state · screen / workflow · backend / data · acceptance test.
+Evidence:
+
+- **Test X** names an automated test: `server/tests/sales.test.js`,
+  `salesOps.test.js`, `salesMigration.test.js` or `migrations.test.js`.
+- **Walk** names a step of the browser walk-through. It runs in Chromium
+  against a scratch database:
+  - phone steps at 390 × 844
+  - desktop steps at 1400 × 950
+  - plus the dark theme and keyboard checks
 
 ### Workbook — Module tab
 
-| ID | Requirement | Existing | Screen / workflow | Backend / data | Acceptance |
-|---|---|---|---|---|---|
-| M1 | Lead management: add, edit, delete, search, filter | Organizations only | CRM → Leads: list with views (mine, team, unassigned, new, overdue, stale, won/lost, needs classification), quick add, record page, bulk assign/tag/status, archive/restore | `crm_leads`, `services/sales/leads.js` | Journeys A, D |
-| M2 | Lead assignment by type, equally, or other logic | — | Settings → Assignment rules: ordered rules, simulate, "why this owner" | `crm_assignment_rules`, round-robin state with row lock, idempotent per lead | Journey E |
-| M3 | Follow-ups: reminders, callbacks, overdue | Tasks + nudges for deals | CRM → My Day; log call → outcome → next follow-up; complete / reschedule / snooze / hand off | task columns `followup_kind`, `crm_lead_id`, `snoozed_until`; escalation in worker | Journey F |
-| M4 | Sales pipeline with custom stages | One pipeline | Opportunities board/list per pipeline; Settings → Pipelines (order, probability, required fields, allowed moves, aging, approval gate, retire with mapping) | `crm_pipelines`, stage columns | Journeys A, B |
-| M5 | Dashboard: totals, today's leads, pending tasks, performance | Deal dashboard | CRM → Overview (role-aware) | `services/sales/reports.js` | Journeys A, J |
-| M6 | Team management: admin, manager, agent | Roles/departments | Settings → Team & access (role mapping, reassignment when someone leaves) | new `crm.*` permissions | Journey I |
-| M7 | Daily, weekly, monthly sales and agent reports | Weekly record | CRM → Reports with period, owner, team, category, pipeline, source, campaign, stage, currency; drill-down; export; scheduled delivery | reports service + `crm_report_schedules` | Journey J |
-| M8 | Import leads from Excel and CSV | — (marketing contacts only) | CRM → Leads → Import: template, map, validate, preview, duplicate strategy, run, summary, error file, undo | `crm_import_jobs`, `crm_import_rows`; exceljs | Journey G |
-| M9 | Calling: click-to-call, call logs, recordings | Manual CALL activity | Call button on lead/contact; call log; recording playback with permission | `crm_calls`, Exotel adapter, generic signed webhook | Journey H (blocked on Q1 for live) |
-| M10 | WhatsApp: send, templates, conversations | — | Conversation panel on lead/contact; template picker with preview; opt-out | `crm_wa_messages`, `crm_wa_templates`, Cloud API adapter | Journey H (blocked on Q2 for live) |
-| M11 | Automation: reminders, welcome messages, triggers | Nudges, digests | Settings → Automation: rules, test mode, history, retry | `crm_automation_rules`, `crm_events`, `crm_automation_runs` | Journey F |
-| M12 | Lead sources: websites, ads, external platforms | — | Settings → Sources & capture: API keys, form, webhook docs | `/api/taskflow/s/leads` ingestion contract, `crm_sources` | Journey C |
-| M13 | Advanced analytics: conversion, source performance, revenue | Partial | Reports → Conversion, Sources & campaigns, Revenue & payments | definitions in `docs/CRM_METRICS.md` | Journey J |
-| M14 | Security: role permissions, audit logs, backups | Audit for deals | Settings → Audit; backup/restore procedure | scope helper on every query; `crm_audit_events` | Journeys I, K |
-| M15 | Mobile-friendly interface | PWA, responsive | Phone layouts for My Day, lead, call log, follow-up, stage | — | Journey L |
+| ID | Requirement | Where | Status | Evidence |
+|---|---|---|---|---|
+| M1 | Lead management: add, edit, delete, search, filter | Sales CRM → Leads: views (mine, team, unassigned, new, overdue, stale, needs classification, TeleCRM, archived), filters, saved views, bulk actions, record page; archive and restore instead of delete | Verified | Tests C, D; walk: phone lead list, convert, keyboard reaches the new-lead form, a missing lead says so |
+| M2 | Lead assignment by type, equally, or other logic | Settings → Assignment: ordered rules, capacity, leave, fallback, "Who would get it?" | Tested | Test E (equal shares, skipping unavailable or full people, retries do not reassign). Not walked in the browser |
+| M3 | Follow-ups: reminders, callbacks, overdue | My Day; log call → outcome → next step; done / reschedule / snooze / hand over; reminders and escalation in the worker | Verified | Test F (overdue vs stale, each escalated once); walk: phone My Day, log a call with the next step, complete from My Day |
+| M4 | Sales pipeline with custom stages | Pipeline board per pipeline; Settings → Pipelines & stages (rename, order, probability, required fields, allowed moves, ageing, approval gate, retire with mapping) | Verified | Test "pipelines"; walk: pipelines and stages, board switches to CSR / NGO, win through the move dialog |
+| M5 | Dashboard: totals, today's leads, pending tasks, performance | **Reports → Summary** (leads, pipeline, outcomes, money, follow-ups) and **My Day**; the existing deal dashboard is unchanged. There is no separate "Overview" tab | Verified | Test J; walk: reports with definitions and drill-down |
+| M6 | Team management: admin, manager, agent | Existing roles and per-person permissions (Team) with the new `crm.*` permissions; record-level access switch; bulk reassignment from Leads | Partial | Tests I, F15; walk: record-level access switch. No dedicated "someone is leaving" hand-over screen: use Leads → select → Assign |
+| M7 | Daily, weekly, monthly sales and agent reports | Reports: summary, sources & campaigns, people, stages, targets; filters; drill-down; export; **Send regularly** (in-app, D17) | Verified | Tests J (reconciling drill-downs, currencies, access; scheduled delivery once per period, per-recipient access); walk: reports and drill-down; schedule dialog and recipient's notice on a phone |
+| M8 | Import leads from Excel and CSV | Imports: template, mapping, check, duplicate strategy, background run, corrections file, undo | Verified | Test G; walk: import a CSV |
+| M9 | Calling: click-to-call, call logs, recordings | Call / Log call on leads and deals; Calls tab; recordings for the agent, their managers and `crm.recordings`; Exotel adapter; signed call webhook | Built, awaiting live verification | Test H calls (signed events in any order, duplicates, unknown callers, private recordings) against a test stand-in. **Blocked: Q1** for live calling |
+| M10 | WhatsApp: send, templates, conversations | WhatsApp tab on a lead; templates synced from Meta; 24-hour window; opt-out | Built, awaiting live verification | Test H WhatsApp (window, templates, signed webhooks, out-of-order statuses, failures, retries, opt-outs) against a test stand-in for Meta. **Blocked: Q2** for live sending |
+| M11 | Automation: reminders, welcome messages, triggers | Settings → Automation: presets, rules, test mode, preview, runs, retry | Tested | Test F (off by default, simulates in test mode, runs once, cannot loop, stops on a reply). Not walked in the browser |
+| M12 | Lead sources: websites, ads, external platforms | Hosted form; capture API with keys; sources and campaigns; UTM | Verified | Test C (every entry path, including the public form and API); walk: public form on a phone |
+| M13 | Advanced analytics: conversion, source performance, revenue | Reports; definitions in `docs/CRM_METRICS.md` | Verified | Test J; walk: reports with definitions |
+| M14 | Security: role permissions, audit logs, backups | Permission checks on every route; record scope on every query; audit log; backup / restore procedure in `docs/CRM_ROLLOUT.md` | Partial | Tests I, F15, migrations, salesMigration (rehearsal on a populated database). The backup and restore procedure is **documented, not exercised** on this installation's data; Q8 open |
+| M15 | Mobile-friendly interface | Phone layouts for My Day, leads, lead page, call log, follow-ups, public form | Verified (emulated) | Walk: phone steps. Checked in an emulated phone viewport, not on real devices |
 
 ### Workbook — Features tab
 
-| ID | Requirement | Covered by |
-|---|---|---|
-| F1 | Login and user management | Existing auth/users; M6 |
-| F2 | Lead management | M1 |
-| F3 | Lead assignment | M2 |
-| F4 | Follow-up reminders | M3 |
-| F5 | Sales pipeline | M4 |
-| F6 | Dashboard and basic reports | M5, M7 |
-| F7 | **Excel import/export** | M8; export from every list (XLSX/CSV, permission-scoped, formula-safe) |
-| F8 | WhatsApp Business integration | M10 |
-| F9 | Calling integration | M9 |
-| F10 | Call logs and recordings | M9 |
-| F11 | Automated lead assignment | M2 |
-| F12 | Automatic reminders | M3, M11 |
-| F13 | Workflow automation | M11 |
-| F14 | Advanced reports and analytics | M13 |
-| F15 | **Lead scoring** | Transparent, configurable per category; contributions shown; override with reason |
-| F16 | **Automated escalation of overdue leads** | Overdue activity vs stale record, thresholds, manager escalation (M3, M11) |
-| F17 | **Marketing campaign tracking** | `crm_campaigns`, UTM, conversions and won value per campaign |
-| F18 | **Revenue and payment tracking** | Schedules, partial receipts, refunds, balances, overdue; bookings ≠ commitments ≠ receipts |
-| F19 | **Advanced permissions and integrations** | `crm.*` permissions, integration settings/health |
+| ID | Requirement | Status | Evidence / note |
+|---|---|---|---|
+| F1 | Login and user management | Verified | Existing auth and Team page, unchanged; the existing test suite passes |
+| F2 | Lead management | Verified | M1 |
+| F3 | Lead assignment | Tested | M2 |
+| F4 | Follow-up reminders | Verified | M3 |
+| F5 | Sales pipeline | Verified | M4 |
+| F6 | Dashboard and basic reports | Verified | M5, M7 |
+| F7 | **Excel import/export** | Verified | M8; Test G exports (permitted rows and columns only, formulas neutralised) |
+| F8 | WhatsApp Business integration | Built, awaiting live verification | M10; Q2 |
+| F9 | Calling integration | Built, awaiting live verification | M9; Q1 |
+| F10 | Call logs and recordings | Tested | Test H calls; manual logging also in the walk |
+| F11 | Automated lead assignment | Tested | M2 |
+| F12 | Automatic reminders | Verified | M3 |
+| F13 | Workflow automation | Tested | M11 |
+| F14 | Advanced reports and analytics | Verified | M13 |
+| F15 | **Lead scoring** | Verified | Test F15 (exact weighted score, missing inputs listed, override needs permission and reason, TeleCRM leads unscored); walk: lead page shows the score with what is missing |
+| F16 | **Automated escalation of overdue leads** | Tested | Test F: overdue follow-ups escalate to the manager once; stale leads separately |
+| F17 | **Marketing campaign tracking** | Tested | Test J (sources report). Campaign spend is shown as recorded; no cost-per-lead division |
+| F18 | **Revenue and payment tracking** | Verified | Tests A, B (schedules, part payments, refunds capped and permissioned, duplicate events, verification); walk: part payment shows scheduled / received / balance / overdue |
+| F19 | **Advanced permissions and integrations** | Verified / awaiting live | Test I; walk: integrations say what is not connected. Live provider states await Q1–Q3 |
 
 ### Additions from the brief
 
-| ID | Requirement | Screen / workflow | Backend / data |
+| ID | Requirement | Status | Evidence / note |
 |---|---|---|---|
-| B1 | **[Brief]** Taskflow/TeleCRM boundary, every entry path | Needs-classification queue; TeleCRM hand-off list | `services/sales/routing.js`; `crm_routing_events`; `crm_handoffs` |
-| B2 | **[Brief]** Legacy remediation of ineligible records | Settings → Remediation | suggestions only (D2) |
-| B3 | **[Brief]** Organizations, contacts, leads, opportunities kept distinct; conversion keeps history | Convert dialog (link existing org/contact or create) | `crm_leads.converted_*`; lead activities shown on the organization |
-| B4 | **[Brief]** Organization roles (funder, contracting, paying, implementing, referral) | Parties on an opportunity | `opportunity_parties`, `accounts.org_roles` |
-| B5 | **[Brief]** CSR/NGO fields | CSR section on CSR deals | CSR columns on `opportunities` + configurable fields |
-| B6 | **[Brief]** Contact decision roles, consent, preferences | Contact form | `account_contacts` columns |
-| B7 | **[Brief]** Duplicate preview and merge | Merge dialog with reasons and field choices | `services/sales/merge.js`, `crm_merges` |
-| B8 | **[Brief]** Product/service catalogue and quotations with versions | Settings → Catalogue; Quotes on a deal | `crm_products`, `crm_quotes`, `crm_quote_lines` |
-| B9 | **[Brief]** CSR proposals / concept notes | Proposal on a CSR deal | `crm_quotes` kind `CSR_PROPOSAL` |
-| B10 | **[Brief]** Branded PDFs | Download PDF | pdfkit + Soil Doctor assets |
-| B11 | **[Brief]** Approvals (discount/value thresholds, no self-approval, re-approval on material change) | Approvals inbox | `crm_approval_rules`, `crm_approvals`, content hash |
-| B12 | **[Brief]** Acceptance recorded without implying e-signature | Record acceptance (method, date, evidence) | quote columns |
-| B13 | **[Brief]** Idempotent handover on Won with manager review | Handover panel | engagements + review |
-| B14 | **[Brief]** Renewals / next cycle as new linked opportunity | Renew button; renewals due list | `opportunities.renewal_of_id`, `renewal_due_on` |
-| B15 | **[Brief]** Payment schedules, partial receipts, refunds, duplicate-event guard, verification | Payments panel | `crm_payment_schedules`, payment `kind`, `verified_*`, `event_key` |
-| B16 | **[Brief]** Multi-currency without adding unlike currencies | Totals per currency; optional conversion with stated rate | `crm_fx_rates` |
-| B17 | **[Brief]** Unified timeline | Timeline tab merging activities, calls, messages, quotes, approvals, assignment, payments, lead history | `services/sales/timeline.js` |
-| B18 | **[Brief]** Integration settings, health, diagnostics | Settings → Integrations | `crm_integration_events` |
-| B19 | **[Brief]** Targets vs actuals, forecast categories | Reports → Targets | `crm_targets`, `opportunities.forecast_category` |
-| B20 | **[Brief]** Setup wizard, contextual help, guides, demo data | Settings → Setup; Help panel | `docs/CRM_GUIDE.md`; `scripts/dev-crm-demo.mjs` |
-| B21 | **[Brief]** Migration rehearsal, backup/restore, rollback | — | `docs/CRM_ROLLOUT.md` |
+| B1 | **[Brief]** Taskflow/TeleCRM boundary, every entry path | Verified | Test C; walk: TeleCRM queue and classification, public form |
+| B2 | **[Brief]** Legacy remediation of ineligible records | Verified | salesMigration test (suggestions only, nothing reclassified); walk: existing organization flagged for classification |
+| B3 | **[Brief]** Organizations, contacts, leads, opportunities distinct; conversion keeps history | Verified | Test D; walk: convert the lead |
+| B4 | **[Brief]** Organization roles (funder, contracting, paying, implementing, referral) | Tested | Test B (funder and implementer on one deal; one organization, several roles) |
+| B5 | **[Brief]** CSR/NGO fields | Tested | Test B. The CSR panel was not walked in the browser |
+| B6 | **[Brief]** Contact decision roles, consent, preferences | Partial | Captured on conversion and on capture (consent text and time); used by stage rules. The existing contact form on an organization does **not** yet show or edit decision roles, consent or do-not-contact |
+| B7 | **[Brief]** Duplicate preview and merge | Tested | Test D (preview with reasons, field choices, history kept). Merge dialog not walked |
+| B8 | **[Brief]** Catalogue and quotations with versions | Verified | Tests A and "quotation totals are exact to the paisa"; walk: quotation with a 12% discount |
+| B9 | **[Brief]** CSR proposals / concept notes | Tested | Test B |
+| B10 | **[Brief]** Branded PDFs | Tested | Test A (PDF served to permitted people only). Letterhead content awaits Q7 |
+| B11 | **[Brief]** Approvals (thresholds, no self-approval, re-approval on change) | Verified | Test A; walk: manager approves from Approvals |
+| B12 | **[Brief]** Acceptance recorded without implying e-signature | Verified | Test A; walk: records the PO |
+| B13 | **[Brief]** Idempotent handover on Won with manager review | Verified | Test A; walk: double click on Start delivery creates one engagement, in review |
+| B14 | **[Brief]** Renewals / next cycle as a new linked opportunity | Tested | Test B (asking twice returns the same renewal) |
+| B15 | **[Brief]** Payment schedules, partial receipts, refunds, duplicate-event guard, verification | Verified | Tests A, B; walk: part payment |
+| B16 | **[Brief]** Multi-currency without adding unlike currencies | Tested | Test J (USD deal counted separately) |
+| B17 | **[Brief]** Unified timeline | Partial | The lead page timeline merges activities, calls, WhatsApp messages, routing and assignment. The deal timeline is the existing activity timeline, which now also gets quotation and payment entries; automation runs are listed in Settings → Automation, not on the timeline |
+| B18 | **[Brief]** Integration settings, health, diagnostics | Verified | Walk: integrations say what is not connected; Test H (events recorded) |
+| B19 | **[Brief]** Targets vs actuals, forecast categories | Partial | Targets: Settings → Targets and Reports → Targets (Test J path). Forecast category is stored, used by the weighted forecast and settable by automation, but has **no field on the deal screen** yet |
+| B20 | **[Brief]** Setup wizard, contextual help, guides, demo data | Partial | Setup checklist, Help tab and `docs/CRM_GUIDE.md` are verified (walk: setup checklist). **No demo data script**; the browser walk-through's fixtures are not shipped |
+| B21 | **[Brief]** Migration rehearsal, backup/restore, rollback | Partial | `docs/CRM_ROLLOUT.md`; salesMigration test (populated database, every existing column fingerprinted); reconciliation script exercised across the upgrade. **Rehearsal on a copy of production is still to be done** by whoever deploys |
+
+## 5. Acceptance journeys
+
+| Journey | What it proves | Automated | Browser |
+|---|---|---|---|
+| A | Corporate sale: quotation approved by someone else, sent, accepted, won, handed over once, paid in part | Test A | Agent and quote phases |
+| B | CSR commitment in its own pipeline, funder and implementer, kept apart from receipts; a loss; a renewal | Test B | Board switches to CSR / NGO |
+| C | Retailer, FPO and individual leads stay out of the Taskflow pipeline on every entry path | Test C | TeleCRM queue and classification; public form on a phone |
+| D | One organization, several contacts and deals; conversion keeps the lead; merge preview | Test D | Convert the lead |
+| E | Assignment rules: equal shares, unavailable or full people skipped, retry-safe | Test E | — |
+| F | Follow-ups, overdue vs stale, escalation, automation off and in test mode, loop-safe | Tests F (salesOps), F15 | My Day: log a call, complete a follow-up |
+| G | Import with mixed categories, duplicates and bad rows; corrections; undo keeps later work; permitted exports | Tests G | Import a CSV |
+| H | Calls and WhatsApp against test stand-ins of the providers | Tests H | — (no live provider; Q1, Q2) |
+| I | People outside a record cannot read or change it through the API; settings need permission; record-level access off keeps today's view | Test I | Record-level access switch |
+| J | Reports reconcile with drill-downs, keep currencies and CSR apart, respect access; scheduled reports | Tests J | Reports with definitions and drill-down; scheduled report notice |
+| K | Existing data survives the upgrade; migrations additive; constraints only widen | migrations, salesMigration | — (production-copy rehearsal pending) |
+| L | Usable on a phone; keyboard; dark theme | — | Phone steps, keyboard, dark theme |
+
+## 6. Not done, and why
+
+| Item | State |
+|---|---|
+| Live WhatsApp and Exotel | Built to the providers' documented APIs and tested against stand-ins only. Exotel callback field names are unconfirmed (Q1, Q2) |
+| TeleCRM API | No public lead API found; hand-off is export plus confirmation (Q3) |
+| Backup and restore on this installation | Procedure documented; not exercised (Q8) |
+| Production-copy rehearsal | Steps and reconciliation script ready; to be run before deploying |
+| Performance | No benchmarks run; volumes unknown (Q9) |
+| Contact form: decision roles and consent | Not on the existing contact form (B6) |
+| Deal screen: forecast category | Not editable on screen (B19) |
+| Demo data | Not shipped (B20) |
+| Email delivery of reports | In-app notices only (D17) |
+
+---
+
+Last update: 30 October 2026. Statuses reflect the test suites and browser
+walk-throughs run on this branch on that date.

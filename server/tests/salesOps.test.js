@@ -493,6 +493,11 @@ test('J: reports on a known dataset reconcile with their drill-downs, keep curre
   ok(await call('GET', `/sales/reports/sources?${q}`, { token: tokens.admin }));
   const people = ok(await call('GET', `/sales/reports/agents?${q}`, { token: tokens.admin }));
   assert.equal(people.rows.find((r) => r.id === ids.saumya).won, 3);
+  // people outside someone's reach are not listed, so their activity and follow-up counts stay private
+  const outsiderPeople = ok(await call('GET', `/sales/reports/agents?from=${from}&to=${from}`, { token: tokens.outsider })).rows;
+  assert.ok(!outsiderPeople.some((r) => r.id === ids.saumya || r.id === ids.rupendra), JSON.stringify(outsiderPeople.map((r) => r.full_name)));
+  const managerPeople = ok(await call('GET', `/sales/reports/agents?from=${from}&to=${from}`, { token: tokens.manager })).rows;
+  assert.ok(managerPeople.some((r) => r.id === ids.saumya), 'a manager sees their department');
 });
 
 test('J: a scheduled report reaches each recipient once per period, with numbers limited to what they may see', async (t) => {

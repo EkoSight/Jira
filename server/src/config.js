@@ -140,8 +140,6 @@ export const config = {
       callWebhookSecret: process.env.CALL_WEBHOOK_SECRET || '',
       workerEnabled: bool(process.env.SALES_WORKER, true),
       workerIntervalSeconds: int(process.env.SALES_WORKER_INTERVAL_SECONDS, 30),
-      // development only: simulated provider events, never on in production
-      simulate: bool(process.env.SALES_SIMULATE_PROVIDERS, false),
     };
   },
 

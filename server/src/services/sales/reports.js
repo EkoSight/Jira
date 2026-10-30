@@ -240,6 +240,9 @@ export async function sourcePerformance(input, scope) {
 export async function agentPerformance(input, scope) {
   const f = await reportFilters(input);
   const b = builder(f, scope);
+  // the people listed: everyone for full access; otherwise the viewer and, for team reach, their departments.
+  // Activity and follow-up counts are per person, so listing someone outside that reach would reveal their work.
+  const people = scope?.all ? '' : `AND (u.id = ${b.push(scope.userId)}${scope.departmentIds?.length ? ` OR u.department_id = ANY(${b.push(scope.departmentIds)}::int[])` : ''})`;
   const { rows } = await query(
     `SELECT u.id, u.full_name,
             (SELECT COUNT(*)::int FROM crm_leads l WHERE ${b.lead} AND l.owner_user_id = u.id AND ${b.inRange('l.captured_at')}) AS leads_received,
@@ -257,7 +260,7 @@ export async function agentPerformance(input, scope) {
                AND p.key = 'csr' AND ${b.inRange('o.closed_at')}) AS csr_committed,
             (SELECT COUNT(*)::int FROM ${DEAL_FROM} WHERE ${b.deal} AND o.owner_user_id = u.id AND o.status = 'ACTIVE') AS open_deals
        FROM users u
-      WHERE u.is_active = TRUE AND u.role <> 'viewer' ${f.ownerId ? 'AND u.id = $' + (b.params.indexOf(f.ownerId) + 1) : ''}
+      WHERE u.is_active = TRUE AND u.role <> 'viewer' ${people} ${f.ownerId ? 'AND u.id = $' + (b.params.indexOf(f.ownerId) + 1) : ''}
       ORDER BY u.full_name`,
     b.params,
   );

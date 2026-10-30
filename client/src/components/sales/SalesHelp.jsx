@@ -20,7 +20,7 @@ const TOPICS = [
       'Open Sales CRM → My Day. It lists Missed (overdue past the escalation time; your manager has been told), Overdue, Today, Coming up and Snoozed follow-ups, plus new leads still waiting for a first contact.',
       'To call: tap Call. On a phone this opens your dialler; it does not record anything by itself. Afterwards tap Log call, choose how it went, write what was said, and schedule the next step in the same box.',
       'To finish a follow-up: Done → outcome → notes → next step. If there is genuinely no next step, say why (for example “waiting for their board on the 20th”).',
-      'Move reschedules with a reason (kept on its history). Snooze hides it until a time you choose.',
+      'Reschedule moves it with a reason (kept on its history). Snooze hides it until a time you choose. Hand over gives it to someone else with a reason (needs assign permission).',
       'New lead: Leads → New lead. Choose who it is, add the organization and a phone or email. TaskFlow warns you about possible duplicates before you save; it never merges on its own.',
       'When a lead is real and qualified: open it → Convert to deal. The organization, contact and deal are created (or linked to the existing organization), and the lead keeps its source, history and follow-ups.',
       'On a deal, the Sales section holds quotations, payments, delivery and renewal. A deal always needs a next action: what, who, by when.',
