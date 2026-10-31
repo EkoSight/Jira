@@ -36,7 +36,7 @@ import { crmDashboard, managerSummaries, mapView, ownershipTree } from '../servi
 import { analysePipeline } from '../services/accountInsights.js';
 import {
   EXCLUDED_CATEGORIES, LEAD_CATEGORIES, ORG_ROLES, ORG_TYPES, PIPELINE_FOR_CATEGORY, accountEligibleSql, assertVisible, companyDomain,
-  crmScope, isEligible, legacyIncluded, pipelineId, scopeCondition,
+  crmScope, isEligible, isExcluded, legacyIncluded, pipelineId, scopeCondition,
 } from '../services/sales/core.js';
 import { classifyAccount } from '../services/sales/routing.js';
 import { createLead } from '../services/sales/leads.js';
@@ -442,10 +442,10 @@ router.post(
   asyncHandler(async (req, res) => {
     const data = accountInput.parse(req.body);
 
-    // Retailers, FPOs and individuals belong in TeleCRM, and an organization whose
-    // category nobody knows waits for review: neither becomes a Taskflow
-    // organization. Both are kept as leads — routed, never dropped — and the
-    // response says where they went.
+    // While TeleCRM is in use, retailers, FPOs and individuals go there, and an
+    // organization whose category nobody knows waits for review: neither becomes
+    // a Taskflow organization. Both are kept as leads — routed, never dropped —
+    // and the response says where they went.
     if (data.lead_category && !isEligible(data.lead_category)) {
       const { lead } = await createLead({
         category: data.lead_category, organization_name: data.name, contact_name: data.contact_name, email: data.contact_email,
@@ -453,7 +453,7 @@ router.post(
       }, { actor: req.currentUser, channel: 'ORGANIZATION_FORM' });
       return res.status(202).json({
         routed: lead.destination, lead,
-        message: EXCLUDED_CATEGORIES.includes(data.lead_category)
+        message: isExcluded(data.lead_category)
           ? `${data.name} was not added to the pipeline: ${lead.category_label} leads belong in TeleCRM. It is on the TeleCRM hand-off list as ${lead.ref}.`
           : `${data.name} is waiting for classification as ${lead.ref}; it joins the pipeline once its category is confirmed.`,
       });
@@ -672,7 +672,7 @@ router.patch(
     // a category change is a routing decision: into TeleCRM's side (or out of
     // review) is for the people who route leads
     const categoryChanging = data.lead_category !== undefined && data.lead_category !== existing.lead_category;
-    if (categoryChanging && (!isEligible(data.lead_category) || (existing.lead_category && !isEligible(existing.lead_category)))
+    if (categoryChanging && (!isEligible(data.lead_category) || (existing.lead_category && existing.lead_category !== 'UNCLASSIFIED' && !isEligible(existing.lead_category)))
         && !hasPermission(req.currentUser, 'crm.routing')) {
       throw forbidden('Moving an organization to or from TeleCRM\'s categories is for the people who route leads');
     }

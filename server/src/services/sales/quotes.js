@@ -27,7 +27,7 @@ import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { hasPermission } from '../../lib/permissions.js';
 import { notify } from '../activity.js';
 import { recordAuditEvent } from '../audit.js';
-import { logActivity } from '../crm.js';
+import { dayStamp, logActivity } from '../crm.js';
 import { addProposal } from '../dealMoves.js';
 import { recordHistory } from '../opportunities.js';
 import { emitEvent, money, nextNumber, salesSettings } from './core.js';
@@ -497,7 +497,7 @@ export async function recordDecision(client, { quoteId, actor, input }) {
     accountId: full.account_id, opportunityId: full.opportunity_id, quoteId, type: 'QUOTE', actorId: actor.id,
     subject: `${full.number} ${data.decision === 'ACCEPTED' ? 'accepted' : 'declined'}${data.acceptance_method ? ` (${data.acceptance_method.toLowerCase().replace('_', ' ')})` : ''}`,
     body: data.note || data.decline_reason || null, direction: 'INBOUND', isExternal: true, outcome: 'RECEIVED',
-    occurredAt: `${data.decided_on}T12:00:00+05:30`, source: 'MANUAL',
+    occurredAt: dayStamp(data.decided_on), source: 'MANUAL',
   });
   await emitEvent(client, { type: data.decision === 'ACCEPTED' ? 'proposal.accepted' : 'proposal.declined', entityType: 'QUOTE', entityId: quoteId, actorId: actor.id, payload: { opportunity_id: full.opportunity_id } });
   return data.decision;

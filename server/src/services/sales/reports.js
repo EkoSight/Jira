@@ -15,7 +15,7 @@ import { query, withTransaction } from '../../db/pool.js';
 import { badRequest } from '../../lib/errors.js';
 import { hasPermission } from '../../lib/permissions.js';
 import { notify } from '../activity.js';
-import { crmScope, localDate, money, salesSettings, scopeCondition } from './core.js';
+import { PIPELINE_CATEGORIES, crmScope, localDate, money, salesSettings, scopeCondition, workedCategories } from './core.js';
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -32,7 +32,7 @@ export async function reportFilters(input = {}) {
     currency: /^[A-Z]{3}$/.test(input.currency || '') ? input.currency : settings.calendar?.currency || 'INR',
     ownerId: input.owner_id ? Number(input.owner_id) : null,
     departmentId: input.department_id ? Number(input.department_id) : null,
-    category: ['B2B_CORPORATE', 'CSR_NGO'].includes(input.category) ? input.category : null,
+    category: [...workedCategories(), 'UNCLASSIFIED'].includes(input.category) ? input.category : null,
     pipeline: input.pipeline ? String(input.pipeline) : null,
     sourceId: input.source_id ? Number(input.source_id) : null,
     campaignId: input.campaign_id ? Number(input.campaign_id) : null,
@@ -58,7 +58,7 @@ function builder(f, scope, kind = 'both') {
   if (wantLead) lead.push("l.destination = 'TASKFLOW'", 'l.merged_into_id IS NULL', scopeCondition(scope, 'lead', 'l', push));
   if (wantDeal) {
     deal.push('o.is_archived = FALSE', 'a.is_archived = FALSE',
-      "(a.lead_category IN ('B2B_CORPORATE','CSR_NGO') OR a.lead_category IS NULL AND COALESCE(a.routing_status,'LEGACY_UNCONFIRMED') = 'LEGACY_UNCONFIRMED')",
+      `(a.lead_category IN (${workedCategories().map((c) => `'${c}'`).join(',')}) OR a.lead_category IS NULL AND COALESCE(a.routing_status,'LEGACY_UNCONFIRMED') = 'LEGACY_UNCONFIRMED')`,
       scopeCondition(scope, 'opportunity', 'o', push));
   }
   const both = (leadSql, dealSql, value) => {
@@ -69,7 +69,10 @@ function builder(f, scope, kind = 'both') {
   if (f.ownerId) both((p) => `l.owner_user_id = ${p}`, (p) => `o.owner_user_id = ${p}`, f.ownerId);
   if (f.departmentId) both((p) => `l.department_id = ${p}`, (p) => `a.department_id = ${p}`, f.departmentId);
   if (f.category) both((p) => `l.category = ${p}`, (p) => `COALESCE(a.lead_category, 'B2B_CORPORATE') = ${p}`, f.category);
-  if (f.pipeline) both((p) => `l.category = (SELECT category FROM crm_pipelines WHERE key = ${p})`, (p) => `o.pipeline_id = (SELECT id FROM crm_pipelines WHERE key = ${p})`, f.pipeline);
+  if (f.pipeline) {
+    const cats = wantLead ? push(PIPELINE_CATEGORIES[f.pipeline] || []) : null;
+    both((p) => `l.category = ANY(${cats}::text[]) AND ${p}::text IS NOT NULL`, (p) => `o.pipeline_id = (SELECT id FROM crm_pipelines WHERE key = ${p})`, f.pipeline);
+  }
   if (f.sourceId) both((p) => `COALESCE(l.original_source_id, l.source_id) = ${p}`, (p) => `o.source_id = ${p}`, f.sourceId);
   if (f.campaignId) both((p) => `COALESCE(l.original_campaign_id, l.campaign_id) = ${p}`, (p) => `o.campaign_id = ${p}`, f.campaignId);
   return { params, push, inRange, lead: lead.join(' AND '), deal: deal.join(' AND ') };
@@ -119,7 +122,7 @@ export async function salesSummary(input, scope) {
            COUNT(*) FILTER (WHERE o.status = 'WON' AND ${b.inRange('o.closed_at')})::int AS won,
            COUNT(*) FILTER (WHERE o.status = 'LOST' AND ${b.inRange('o.closed_at')})::int AS lost,
            SUM(o.agreed_value) FILTER (WHERE o.status = 'WON' AND ${b.inRange('o.closed_at')} AND o.is_monetary AND o.currency = $4
-             AND COALESCE(p.key, 'b2b') = 'b2b') AS commercial_bookings,
+             AND COALESCE(p.key, 'b2b') <> 'csr') AS commercial_bookings,
            SUM(o.committed_amount) FILTER (WHERE o.status = 'WON' AND ${b.inRange('o.closed_at')} AND o.is_monetary AND o.currency = $4
              AND p.key = 'csr') AS csr_committed,
            COUNT(*) FILTER (WHERE o.status = 'WON' AND ${b.inRange('o.closed_at')} AND p.key = 'csr' AND NOT o.is_monetary)::int AS csr_non_monetary_won,
@@ -131,7 +134,7 @@ export async function salesSummary(input, scope) {
     SELECT (SELECT SUM(i.amount) FROM opportunity_invoices i JOIN (${DEAL_FROM}) ON o.id = i.opportunity_id
              WHERE ${b.deal} AND i.status = 'ISSUED' AND i.currency = $4 AND i.issued_on BETWEEN $1::date AND $2::date) AS invoiced,
            (SELECT SUM(pm.amount) FILTER (WHERE pm.kind <> 'REFUND') FROM opportunity_payments pm JOIN (${DEAL_FROM}) ON o.id = pm.opportunity_id
-             WHERE ${b.deal} AND pm.is_void = FALSE AND pm.currency = $4 AND pm.received_on BETWEEN $1::date AND $2::date AND COALESCE(p.key,'b2b') = 'b2b') AS commercial_receipts,
+             WHERE ${b.deal} AND pm.is_void = FALSE AND pm.currency = $4 AND pm.received_on BETWEEN $1::date AND $2::date AND COALESCE(p.key,'b2b') <> 'csr') AS commercial_receipts,
            (SELECT SUM(pm.amount) FILTER (WHERE pm.kind <> 'REFUND') FROM opportunity_payments pm JOIN (${DEAL_FROM}) ON o.id = pm.opportunity_id
              WHERE ${b.deal} AND pm.is_void = FALSE AND pm.currency = $4 AND pm.received_on BETWEEN $1::date AND $2::date AND p.key = 'csr') AS csr_receipts,
            (SELECT SUM(pm.amount) FROM opportunity_payments pm JOIN (${DEAL_FROM}) ON o.id = pm.opportunity_id
@@ -217,7 +220,7 @@ export async function sourcePerformance(input, scope) {
          FROM crm_leads l WHERE ${b.lead} AND ${b.inRange('l.captured_at')} GROUP BY 1, 2),
      dl AS (
        SELECT o.source_id, o.campaign_id, COUNT(*) FILTER (WHERE o.status = 'WON')::int AS won,
-              SUM(o.agreed_value) FILTER (WHERE o.status = 'WON' AND o.currency = $4 AND COALESCE(p.key,'b2b') = 'b2b') AS won_value,
+              SUM(o.agreed_value) FILTER (WHERE o.status = 'WON' AND o.currency = $4 AND COALESCE(p.key,'b2b') <> 'csr') AS won_value,
               SUM(o.committed_amount) FILTER (WHERE o.status = 'WON' AND o.currency = $4 AND p.key = 'csr') AS csr_committed
          FROM ${DEAL_FROM} WHERE ${b.deal} AND ${b.inRange('o.closed_at')} GROUP BY 1, 2)
      SELECT COALESCE(ld.source_id, dl.source_id) AS source_id, COALESCE(ld.campaign_id, dl.campaign_id) AS campaign_id,
@@ -255,7 +258,7 @@ export async function agentPerformance(input, scope) {
             (SELECT COUNT(*)::int FROM ${DEAL_FROM} WHERE ${b.deal} AND o.owner_user_id = u.id AND o.status = 'WON' AND ${b.inRange('o.closed_at')}) AS won,
             (SELECT COUNT(*)::int FROM ${DEAL_FROM} WHERE ${b.deal} AND o.owner_user_id = u.id AND o.status = 'LOST' AND ${b.inRange('o.closed_at')}) AS lost,
             (SELECT SUM(o.agreed_value) FROM ${DEAL_FROM} WHERE ${b.deal} AND o.owner_user_id = u.id AND o.status = 'WON' AND o.currency = $4
-               AND COALESCE(p.key,'b2b') = 'b2b' AND ${b.inRange('o.closed_at')}) AS bookings,
+               AND COALESCE(p.key,'b2b') <> 'csr' AND ${b.inRange('o.closed_at')}) AS bookings,
             (SELECT SUM(o.committed_amount) FROM ${DEAL_FROM} WHERE ${b.deal} AND o.owner_user_id = u.id AND o.status = 'WON' AND o.currency = $4
                AND p.key = 'csr' AND ${b.inRange('o.closed_at')}) AS csr_committed,
             (SELECT COUNT(*)::int FROM ${DEAL_FROM} WHERE ${b.deal} AND o.owner_user_id = u.id AND o.status = 'ACTIVE') AS open_deals
@@ -444,4 +447,73 @@ export async function sendScheduledReports(now = new Date()) {
     });
   }
   return sent;
+}
+
+// ---------------------------------------------------------------- calling
+
+const BREAKDOWNS = { state: 'l.state', category: 'l.category', source: 'COALESCE(os.name, cs_src.name)', owner: 'u.full_name' };
+
+/**
+ * How the calling is going, for the leads captured in the period (a cohort, as
+ * with conversion): where they stand by calling status; per person, the calls
+ * logged in the period and how many reached someone; and the leads broken down
+ * by state, category, source, owner or any choice field.
+ */
+export async function callingReport(input, scope) {
+  const f = await reportFilters(input);
+  const b = builder(f, scope, 'lead');
+  const by = String(input.by || 'state');
+  const field = by.startsWith('cf:') ? by.slice(3) : null;
+  if (field && !/^[a-z][a-z0-9_]{1,40}$/.test(field)) throw badRequest('Unknown field');
+  const group = field ? null : BREAKDOWNS[by] || BREAKDOWNS.state;
+  const { rows: statuses } = await query(
+    `SELECT cs.id, COALESCE(cs.label, 'No calling status yet') AS label, cs.color, cs.lifecycle, cs.position,
+            COUNT(l.id)::int AS leads, COALESCE(SUM(l.call_attempts), 0)::int AS attempts
+       FROM crm_leads l LEFT JOIN crm_call_statuses cs ON cs.id = l.call_status_id
+      WHERE ${b.lead} AND l.is_archived = FALSE AND ${b.inRange('l.captured_at')}
+      GROUP BY cs.id, cs.label, cs.color, cs.lifecycle, cs.position ORDER BY cs.position NULLS FIRST`,
+    b.params,
+  );
+  const { rows: people } = await query(
+    `SELECT u.id, u.full_name, COUNT(c.id)::int AS calls,
+            COUNT(c.id) FILTER (WHERE c.status = 'COMPLETED' AND COALESCE(c.outcome, '') NOT IN ('NO_ANSWER', 'BUSY', 'WRONG_NUMBER'))::int AS connected,
+            COUNT(DISTINCT c.lead_id)::int AS leads_called, COALESCE(SUM(c.duration_sec), 0)::int AS talk_seconds
+       FROM crm_calls c JOIN crm_leads l ON l.id = c.lead_id JOIN users u ON u.id = c.agent_user_id
+      WHERE ${b.lead} AND ${b.inRange('c.started_at')}
+      GROUP BY u.id, u.full_name ORDER BY calls DESC, u.full_name`,
+    b.params,
+  );
+  const { rows: outcomes } = await query(
+    `SELECT a.actor_id AS id, COUNT(*) FILTER (WHERE a.meta->>'lifecycle' = 'WON')::int AS won,
+            COUNT(*) FILTER (WHERE a.meta->>'lifecycle' = 'DISQUALIFIED')::int AS closed_lost
+       FROM crm_lead_activities a JOIN crm_leads l ON l.id = a.lead_id
+      WHERE a.type = 'CALL_STATUS' AND ${b.lead} AND ${b.inRange('a.occurred_at')}
+      GROUP BY a.actor_id`,
+    b.params,
+  );
+  const outcome = new Map(outcomes.map((o) => [o.id, o]));
+  const fieldParam = field ? b.push(field) : null;
+  const key = field
+    ? `jsonb_array_elements_text(CASE WHEN jsonb_typeof(l.custom_fields->${fieldParam}) = 'array' THEN l.custom_fields->${fieldParam}
+                                       WHEN l.custom_fields ? ${fieldParam} THEN jsonb_build_array(l.custom_fields->>${fieldParam}) ELSE '["—"]'::jsonb END)`
+    : `COALESCE(${group}, '—')`;
+  const { rows: breakdown } = await query(
+    `SELECT k AS value, COUNT(*)::int AS leads,
+            COUNT(*) FILTER (WHERE l.status IN ('WON', 'CONVERTED'))::int AS won_or_converted,
+            COUNT(*) FILTER (WHERE l.status = 'DISQUALIFIED')::int AS lost
+       FROM crm_leads l LEFT JOIN users u ON u.id = l.owner_user_id
+       LEFT JOIN crm_sources os ON os.id = l.original_source_id LEFT JOIN crm_sources cs_src ON cs_src.id = l.source_id,
+            LATERAL (SELECT ${key} AS k) x
+      WHERE ${b.lead} AND l.is_archived = FALSE AND ${b.inRange('l.captured_at')}
+      GROUP BY k ORDER BY leads DESC, k LIMIT 60`,
+    b.params,
+  );
+  return {
+    filters: f,
+    by,
+    note: 'Leads captured in the period, by where they stand now; calls are those logged in the period. A call is "connected" when it was answered.',
+    statuses,
+    people: people.map((p) => ({ ...p, won: outcome.get(p.id)?.won ?? 0, closed_lost: outcome.get(p.id)?.closed_lost ?? 0, connect_rate: ratio(p.connected, p.calls) })),
+    breakdown,
+  };
 }

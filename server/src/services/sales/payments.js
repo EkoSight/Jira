@@ -26,7 +26,7 @@ import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { hasPermission } from '../../lib/permissions.js';
 import { recordAuditEvent } from '../audit.js';
 import { refreshFinancialStatus } from '../commercial.js';
-import { logActivity } from '../crm.js';
+import { dayStamp, logActivity } from '../crm.js';
 import { cleanLink } from '../dealMoves.js';
 import { recordHistory } from '../opportunities.js';
 import { emitEvent, money } from './core.js';
@@ -203,7 +203,7 @@ export async function recordPayment(client, { opportunityId, input, actor, kind 
   await logActivity(client, {
     accountId: deal.account_id, opportunityId, type: kind === 'REFUND' ? 'REFUND' : 'PAYMENT', actorId: actor.id,
     subject: `${kind === 'REFUND' ? 'Refund paid' : 'Payment received'}: ${cur} ${payment.amount}${reference ? ` (${reference})` : ''}`,
-    occurredAt: `${data.received_on}T12:00:00+05:30`,
+    occurredAt: dayStamp(data.received_on),
     meta: { payment_id: payment.id, amount: payment.amount, currency: cur, kind },
     direction: kind === 'REFUND' ? 'OUTBOUND' : 'INBOUND', outcome: kind === 'REFUND' ? 'SENT' : 'RECEIVED', isExternal: false, source: 'MANUAL',
   });

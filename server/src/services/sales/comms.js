@@ -135,7 +135,12 @@ async function callOnTimeline(client, call, actorId) {
  * link). Can schedule the next follow-up in the same step.
  */
 export async function logCall(input, actor) {
-  return withTransaction(async (client) => {
+  return withTransaction((client) => recordManualCall(client, input, actor));
+}
+
+/** A call a person logs by hand, inside the caller's transaction. */
+export async function recordManualCall(client, input, actor) {
+  {
     const phone = input.phone || null;
     const match = phone ? await matchPhone(client, phone) : {};
     const leadId = input.lead_id ?? (input.account_id || input.opportunity_id ? null : match.leadId) ?? null;
@@ -171,7 +176,7 @@ export async function logCall(input, actor) {
     }
     await emitEvent(client, { type: 'call.logged', entityType: leadId ? 'LEAD' : 'OPPORTUNITY', entityId: leadId || opportunityId || accountId, actorId: actor.id, payload: { call_id: call.id, outcome: call.outcome } });
     return { call, next };
-  });
+  }
 }
 
 /**

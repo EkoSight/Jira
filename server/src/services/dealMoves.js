@@ -26,7 +26,7 @@ import { query } from '../db/pool.js';
 import { badRequest } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { assertSafeUrl } from '../lib/uploads.js';
-import { logActivity } from './crm.js';
+import { dayStamp, logActivity } from './crm.js';
 import { dealEvidence, missingForMove, nextActionGaps, today } from './dealRules.js';
 import { recordHistory, setNextAction, syncAccountMirror } from './opportunities.js';
 import { emitEvent } from './sales/core.js';
@@ -215,7 +215,7 @@ export async function addProposal(client, { opportunity, proposal, actor }) {
     actorId: actor.id,
     subject: `Proposal sent${created.title ? `: ${created.title}` : ''}`,
     body: created.link ? `Link: ${created.link}` : null,
-    occurredAt: `${created.sent_on}T12:00:00+05:30`,
+    occurredAt: dayStamp(created.sent_on),
     meta: { proposal_id: created.id, amount: created.amount },
     direction: 'OUTBOUND',
     outcome: 'SENT',
@@ -273,7 +273,7 @@ export async function addOrder(client, { opportunity, order, actor }) {
     actorId: actor.id,
     subject: `${kind === 'CONTRACT' ? 'Contract' : kind === 'MOU' ? 'MoU' : 'Order'} received${created.reference ? `: ${created.reference}` : ''}`,
     body: created.link ? `Link: ${created.link}` : null,
-    occurredAt: `${created.received_on}T12:00:00+05:30`,
+    occurredAt: dayStamp(created.received_on),
     meta: { order_id: created.id, amount: created.amount },
     // a purchase order arriving is the customer acting, and counts as hearing from them
     direction: 'INBOUND',

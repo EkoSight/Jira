@@ -149,8 +149,8 @@ test('the sales CRM migration keeps every existing record, value and relationshi
     if (table === 'account_stages') continue;
     assert.deepEqual(afterRun[table], before[table], `${table}: existing rows unchanged`);
   }
-  // stages: the same ids, slugs and names; nine rows added (Approval / Contracting and the CSR pipeline)
-  assert.equal(afterRun.account_stages.n, before.account_stages.n + 9);
+  // stages: the same ids, slugs and names; sixteen rows added (Approval / Contracting, the CSR pipeline, the retail pipeline)
+  assert.equal(afterRun.account_stages.n, before.account_stages.n + 16);
   const { rows: stagesAfter } = await query('SELECT id, slug, position FROM account_stages ORDER BY id');
   for (const s of stagesBefore) {
     const now = stagesAfter.find((x) => x.id === s.id);

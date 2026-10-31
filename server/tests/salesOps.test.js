@@ -200,10 +200,10 @@ test('H: WhatsApp — the 24-hour window, templates, signed webhooks, statuses o
   assert.equal(blocked.blocked, true);
   assert.equal(blocked.message.status, 'BLOCKED');
 
-  // an unknown number writing in becomes a lead waiting for a category, not lost
+  // an unknown number writing in becomes a lead to work, flagged until someone learns who it is
   ok(await waHook(inbound('919111111111', 'wamid.IN3', 'Do you sell kits?')));
-  const { rows: newLead } = await query(`SELECT category, destination FROM crm_leads WHERE phone_normalized = '919111111111'`);
-  assert.deepEqual(newLead[0], { category: 'UNCLASSIFIED', destination: 'TRIAGE' });
+  const { rows: newLead } = await query(`SELECT category, destination, routing_status FROM crm_leads WHERE phone_normalized = '919111111111'`);
+  assert.deepEqual(newLead[0], { category: 'UNCLASSIFIED', destination: 'TASKFLOW', routing_status: 'NEEDS_CLASSIFICATION' });
 
   // someone outside the lead cannot read the conversation
   assert.equal((await call('GET', `/sales/whatsapp/conversation?lead_id=${ids.lead}`, { token: tokens.outsider })).status, 404);
@@ -247,8 +247,8 @@ test('H: calls — a manual log with the next step, signed provider events in an
 
   // an unknown caller becomes a lead to classify
   ok(await post({ event_id: 'ev-x', call_id: 'PRV-2', direction: 'inbound', status: 'no-answer', from: '+91 90000 11111' }));
-  const { rows: caller } = await query(`SELECT destination FROM crm_leads WHERE phone_normalized = '919000011111'`);
-  assert.equal(caller[0].destination, 'TRIAGE');
+  const { rows: caller } = await query(`SELECT destination, routing_status FROM crm_leads WHERE phone_normalized = '919000011111'`);
+  assert.deepEqual(caller[0], { destination: 'TASKFLOW', routing_status: 'NEEDS_CLASSIFICATION' });
 
   // click-to-call without Exotel configured says so plainly
   const ctc = await call('POST', '/sales/calls/click-to-call', { token: tokens.rupendra, body: { phone: '9876543210', lead_id: ids.lead } });
@@ -378,7 +378,8 @@ test('G: an import with mixed categories, duplicates and bad rows; a repeat uplo
   assert.equal((await call('POST', '/sales/imports?entity=LEADS', { token: tokens.rupendra, rawBody: file, contentType: 'text/csv' })).status, 403, 'importing needs the permission');
 
   const counts = ok(await call('POST', `/sales/imports/${up.job.id}/validate`, { token: tokens.manager, body: { mapping: up.job.mapping, options: { duplicate_strategy: 'SKIP' } } })).counts;
-  assert.deepEqual({ valid: counts.valid, invalid: counts.invalid, duplicate: counts.duplicate, routed: counts.routed }, { valid: 2, invalid: 2, duplicate: 1, routed: 1 });
+  // the retailer is worked here too, now that TeleCRM is being retired
+  assert.deepEqual({ valid: counts.valid, invalid: counts.invalid, duplicate: counts.duplicate, routed: counts.routed }, { valid: 3, invalid: 2, duplicate: 1, routed: 0 });
   const detail = ok(await call('GET', `/sales/imports/${up.job.id}`, { token: tokens.manager }));
   const bad = detail.rows.filter((r) => r.status === 'INVALID');
   assert.ok(bad.some((r) => r.errors.join(' ').match(/organization/i)));
@@ -388,15 +389,15 @@ test('G: an import with mixed categories, duplicates and bad rows; a repeat uplo
   await processImports(); await processImports();
   const job = ok(await call('GET', `/sales/imports/${up.job.id}`, { token: tokens.manager })).job;
   assert.equal(job.status, 'DONE');
-  assert.deepEqual(job.counts.result, { imported: 2, routed: 1, skipped: 1, invalid: 2 });
+  assert.deepEqual(job.counts.result, { imported: 3, skipped: 1, invalid: 2 });
   const { rows: imported } = await query(`SELECT l.phone, l.owner_user_id, l.entry_channel, s.key AS source, l.captured_at FROM crm_leads l LEFT JOIN crm_sources s ON s.id = l.original_source_id WHERE l.external_id = 'G-1'`);
   assert.equal(imported[0].phone, '09848012345', 'the leading zero survives');
   assert.equal(imported[0].owner_user_id, ids.saumya);
   assert.equal(imported[0].entry_channel, 'IMPORT');
   assert.equal(imported[0].source, 'google-ads', 'the original source is kept, not replaced by "import"');
   assert.equal(new Date(imported[0].captured_at).toISOString().slice(0, 10), '2026-09-01');
-  const { rows: routed } = await query(`SELECT destination FROM crm_leads WHERE external_id = 'G-3'`);
-  assert.equal(routed[0].destination, 'TELECRM');
+  const { rows: retail } = await query(`SELECT destination, category FROM crm_leads WHERE external_id = 'G-3'`);
+  assert.deepEqual(retail[0], { destination: 'TASKFLOW', category: 'RETAILER' });
 
   // the corrections file lists the two bad rows with reasons
   const fix = await call('GET', `/sales/imports/${up.job.id}/corrections?format=CSV`, { token: tokens.manager, raw: true });
@@ -415,7 +416,7 @@ test('G: an import with mixed categories, duplicates and bad rows; a repeat uplo
   const { rows: g2 } = await query(`SELECT id FROM crm_leads WHERE external_id = 'G-2'`);
   ok(await call('POST', `/sales/leads/${g2[0].id}/activities`, { token: tokens.admin, body: { type: 'CALL', direction: 'OUTBOUND', outcome: 'COMPLETED', subject: 'Spoke to Meera' } }), 201);
   const undo = ok(await call('POST', `/sales/imports/${up.job.id}/undo`, { token: tokens.manager })).summary;
-  assert.equal(undo.archived, 2, 'G-1 and the routed G-3');
+  assert.equal(undo.archived, 2, 'G-1 and the retailer G-3');
   assert.equal(undo.kept, 1);
   assert.match(JSON.stringify(undo.reasons), /worked on since/);
   const { rows: after } = await query(`SELECT external_id, is_archived FROM crm_leads WHERE external_id IN ('G-1','G-2','G-3') ORDER BY external_id`);

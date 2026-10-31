@@ -8,8 +8,8 @@ import { sendCsv } from '../lib/csv.js';
 import { recordAuditEvent } from '../services/audit.js';
 import { getSettings, updateSetting } from '../services/settings.js';
 import {
-  CATEGORY_LABEL, DECISION_ROLES, ELIGIBLE_CATEGORIES, EXCLUDED_CATEGORIES, FOLLOWUP_KINDS, LEAD_CATEGORIES, LEAD_STATUSES,
-  ORG_ROLES, ORG_TYPES, PARTY_ROLES, PRIORITIES, canSee, crmScope, isEligible, salesSettings,
+  CATEGORY_LABEL, DECISION_ROLES, FOLLOWUP_KINDS, KNOWN_CATEGORIES, LEAD_CATEGORIES, LEAD_STATUSES, isExcluded, isOrgCategory,
+  ORG_ROLES, ORG_TYPES, PARTY_ROLES, PRIORITIES, canSee, crmScope, isEligible, rememberRouting, salesSettings,
 } from '../services/sales/core.js';
 import {
   LEAD_VIEWS, archiveLead, convertLead, createLead, findDuplicates, getLead, leadCounts, leadRouting, leadTimeline, listLeads,
@@ -17,6 +17,7 @@ import {
 } from '../services/sales/leads.js';
 import { autoAssignLead, chooseOwner, reassignLead, STRATEGIES } from '../services/sales/assignment.js';
 import { CRITERIA, forgetScoringModels, scoreLead, scoringModels } from '../services/sales/scoring.js';
+import { callStatuses, categoryFromFields, cleanCustomFields, leadFields } from '../services/sales/calling.js';
 import {
   HANDOFF_HEADER, classifyAccount, confirmHandoff, handoffRow, listHandoffs, markExported, remediationQueue, routeLead,
 } from '../services/sales/routing.js';
@@ -60,7 +61,7 @@ const canWorkLead = (user, lead) => lead.owner_user_id === user.id || lead.creat
 
 router.get('/meta', asyncHandler(async (req, res) => {
   const user = req.currentUser;
-  const [pipelines, stages, sources, campaigns, users, departments, settings] = await Promise.all([
+  const [pipelines, stages, sources, campaigns, users, departments, settings, statuses, fields] = await Promise.all([
     query('SELECT * FROM crm_pipelines ORDER BY position, id'),
     query(`SELECT id, name, slug, kind, color, position, pipeline_id, default_probability, is_active, retired_at, required_fields,
                   allowed_to, aging_days, approval_gate, counts_in_forecast, entry_rules, exit_rules, checklist
@@ -70,12 +71,15 @@ router.get('/meta', asyncHandler(async (req, res) => {
     query(`SELECT u.id, u.full_name, u.role, u.department_id, u.is_active, u.avatar_color FROM users u ORDER BY u.full_name`),
     query('SELECT id, name, key FROM departments WHERE is_active = TRUE ORDER BY position, name'),
     salesSettings(),
+    callStatuses(),
+    leadFields(),
   ]);
   const can = Object.fromEntries(['crm.create', 'crm.manage.any', 'crm.activity.log', 'crm.view.all', 'crm.view.team', 'crm.assign', 'crm.routing',
     'crm.import', 'crm.export', 'crm.export.sensitive', 'crm.merge', 'crm.approve', 'crm.finance', 'crm.recordings', 'crm.audit',
     'crm.settings', 'crm.automation', 'crm.stages.manage'].map((p) => [p, hasPermission(user, p)]));
   res.json({
-    categories: LEAD_CATEGORIES.map((key) => ({ key, label: CATEGORY_LABEL[key], eligible: isEligible(key), excluded: EXCLUDED_CATEGORIES.includes(key) })),
+    categories: LEAD_CATEGORIES.map((key) => ({ key, label: CATEGORY_LABEL[key], eligible: isEligible(key), excluded: isExcluded(key), organization: isOrgCategory(key) })),
+    call_statuses: statuses, lead_fields: fields, tele_sales_here: isEligible('RETAILER'),
     lead_statuses: LEAD_STATUSES, priorities: PRIORITIES, followup_kinds: FOLLOWUP_KINDS, views: LEAD_VIEWS,
     org_types: ORG_TYPES, org_roles: ORG_ROLES, party_roles: PARTY_ROLES, decision_roles: DECISION_ROLES,
     assignment_strategies: STRATEGIES, scoring_criteria: Object.entries(CRITERIA).map(([key, c]) => ({ key, label: c.label })),
@@ -84,6 +88,7 @@ router.get('/meta', asyncHandler(async (req, res) => {
     settings: {
       visibility: settings.visibility, calendar: settings.calendar, followUps: settings.followUps, routing: settings.routing,
       assignment: settings.assignment, automation: settings.automation, calls: settings.calls, whatsapp: settings.whatsapp, quotes: settings.quotes,
+      calling: settings.calling,
     },
     can, me: { id: user.id, role: user.role, department_id: user.department_id },
   });
@@ -125,7 +130,25 @@ const leadInput = z.object({
   external_id: z.string().max(200).nullable().optional(),
   source_system: z.string().max(80).nullable().optional(),
   consent: z.record(z.any()).optional(),
+  rating: z.number().int().min(1).max(5).nullable().optional(),
+  call_status_id: z.number().int().positive().nullable().optional(),
 });
+
+/**
+ * Custom field answers checked against their definitions; an answer that says
+ * who the lead is ("Agri retailer") gives an unclassified lead its category.
+ */
+async function withLeadFields(data, current = null) {
+  if (data.custom_fields === undefined) return data;
+  const fields = await leadFields({ activeOnly: true });
+  const { clean, errors } = cleanCustomFields(data.custom_fields, fields);
+  if (Object.keys(errors).length) throw badRequest(`${fields.find((f) => f.key === Object.keys(errors)[0])?.label || Object.keys(errors)[0]}: ${Object.values(errors)[0]}`, { fields: errors });
+  const out = { ...data, custom_fields: clean };
+  const category = data.category ?? current?.category ?? 'UNCLASSIFIED';
+  const implied = categoryFromFields({ ...(current?.custom_fields || {}), ...clean }, fields);
+  if (implied && category === 'UNCLASSIFIED') { out.category = implied.category; out.reason = out.reason || `${implied.field.label}: ${implied.option.label}`; }
+  return out;
+}
 
 router.get('/leads', asyncHandler(async (req, res) => {
   const view = String(req.query.view || 'open');
@@ -152,7 +175,7 @@ router.post('/leads/duplicates', asyncHandler(async (req, res) => {
 }));
 
 router.post('/leads', requirePermission('crm.create'), asyncHandler(async (req, res) => {
-  const data = leadInput.parse(req.body);
+  const data = await withLeadFields(leadInput.parse(req.body));
   if (data.owner_user_id && data.owner_user_id !== req.currentUser.id && !hasPermission(req.currentUser, 'crm.assign')) {
     throw forbidden('Assigning a lead to someone else needs the assign permission');
   }
@@ -191,13 +214,13 @@ router.get('/leads/:id', asyncHandler(async (req, res) => {
 router.patch('/leads/:id', asyncHandler(async (req, res) => {
   const lead = await visibleLead(req, id(req.params.id));
   if (!canWorkLead(req.currentUser, lead)) throw forbidden('Only the lead\'s owner, or someone who can assign leads, can change it');
-  const data = leadInput.partial().extend({
+  const data = await withLeadFields(leadInput.partial().extend({
     status: z.enum(LEAD_STATUSES).optional(),
     disqualify_reason: z.string().max(2000).nullable().optional(),
     reason: z.string().max(2000).nullable().optional(),
     score_override: z.number().int().min(0).max(100).nullable().optional(),
     score_override_reason: z.string().max(1000).nullable().optional(),
-  }).parse(req.body);
+  }).parse(req.body), lead);
   if (data.owner_user_id !== undefined && data.owner_user_id !== lead.owner_user_id && !hasPermission(req.currentUser, 'crm.assign')) {
     throw forbidden('Reassigning a lead needs the assign permission');
   }
@@ -513,7 +536,8 @@ router.delete('/watchers/:type/:entityId/:userId', asyncHandler(async (req, res)
 router.put('/settings', settingsOnly, asyncHandler(async (req, res) => {
   const data = z.object({
     visibility: z.object({ agents: z.enum(['OWN', 'TEAM', 'ALL']).optional(), enforced: z.boolean().optional() }).optional(),
-    routing: z.object({ legacyUnclassified: z.enum(['INCLUDE', 'EXCLUDE']).optional(), excludedDestination: z.enum(['TELECRM', 'TRIAGE']).optional() }).optional(),
+    routing: z.object({ legacyUnclassified: z.enum(['INCLUDE', 'EXCLUDE']).optional(), excludedDestination: z.enum(['TASKFLOW', 'TELECRM', 'TRIAGE']).optional() }).optional(),
+    calling: z.object({ lostReasons: z.array(z.string().trim().min(2).max(120)).max(40).optional(), newLeadsFirst: z.boolean().optional() }).optional(),
     calendar: z.object({
       timezone: z.string().max(60).optional(), currency: z.string().length(3).optional(), fyStartMonth: z.number().int().min(1).max(12).optional(),
       workingDays: z.array(z.number().int().min(1).max(7)).min(1).optional(), workStart: z.string().regex(/^\d{2}:\d{2}$/).optional(),
@@ -540,6 +564,7 @@ router.put('/settings', settingsOnly, asyncHandler(async (req, res) => {
   const merged = { ...before };
   for (const [k, v] of Object.entries(data)) merged[k] = typeof v === 'object' && !Array.isArray(v) ? { ...(before[k] || {}), ...v } : v;
   await updateSetting('crm', { ...current, sales: merged }, req.currentUser.id);
+  rememberRouting(merged);
   await recordAuditEvent(null, { action: 'CRM_SETTINGS_CHANGED', entityType: 'SETTINGS', actorId: req.currentUser.id, summary: `Sales CRM settings: ${Object.keys(data).join(', ')}`, detail: { before: Object.fromEntries(Object.keys(data).map((k) => [k, before[k]])), after: data } });
   res.json({ settings: merged });
 }));
@@ -649,7 +674,7 @@ router.patch('/capture/forms/:id', settingsOnly, asyncHandler(async (req, res) =
 const ruleInput = z.object({
   name: z.string().min(2).max(160), description: z.string().max(2000).nullable().optional(), priority: z.number().int().min(0).max(100000).optional(),
   is_enabled: z.boolean().optional(),
-  conditions: z.object({ categories: z.array(z.enum(ELIGIBLE_CATEGORIES)).optional(), source_ids: z.array(z.number().int()).optional(),
+  conditions: z.object({ categories: z.array(z.enum(KNOWN_CATEGORIES)).optional(), source_ids: z.array(z.number().int()).optional(),
     campaign_ids: z.array(z.number().int()).optional(), states: z.array(z.string().max(80)).optional(), tags: z.array(z.string().max(40)).optional(),
     min_score: z.number().min(0).max(100).nullable().optional(), priority: z.array(z.enum(PRIORITIES)).optional() }).default({}),
   strategy: z.enum(STRATEGIES).default('ROUND_ROBIN'), user_ids: z.array(z.number().int().positive()).default([]),
@@ -691,7 +716,7 @@ router.patch('/assignment/rules/:id', settingsOnly, asyncHandler(async (req, res
 }));
 router.put('/assignment/agents/:userId', settingsOnly, asyncHandler(async (req, res) => {
   const d = z.object({ accepts_new_leads: z.boolean().optional(), max_open_leads: z.number().int().positive().nullable().optional(),
-    categories: z.array(z.enum(ELIGIBLE_CATEGORIES)).optional(), states: z.array(z.string().max(80)).optional(),
+    categories: z.array(z.enum(KNOWN_CATEGORIES)).optional(), states: z.array(z.string().max(80)).optional(),
     specializations: z.array(z.string().max(60)).optional() }).parse(req.body);
   const { rows } = await query(
     `INSERT INTO crm_agent_profiles (user_id, accepts_new_leads, max_open_leads, categories, states, specializations, updated_by)
@@ -718,7 +743,7 @@ router.get('/scoring', asyncHandler(async (req, res) => {
 }));
 router.put('/scoring/:category', settingsOnly, asyncHandler(async (req, res) => {
   const category = String(req.params.category).toUpperCase();
-  if (!ELIGIBLE_CATEGORIES.includes(category)) throw notFound();
+  if (!KNOWN_CATEGORIES.includes(category)) throw notFound();
   const d = z.object({ is_enabled: z.boolean().optional(),
     criteria: z.array(z.object({ key: z.enum(Object.keys(CRITERIA)), label: z.string().max(120).optional(), weight: z.number().min(0).max(100) })).optional() }).parse(req.body);
   const { rows } = await query(

@@ -225,6 +225,16 @@ const DEFAULT_OUTCOME = {
   CALL: 'COMPLETED', MEETING: 'COMPLETED', DEMO: 'COMPLETED', IN_PERSON: 'COMPLETED',
 };
 
+/**
+ * When something known only by its date happened: midday India time that day,
+ * or now if that is still to come (a purchase order received this morning
+ * cannot have arrived at noon yet).
+ */
+export function dayStamp(day) {
+  const noon = new Date(`${String(day).slice(0, 10)}T12:00:00+05:30`);
+  return Number.isNaN(noon.getTime()) ? new Date().toISOString() : new Date(Math.min(noon.getTime(), Date.now())).toISOString();
+}
+
 export async function logActivity(client, {
   accountId, type, actorId, subject = null, body = null, nextStep = null,
   taskId = null, occurredAt = null, meta = {},

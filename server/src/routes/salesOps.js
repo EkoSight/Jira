@@ -15,6 +15,7 @@ import { ACTIONS, CANCEL_ON, TRIGGERS, previewRule, retryRun, validateRule } fro
 import {
   IMPORT_FIELDS, TEMPLATE, correctionRows, startImport, undoImport, uploadImport, validateImport,
 } from '../services/sales/imports.js';
+import { leadFields } from '../services/sales/calling.js';
 import { sendTable } from '../services/sales/files.js';
 import { listLeads } from '../services/sales/leads.js';
 import { agentPerformance, drill, salesSummary, sourcePerformance, stageReport, targetsVsActuals } from '../services/sales/reports.js';
@@ -305,10 +306,11 @@ router.post('/imports', requirePermission('crm.import'), importBody, asyncHandle
 
 router.get('/imports', requirePermission('crm.import'), asyncHandler(async (req, res) => {
   const { rows } = await query(
-    `SELECT j.id, j.entity, j.filename, j.status, j.counts, j.total_rows, j.processed_rows, j.created_at, j.finished_at, j.undone_at, j.undo_summary, u.full_name AS created_by_name
+    `SELECT j.id, j.entity, j.filename, j.status, j.preset, j.counts, j.total_rows, j.processed_rows, j.created_at, j.finished_at, j.undone_at, j.undo_summary, u.full_name AS created_by_name
        FROM crm_import_jobs j LEFT JOIN users u ON u.id = j.created_by ORDER BY j.id DESC LIMIT 100`,
   );
-  res.json({ jobs: rows, fields: Object.fromEntries(Object.entries(IMPORT_FIELDS).map(([k, v]) => [k, Object.keys(v)])) });
+  res.json({ jobs: rows, fields: Object.fromEntries(Object.entries(IMPORT_FIELDS).map(([k, v]) => [k, Object.keys(v)])),
+    custom_fields: (await leadFields({ activeOnly: true })).map((f) => ({ key: `cf:${f.key}`, label: f.label })) });
 }));
 
 router.get('/imports/:id', requirePermission('crm.import'), asyncHandler(async (req, res) => {
@@ -329,6 +331,8 @@ router.post('/imports/:id/validate', requirePermission('crm.import'), asyncHandl
       duplicate_strategy: z.enum(['SKIP', 'UPDATE', 'CREATE']).optional(), default_category: z.string().max(40).optional(),
       default_owner_id: z.number().int().positive().nullable().optional(), source_id: z.number().int().positive().nullable().optional(),
       campaign_id: z.number().int().positive().nullable().optional(), source_system: z.string().max(80).nullable().optional(),
+      create_campaigns: z.boolean().optional(), run_automation: z.boolean().optional(), unknown_owner: z.enum(['ERROR', 'WARN']).optional(),
+      blank_markers: z.boolean().optional(),
     }).default({}),
   }).parse(req.body);
   if (d.options.default_owner_id && !hasPermission(req.currentUser, 'crm.assign') && d.options.default_owner_id !== req.currentUser.id) {

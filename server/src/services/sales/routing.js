@@ -1,32 +1,41 @@
 /**
- * The Taskflow / TeleCRM boundary.
+ * Where a lead is worked, by its category.
  *
- * Taskflow's CRM works B2B corporate and CSR / NGO leads. Retailers, FPOs and
- * individual consumers belong in TeleCRM; a lead whose category is not known
- * waits in a restricted review queue. Every way a lead or organization enters
- * or changes — the form on screen, an edit, a bulk change, an import, the API,
- * a webhook, a public form, a conversion, automation — goes through
- * `routeLead` / `classifyAccount`, so the rule lives in one place.
+ * B2B corporate and CSR / NGO leads are always worked in TaskFlow. Retailers,
+ * FPOs and individual farmers or consumers are worked here too (the retail
+ * pipeline and the call queue) unless the setting still hands them to TeleCRM
+ * or holds them for review first. A lead whose category is not known is worked
+ * by whoever owns it and flagged until someone classifies it; while TeleCRM is
+ * in use it waits in a restricted review queue instead. Every way a lead or
+ * organization enters or changes — the form on screen, an edit, a bulk change,
+ * an import, the API, a webhook, a public form, a conversion, automation — goes
+ * through `routeLead` / `classifyAccount`, so the rule lives in one place.
  *
- * Nothing is discarded and nothing is claimed: an excluded lead is kept, with
- * its history, on a hand-off list until a person confirms TeleCRM has it.
+ * Nothing is discarded and nothing is claimed: a lead handed to TeleCRM is
+ * kept, with its history, on a hand-off list until a person confirms TeleCRM
+ * has it.
  */
 import { query } from '../../db/pool.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { recordAuditEvent } from '../audit.js';
 import {
-  CATEGORY_LABEL, EXCLUDED_CATEGORIES, LEAD_CATEGORIES, emitEvent, isEligible, isExcluded, salesSettings,
+  CATEGORY_LABEL, LEAD_CATEGORIES, ORG_CATEGORIES, TELE_CATEGORIES, emitEvent, isEligible, isExcluded, salesSettings,
 } from './core.js';
 
 /** Where a category goes. */
 export function routeFor(category, settings = {}) {
-  if (isEligible(category)) return { destination: 'TASKFLOW', routingStatus: 'ACTIVE' };
-  if (isExcluded(category)) {
-    return settings.routing?.excludedDestination === 'TRIAGE'
+  const mode = settings.routing?.excludedDestination || 'TASKFLOW';
+  if (ORG_CATEGORIES.includes(category)) return { destination: 'TASKFLOW', routingStatus: 'ACTIVE' };
+  if (TELE_CATEGORIES.includes(category)) {
+    if (mode === 'TASKFLOW') return { destination: 'TASKFLOW', routingStatus: 'ACTIVE' };
+    return mode === 'TRIAGE'
       ? { destination: 'TRIAGE', routingStatus: 'NEEDS_CLASSIFICATION' }
       : { destination: 'TELECRM', routingStatus: 'HANDOFF_PENDING' };
   }
-  return { destination: 'TRIAGE', routingStatus: 'NEEDS_CLASSIFICATION' };
+  // not known yet: with nowhere else for it to go, its owner works it and finds out
+  return mode === 'TASKFLOW'
+    ? { destination: 'TASKFLOW', routingStatus: 'NEEDS_CLASSIFICATION' }
+    : { destination: 'TRIAGE', routingStatus: 'NEEDS_CLASSIFICATION' };
 }
 
 const ALIASES = [
@@ -139,7 +148,8 @@ export async function routeLead(client, lead, { category, actor = null, channel 
       `INSERT INTO crm_lead_activities (lead_id, type, direction, subject, body, actor_id, meta)
        VALUES ($1, 'ROUTING', 'INTERNAL', $2, $3, $4, $5)`,
       [lead.id,
-        to.destination === 'TASKFLOW' ? `Classified as ${CATEGORY_LABEL[category]}`
+        to.destination === 'TASKFLOW' && category === 'UNCLASSIFIED' ? 'Category not known yet: ask on the call'
+          : to.destination === 'TASKFLOW' ? `Classified as ${CATEGORY_LABEL[category]}`
           : to.destination === 'TELECRM' ? `${CATEGORY_LABEL[category]}: queued for TeleCRM`
             : 'Waiting for classification',
         reason, actor?.id ?? null, { from, to }],
@@ -293,5 +303,5 @@ export async function remediationQueue() {
       WHERE a.is_archived = FALSE AND (a.routing_status IN ('LEGACY_UNCONFIRMED', 'NEEDS_CLASSIFICATION') OR a.lead_category = 'UNCLASSIFIED')
       ORDER BY (a.suggested_category IN ('FPO', 'RETAILER')) DESC, a.name`,
   );
-  return rows.map((r) => ({ ...r, flagged: EXCLUDED_CATEGORIES.includes(r.suggested_category) }));
+  return rows.map((r) => ({ ...r, flagged: isExcluded(r.suggested_category) }));
 }

@@ -18,7 +18,7 @@
 
 import { query } from '../db/pool.js';
 import { badRequest, notFound } from '../lib/errors.js';
-import { logActivity } from './crm.js';
+import { dayStamp, logActivity } from './crm.js';
 import { today } from './dealRules.js';
 import { cleanLink } from './dealMoves.js';
 import { recordHistory } from './opportunities.js';
@@ -166,7 +166,7 @@ export async function addInvoice(client, { opportunity, invoice, actor }) {
     type: 'INVOICE',
     actorId: actor.id,
     subject: `Invoice ${rows[0].number || `#${rows[0].id}`} issued`,
-    occurredAt: `${rows[0].issued_on}T12:00:00+05:30`,
+    occurredAt: dayStamp(rows[0].issued_on),
     meta: { invoice_id: rows[0].id, amount: num(rows[0].amount) },
     direction: 'OUTBOUND',
     outcome: 'SENT',
@@ -233,7 +233,7 @@ export async function addPayment(client, { opportunity, payment, actor }) {
     type: 'PAYMENT',
     actorId: actor.id,
     subject: `Payment received${rows[0].reference ? ` (${rows[0].reference})` : ''}`,
-    occurredAt: `${rows[0].received_on}T12:00:00+05:30`,
+    occurredAt: dayStamp(rows[0].received_on),
     meta: { payment_id: rows[0].id, amount: num(rows[0].amount) },
     direction: 'INBOUND',
     outcome: 'RECEIVED',

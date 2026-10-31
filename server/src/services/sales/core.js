@@ -1,7 +1,7 @@
 /**
- * The sales CRM's shared rules: lead categories and the Taskflow / TeleCRM
- * boundary, who may see which records, contact normalization, exact money
- * arithmetic, reference numbers and the event stream automation reads.
+ * The sales CRM's shared rules: lead categories and where each is worked,
+ * who may see which records, contact normalization, exact money arithmetic,
+ * reference numbers and the event stream automation reads.
  */
 import { query } from '../../db/pool.js';
 import { hasPermission } from '../../lib/permissions.js';
@@ -10,11 +10,19 @@ import { getSettings, DEFAULT_SETTINGS } from '../settings.js';
 
 // ---------------------------------------------------------------- categories
 
-/** Leads Taskflow's CRM works. */
-export const ELIGIBLE_CATEGORIES = ['B2B_CORPORATE', 'CSR_NGO'];
-/** Leads that belong in TeleCRM. */
-export const EXCLUDED_CATEGORIES = ['RETAILER', 'FPO', 'INDIVIDUAL'];
-export const LEAD_CATEGORIES = [...ELIGIBLE_CATEGORIES, ...EXCLUDED_CATEGORIES, 'UNCLASSIFIED'];
+/** Organizations sold to as organizations: always worked in TaskFlow. */
+export const ORG_CATEGORIES = ['B2B_CORPORATE', 'CSR_NGO'];
+/**
+ * Retailers, FPOs and individuals: tele-sales. Worked in TaskFlow, or handed to
+ * TeleCRM while the setting says so (routing.excludedDestination).
+ */
+export const TELE_CATEGORIES = ['RETAILER', 'FPO', 'INDIVIDUAL'];
+/** Older names, kept for the code and screens that use them. */
+export const ELIGIBLE_CATEGORIES = ORG_CATEGORIES;
+export const EXCLUDED_CATEGORIES = TELE_CATEGORIES;
+export const LEAD_CATEGORIES = [...ORG_CATEGORIES, ...TELE_CATEGORIES, 'UNCLASSIFIED'];
+/** Every category a person can give a lead. */
+export const KNOWN_CATEGORIES = [...ORG_CATEGORIES, ...TELE_CATEGORIES];
 
 export const CATEGORY_LABEL = {
   B2B_CORPORATE: 'B2B corporate',
@@ -25,13 +33,30 @@ export const CATEGORY_LABEL = {
   UNCLASSIFIED: 'Needs classification',
 };
 
-export const isEligible = (category) => ELIGIBLE_CATEGORIES.includes(category);
-export const isExcluded = (category) => EXCLUDED_CATEGORIES.includes(category);
+// Whether tele-sales categories are worked here. Read from the settings each
+// time they are loaded (every CRM request and worker pass loads them) and at
+// start-up, so the synchronous checks below follow the setting.
+let teleHere = true;
+export function rememberRouting(settings) {
+  teleHere = (settings?.routing?.excludedDestination || 'TASKFLOW') === 'TASKFLOW';
+}
+export const teleSalesHere = () => teleHere;
+
+/** Worked in TaskFlow's CRM (pipelines, assignment, scoring, totals). */
+export const isEligible = (category) => ORG_CATEGORIES.includes(category) || (teleHere && TELE_CATEGORIES.includes(category));
+/** Kept out of TaskFlow's active work: handed to TeleCRM or held for review. */
+export const isExcluded = (category) => !teleHere && TELE_CATEGORIES.includes(category);
+/** An organization sold to as such: it needs an organization name. */
+export const isOrgCategory = (category) => ORG_CATEGORIES.includes(category);
+/** The categories worked here now. */
+export const workedCategories = () => (teleHere ? KNOWN_CATEGORIES : ORG_CATEGORIES);
 
 /** The pipeline key a category's deals live in. */
-export const PIPELINE_FOR_CATEGORY = { B2B_CORPORATE: 'b2b', CSR_NGO: 'csr' };
+export const PIPELINE_FOR_CATEGORY = { B2B_CORPORATE: 'b2b', CSR_NGO: 'csr', RETAILER: 'retail', FPO: 'retail', INDIVIDUAL: 'retail' };
+/** The categories each pipeline holds. */
+export const PIPELINE_CATEGORIES = { b2b: ['B2B_CORPORATE'], csr: ['CSR_NGO'], retail: TELE_CATEGORIES };
 
-export const LEAD_STATUSES = ['NEW', 'CONTACTED', 'QUALIFYING', 'QUALIFIED', 'CONVERTED', 'DISQUALIFIED', 'NURTURE'];
+export const LEAD_STATUSES = ['NEW', 'CONTACTED', 'QUALIFYING', 'QUALIFIED', 'CONVERTED', 'DISQUALIFIED', 'NURTURE', 'WON'];
 export const OPEN_LEAD_STATUSES = ['NEW', 'CONTACTED', 'QUALIFYING', 'QUALIFIED'];
 export const PRIORITIES = ['LOW', 'MEDIUM', 'HIGH', 'URGENT'];
 export const ENTRY_CHANNELS = ['MANUAL', 'IMPORT', 'FORM', 'API', 'WEBHOOK', 'EMAIL', 'CALL', 'WHATSAPP', 'ORGANIZATION_FORM'];
@@ -45,7 +70,9 @@ export const FOLLOWUP_KINDS = ['CALL', 'CALLBACK', 'MEETING', 'EMAIL', 'WHATSAPP
 
 export async function salesSettings() {
   const all = await getSettings();
-  return all.crm?.sales || DEFAULT_SETTINGS.crm.sales;
+  const settings = all.crm?.sales || DEFAULT_SETTINGS.crm.sales;
+  rememberRouting(settings);
+  return settings;
 }
 
 export async function legacyIncluded() {
@@ -59,7 +86,8 @@ export async function legacyIncluded() {
  */
 export function accountEligibleSql(alias = 'a', includeLegacy = true) {
   const legacy = includeLegacy ? ` OR (${alias}.lead_category IS NULL AND ${alias}.routing_status = 'LEGACY_UNCONFIRMED')` : '';
-  return `(${alias}.lead_category IN ('B2B_CORPORATE', 'CSR_NGO')${legacy} OR (${alias}.lead_category IS NULL AND ${alias}.routing_status IS NULL))`;
+  const worked = workedCategories().map((c) => `'${c}'`).join(', ');
+  return `(${alias}.lead_category IN (${worked})${legacy} OR (${alias}.lead_category IS NULL AND ${alias}.routing_status IS NULL))`;
 }
 
 /** A pipeline id from its key or id; the default pipeline when none is given. */
@@ -365,4 +393,89 @@ export async function workCalendar() {
     return cursor;
   };
   return { timeZone: tz, within, nextWorking, addWorkingHours, isWorkingDay, holidays };
+}
+
+// ---------------------------------------------------------------- Indian states, dates and sources as people type them
+
+const STATES = [
+  'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand',
+  'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan',
+  'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Andaman and Nicobar Islands', 'Chandigarh',
+  'Dadra and Nagar Haveli and Daman and Diu', 'Delhi', 'Jammu and Kashmir', 'Ladakh', 'Lakshadweep', 'Puducherry',
+];
+const STATE_ALIASES = {
+  up: 'Uttar Pradesh', mp: 'Madhya Pradesh', ap: 'Andhra Pradesh', hp: 'Himachal Pradesh', jk: 'Jammu and Kashmir', 'j&k': 'Jammu and Kashmir',
+  'j & k': 'Jammu and Kashmir', wb: 'West Bengal', tn: 'Tamil Nadu', uk: 'Uttarakhand', cg: 'Chhattisgarh', orissa: 'Odisha', uttaranchal: 'Uttarakhand',
+  'new delhi': 'Delhi', 'nct of delhi': 'Delhi', pondicherry: 'Puducherry', 'jammu & kashmir': 'Jammu and Kashmir',
+};
+const squash = (s) => String(s || '').toLowerCase().replace(/[^a-z]/g, '');
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j += 1) d[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  }
+  return d[a.length][b.length];
+}
+
+/**
+ * An Indian state's standard name from how it was typed ("Maharastra",
+ * "Gujrat", "karnataka", "UP"); null when it is not recognisably one.
+ */
+export function normalizeState(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const alias = STATE_ALIASES[raw.toLowerCase()];
+  if (alias) return alias;
+  const s = squash(raw);
+  const exact = STATES.find((x) => squash(x) === s);
+  if (exact) return exact;
+  // a misspelling: one or two letters off a name long enough not to be confused with another
+  if (s.length >= 5) {
+    const scored = STATES.map((x) => [x, editDistance(s, squash(x))]).sort((a, b) => a[1] - b[1]);
+    if (scored[0][1] <= 2 && scored[1][1] > scored[0][1]) return scored[0][0];
+  }
+  return null;
+}
+
+/**
+ * A date and time from an import cell: ISO (2026-10-30, 2026-10-30T11:50), or
+ * Indian day-first (30/10/2026, 30-10-2026 11:50:36) read in the given time
+ * zone. Returns an ISO string, or null when it is not a date.
+ */
+export function parseImportDate(value, timeZone = 'Asia/Kolkata') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  let y; let m; let d; let hh = 12; let mm = 0; let ss = 0;
+  let match = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(raw);
+  if (match) [, y, m, d, hh = 12, mm = 0, ss = 0] = match;
+  else if ((match = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})(?:[ T,]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?)?$/i.exec(raw))) {
+    [, d, m, y] = match;
+    if (match[4] !== undefined) { hh = Number(match[4]); mm = match[5]; ss = match[6] || 0; }
+    if (match[7]) hh = (hh % 12) + (/pm/i.test(match[7]) ? 12 : 0);
+  } else return null;
+  [y, m, d, hh, mm, ss] = [y, m, d, hh, mm, ss].map(Number);
+  if (m < 1 || m > 12 || d < 1 || d > 31 || hh > 23 || mm > 59 || ss > 59) return null;
+  // 31/02 is not a day
+  if (new Date(Date.UTC(y, m - 1, d)).getUTCDate() !== d) return null;
+  // the wall-clock time in that zone, turned into an instant
+  const guess = Date.UTC(y, m - 1, d, hh, mm, ss);
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    .formatToParts(new Date(guess)).reduce((o, p) => ({ ...o, [p.type]: Number(p.value) }), {});
+  const offset = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - guess;
+  const instant = new Date(guess - offset);
+  return instant.toISOString();
+}
+
+/** The source key a "how did you hear about us" answer means, in English or Hindi, however spelt. */
+export function sourceKeyFromText(value) {
+  const v = String(value ?? '').trim().toLowerCase();
+  if (!v) return null;
+  const rules = [
+    [/(insta|instgram|instargram|इंस्टाग्राम)/, 'instagram'], [/(face ?book|fcaebook|फेसबुक|^fb$)/, 'facebook'],
+    [/(whats ?app|व्हाट्सऐप|व्हाट्सएप)/, 'whatsapp'], [/(reference|referral|refer|रेफरेंस|किसी के माध्यम)/, 'referral'],
+    [/(google|गूगल)/, 'google'], [/(linked ?in)/, 'linkedin'], [/(youtube|यूट्यूब)/, 'youtube'],
+    [/(mela|event|exhibition|expo|मेला)/, 'event'], [/^(form|web ?form|website|site)$/, 'website'],
+  ];
+  return rules.find(([re]) => re.test(v))?.[1] ?? null;
 }

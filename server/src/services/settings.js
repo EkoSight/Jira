@@ -173,9 +173,11 @@ export const DEFAULT_SETTINGS = {
         // until an administrator confirms their category ('INCLUDE'), or kept
         // out of forecasts and totals until then ('EXCLUDE')
         legacyUnclassified: 'INCLUDE',
-        // where retailer, FPO and individual leads go: the TeleCRM hand-off
-        // list, or a review queue first
-        excludedDestination: 'TELECRM',
+        // where retailer, FPO and individual leads are worked: here, with the
+        // retail pipeline and the call queue ('TASKFLOW'); or, while TeleCRM
+        // is still in use, its hand-off list ('TELECRM') or a review queue
+        // first ('TRIAGE')
+        excludedDestination: 'TASKFLOW',
       },
       // what a sales agent (role "member") sees: their own and shared records
       // ('OWN'), their department's ('TEAM'), or everything ('ALL'); managers
@@ -209,6 +211,15 @@ export const DEFAULT_SETTINGS = {
         staleOpportunityDays: 14,
         // where follow-up tasks are filed when the owner has no department
         departmentId: null,
+      },
+      calling: {
+        // the reasons offered when a lead is lost; a person may also type one
+        lostReasons: [
+          'No Need', 'Budget Issues', 'Product does not fit their requirement', 'Unable to Connect',
+          'Call Not Connected Even After Trying Multiple Times', 'Wrong Number', 'Bought elsewhere', 'Unknown Reason',
+        ],
+        // the call queue puts new leads before retries, or after them
+        newLeadsFirst: true,
       },
       assignment: {
         enabled: true,

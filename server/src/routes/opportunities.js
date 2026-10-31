@@ -1,4 +1,4 @@
-import { EXCLUDED_CATEGORIES, assertVisible, crmScope, pipelineId } from '../services/sales/core.js';
+import { assertVisible, crmScope, isExcluded, pipelineId } from '../services/sales/core.js';
 import { applySalesFields, defaultOpportunityType, salesDealShape } from '../services/sales/deals.js';
 import { placeNewDeal } from '../services/sales/pipelines.js';
 import { Router } from 'express';
@@ -293,8 +293,8 @@ router.post(
     if (data.owner_user_id) await mustBeActiveUser(data.owner_user_id);
     if (data.escalation_owner_id) await mustBeActiveUser(data.escalation_owner_id);
 
-    // TeleCRM's categories and unclassified organizations do not take deals here
-    if (EXCLUDED_CATEGORIES.includes(account.lead_category) || ['EXCLUDED', 'NEEDS_CLASSIFICATION'].includes(account.routing_status)) {
+    // TeleCRM's categories (while it is in use) and unclassified organizations do not take deals here
+    if (isExcluded(account.lead_category) || ['EXCLUDED', 'NEEDS_CLASSIFICATION'].includes(account.routing_status)) {
       throw badRequest(account.routing_status === 'NEEDS_CLASSIFICATION'
         ? 'Classify this organization before opening a deal with it'
         : 'This organization is handled in TeleCRM, not in the TaskFlow pipeline', { code: 'CATEGORY_EXCLUDED' });

@@ -35,6 +35,7 @@ export const TRIGGERS = {
   'lead.converted': 'A lead becomes a deal',
   'lead.stale': 'A lead has had no contact for the stale period',
   'lead.first_response_overdue': 'A new lead has not been contacted in time',
+  'lead.call_status_changed': 'A lead\'s calling status changes',
   'followup.overdue': 'A follow-up is overdue past the escalation threshold',
   'opportunity.stage_changed': 'A deal changes stage',
   'opportunity.stale': 'A deal has had no activity for the stale period',
@@ -59,8 +60,9 @@ export async function entityContext(entityType, entityId, runner = { query }) {
   if (entityType === 'LEAD') {
     const { rows } = await runner.query(
       `SELECT l.*, s.key AS source_key, c.name AS campaign_name, COALESCE(l.score_override, l.score) AS effective_score,
-              u.department_id AS owner_department_id
+              u.department_id AS owner_department_id, cs.key AS call_status_key
          FROM crm_leads l LEFT JOIN crm_sources s ON s.id = COALESCE(l.source_id, l.original_source_id)
+         LEFT JOIN crm_call_statuses cs ON cs.id = l.call_status_id
          LEFT JOIN crm_campaigns c ON c.id = COALESCE(l.campaign_id, l.original_campaign_id) LEFT JOIN users u ON u.id = l.owner_user_id
         WHERE l.id = $1`, [entityId],
     );
@@ -70,7 +72,8 @@ export async function entityContext(entityType, entityId, runner = { query }) {
       entity_type: 'LEAD', id: l.id, ref: l.ref, name: l.organization_name || l.contact_name, contact_name: l.contact_name, phone: l.phone,
       category: l.category, destination: l.destination, status: l.status, priority: l.priority, source: l.source_key, campaign: l.campaign_name,
       score: l.effective_score, owner_id: l.owner_user_id, department_id: l.department_id ?? l.owner_department_id, tags: l.tags || [],
-      state: l.state, value: l.budget_amount, closed: ['CONVERTED', 'DISQUALIFIED'].includes(l.status) || l.is_archived,
+      state: l.state, value: l.budget_amount, closed: ['CONVERTED', 'DISQUALIFIED', 'WON'].includes(l.status) || l.is_archived,
+      call_status: l.call_status_key, call_attempts: l.call_attempts, rating: l.rating,
       custom: l.custom_fields || {}, lead_id: l.id, account_id: l.account_id, opportunity_id: l.converted_opportunity_id,
     };
   }
@@ -416,7 +419,8 @@ export async function scanTimers(now = new Date()) {
     const cal = await workCalendar();
     const { rows: fresh } = await client.query(
       `SELECT id, ref, owner_user_id, captured_at FROM crm_leads
-        WHERE destination = 'TASKFLOW' AND status = 'NEW' AND first_response_at IS NULL AND is_archived = FALSE AND captured_at > $1::timestamptz - interval '30 days'`, [now],
+        WHERE destination = 'TASKFLOW' AND status = 'NEW' AND first_response_at IS NULL AND is_archived = FALSE AND captured_at > $1::timestamptz - interval '30 days'
+          AND entry_channel <> 'IMPORT'`, [now],
     );
     for (const l of fresh) {
       const deadline = cal.addWorkingHours(new Date(l.captured_at), Number(f.firstResponseHours) || 4);
@@ -433,11 +437,20 @@ export async function scanTimers(now = new Date()) {
         WHERE destination = 'TASKFLOW' AND status IN ('NEW','CONTACTED','QUALIFYING','QUALIFIED') AND is_archived = FALSE
           AND COALESCE(last_contacted_at, captured_at) < $1::timestamptz - make_interval(days => $2::int)`, [now, leadDays],
     );
+    const newlyStale = new Map();
     for (const l of staleLeads) {
       // once per stale spell: the key is the date contact stopped
       if (await emitOnce(client, 'lead.stale', 'LEAD', l.id, new Date(l.since).toISOString().slice(0, 10))) {
-        if (l.owner_user_id) await notify(client, { userId: l.owner_user_id, type: 'crm_stale', title: `${l.ref}: no contact for ${leadDays}+ days`, leadId: l.id });
+        if (l.owner_user_id) newlyStale.set(l.owner_user_id, [...(newlyStale.get(l.owner_user_id) || []), l]);
         out.stale_leads += 1;
+      }
+    }
+    // a few are named one by one; many at once (after an import, a holiday) are one notice pointing at the list
+    for (const [userId, list] of newlyStale) {
+      if (list.length <= 3) {
+        for (const l of list) await notify(client, { userId, type: 'crm_stale', title: `${l.ref}: no contact for ${leadDays}+ days`, leadId: l.id });
+      } else {
+        await notify(client, { userId, type: 'crm_stale_digest', title: `${list.length} of your leads have had no contact for ${leadDays}+ days`, body: 'Sales CRM → Leads → Stale lists them.' });
       }
     }
     const dealDays = Number(f.staleOpportunityDays) || 14;

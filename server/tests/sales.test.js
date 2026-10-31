@@ -156,8 +156,11 @@ test('quotation totals are exact to the paisa, line by line', () => {
 
 // ---------------------------------------------------------------- C: the TeleCRM boundary
 
-test('C: retailer, FPO and individual leads stay out of the Taskflow pipeline however they arrive', async (t) => {
+test('C: while TeleCRM is in use, retailer, FPO and individual leads stay out of the Taskflow pipeline however they arrive', async (t) => {
   if (skip(t)) return;
+  // the transition setting: hand these categories to TeleCRM (the default now works them here; see telesales.test.js)
+  ok(await call('PUT', '/sales/settings', { token: tokens.admin, body: { routing: { excludedDestination: 'TELECRM' } } }));
+  t.after(async () => { await call('PUT', '/sales/settings', { token: tokens.admin, body: { routing: { excludedDestination: 'TASKFLOW' } } }); });
   const refs = [];
 
   // the manual form
@@ -713,7 +716,9 @@ test('F15: a lead score shows each part, lists what is unknown, and an override 
   ok(await call('PATCH', `/sales/leads/${created.id}`, { token: tokens.manager, body: { score_override: null } }));
   assert.equal(ok(await call('GET', `/sales/leads/${created.id}`, { token: tokens.manager })).lead.score_override, null);
 
-  // TeleCRM's categories are not scored
+  // a retailer is scored with its own model; a lead whose category is not known is not scored
   const retailer = (await call('POST', '/sales/leads', { token: tokens.rupendra, body: { category: 'RETAILER', organization_name: 'Score Test Store', contact_name: 'Ravi', phone: '9811100002' } })).body.lead;
-  assert.equal(retailer.score ?? null, null);
+  assert.equal(ok(await call('GET', `/sales/leads/${retailer.id}`, { token: tokens.rupendra })).score.missing.length, 5);
+  const unknown = (await call('POST', '/sales/leads', { token: tokens.rupendra, body: { category: 'UNCLASSIFIED', contact_name: 'Ravi', phone: '9811100003' } })).body.lead;
+  assert.equal(unknown.score ?? null, null);
 });

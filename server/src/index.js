@@ -5,6 +5,7 @@ import { startDeadlineScanner, stopDeadlineScanner } from './jobs/deadlineScanne
 import { startChatWorker, stopChatWorker } from './jobs/chatWorker.js';
 import { startMarketingWorker, stopMarketingWorker } from './jobs/marketingWorker.js';
 import { startSalesWorker, stopSalesWorker } from './jobs/salesWorker.js';
+import { salesSettings } from './services/sales/core.js';
 import { closePool } from './db/pool.js';
 import { reportStartupFailure } from './lib/dbErrors.js';
 import { backfillAccountImages } from './services/accountImages.js';
@@ -37,6 +38,13 @@ async function main() {
   if (path.resolve(config.uploads.dir).startsWith(repoRoot + path.sep)) {
     console.warn(`[taskflow] WARNING: UPLOAD_DIR is inside the deployment folder (${config.uploads.dir}). `
       + 'Task attachments there are lost by a deploy that replaces the checkout. Set UPLOAD_DIR=/var/lib/taskflow/uploads — see docs/DEPLOY.md.');
+  }
+
+  // where tele-sales leads are worked is a setting; read it before the first request
+  try {
+    await salesSettings();
+  } catch (err) {
+    console.error('[taskflow] could not read the sales CRM settings:', err.message);
   }
 
   const server = app.listen(config.port, () => {

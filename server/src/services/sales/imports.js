@@ -6,7 +6,7 @@
  *   map       columns are matched to fields; the guess is shown and editable
  *   validate  each row is checked and given a status: valid, invalid (with the
  *             reasons), duplicate (with what it duplicates), or routed (a
- *             retailer, FPO or individual, which goes to the TeleCRM queue)
+ *             retailer, FPO or individual, while those go to the TeleCRM queue)
  *   process   in the background, a batch at a time; a row is applied once, by
  *             its own idempotency key, so a retry or a restart continues
  *             instead of importing twice
@@ -16,6 +16,12 @@
  *
  * Nothing is skipped or overwritten silently: every row ends with a status,
  * and a corrections file lists the invalid ones with their reasons.
+ *
+ * A TeleCRM export is recognised by its columns and read with a preset: its
+ * statuses become calling statuses, its form questions lead fields, "-" and "_"
+ * mean blank, dates are day-first in India time, the agent's notes go on the
+ * lead's timeline, and the TeleCRM lead id makes a later export of the same
+ * leads update them instead of adding them again.
  */
 import crypto from 'node:crypto';
 import { query, withTransaction } from '../../db/pool.js';
@@ -23,9 +29,11 @@ import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { recordAuditEvent } from '../audit.js';
 import {
   LEAD_CATEGORIES, ORG_TYPES, PIPELINE_FOR_CATEGORY, cleanText, companyDomain, isEligible, isExcluded, normalizeEmail, normalizePhone,
+  normalizeState, parseImportDate, salesSettings, sourceKeyFromText, teleSalesHere,
 } from './core.js';
 import { categoryFromInput } from './routing.js';
-import { createLead, validateLead } from './leads.js';
+import { createLead, logLeadActivity, validateLead } from './leads.js';
+import { callStatuses, categoryFromFields, findStatus, leadFields, matchOption } from './calling.js';
 import { readTable } from './files.js';
 
 export const MAX_ROWS = 20_000;
@@ -56,8 +64,13 @@ export const IMPORT_FIELDS = {
     utm_campaign: ['utm_campaign', 'utm campaign'],
     external_id: ['external id', 'external_id', 'lead id', 'id', 'crm id'],
     source_system: ['source system', 'system', 'platform'],
-    captured_at: ['captured at', 'created', 'created at', 'date', 'enquiry date'],
-    tags: ['tags', 'labels'],
+    captured_at: ['captured at', 'created', 'created at', 'created on', 'date', 'enquiry date'],
+    modified_at: ['modified on', 'modified at', 'updated on', 'updated at', 'last modified'],
+    tags: ['tags', 'labels', 'lists', 'batch names'],
+    call_status: ['status', 'calling status', 'call status', 'lead status', 'disposition'],
+    lost_reason: ['lost reason', 'reason lost', 'disqualify reason'],
+    rating: ['rating', 'stars'],
+    notes: ['remarks', 'call notes', 'agent notes', 'first call description', 'first call descripton'],
   },
   ACCOUNTS: {
     category: ['category', 'lead category', 'customer type'],
@@ -76,6 +89,38 @@ export const IMPORT_FIELDS = {
 };
 
 const norm = (h) => String(h || '').trim().toLowerCase().replace(/[_\s]+/g, ' ');
+
+/** TeleCRM's export columns, and what each fills. A "cf:" field is a lead field. */
+const TELECRM_COLUMNS = {
+  'status': 'call_status', 'lost reason': 'lost_reason', 'rating': 'rating', 'assignee emailid': 'owner_email', 'full name': 'contact_name',
+  'mobile number': 'phone', 'first call descripton': 'notes', 'first call description': 'notes',
+  'you are associated with agriculture as': 'cf:agri_role', 'service needed': 'cf:service_needed', 'state lead belongs to': 'state',
+  'company name or shop name': 'organization_name', 'shop duration': 'cf:shop_duration', 'event name': 'cf:event_name', 'district': 'city',
+  'designation': 'designation', 'e-mail address': 'email', 'campaign name': 'campaign', 'how did you hear about us': 'source',
+  'created on': 'captured_at', 'modified on': 'modified_at', 'lead link': 'cf:telecrm_link', 'lead id': 'external_id',
+  'batch names': 'tags', 'date': 'cf:telecrm_date',
+};
+
+/** Which preset reads a file, from its columns. */
+export function detectPreset(header) {
+  const h = new Set(header.map(norm));
+  return h.has('lead id') && (h.has('lead link') || h.has('assignee emailid')) ? 'TELECRM' : null;
+}
+
+/** How a preset reads a file unless the person says otherwise. */
+export const PRESET_OPTIONS = {
+  TELECRM: { source_system: 'telecrm', duplicate_strategy: 'UPDATE', create_campaigns: true, run_automation: false, unknown_owner: 'WARN', blank_markers: true },
+};
+
+function presetMapping(preset, header) {
+  if (preset !== 'TELECRM') return null;
+  const mapping = {};
+  for (const h of header) {
+    const field = TELECRM_COLUMNS[norm(h)];
+    if (field && !mapping[field]) mapping[field] = h;
+  }
+  return mapping;
+}
 
 export function guessMapping(entity, header) {
   const fields = IMPORT_FIELDS[entity];
@@ -102,11 +147,13 @@ export async function uploadImport({ entity, buffer, filename, actor }) {
   // phone-like columns Excel stored as numbers have lost leading zeros and + signs
   const numericColumns = new Set();
   for (const key of table.numericCells) numericColumns.add(Number(key.split(':')[1]) - 1);
+  const preset = entity === 'LEADS' ? detectPreset(table.header) : null;
+  const mapping = presetMapping(preset, table.header) || guessMapping(entity, table.header);
   const job = await withTransaction(async (client) => {
     const { rows } = await client.query(
-      `INSERT INTO crm_import_jobs (entity, filename, file_kind, file_hash, header, mapping, total_rows, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [entity, String(filename || 'upload').slice(0, 200), table.kind, hash, table.header, guessMapping(entity, table.header), table.rows.length, actor.id],
+      `INSERT INTO crm_import_jobs (entity, filename, file_kind, file_hash, header, mapping, total_rows, created_by, preset)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [entity, String(filename || 'upload').slice(0, 200), table.kind, hash, table.header, mapping, table.rows.length, actor.id, preset],
     );
     const j = rows[0];
     // rows go in a few hundred at a time
@@ -124,80 +171,167 @@ export async function uploadImport({ entity, buffer, filename, actor }) {
     return j;
   });
   const phoneish = /(phone|mobile|whatsapp|contact number|registration|gstin|cin|pincode|pin code|id)/i;
+  const unmapped = preset ? table.header.filter((h) => h && !TELECRM_COLUMNS[norm(h)]) : [];
   return {
     job,
+    preset,
+    preset_options: preset ? PRESET_OPTIONS[preset] : null,
+    // columns the preset deliberately leaves out (names repeated elsewhere, empty manager columns)
+    preset_ignored: unmapped,
     sample: table.rows.slice(0, 5),
     warnings: [
       ...(earlier[0] ? [`This exact file was imported before (import #${earlier[0].id}, ${new Date(earlier[0].created_at).toISOString().slice(0, 10)}). Rows already imported will be found as duplicates.`] : []),
       ...[...numericColumns].filter((c) => phoneish.test(table.header[c] || '')).map((c) => `"${table.header[c]}" was stored by Excel as numbers, so leading zeros or a + may be lost. Format the column as Text and upload again if that matters.`),
     ],
     fields: Object.keys(IMPORT_FIELDS[entity]),
+    custom_fields: entity === 'LEADS' ? (await leadFields({ activeOnly: true })).map((f) => ({ key: `cf:${f.key}`, label: f.label })) : [],
   };
 }
 
 // ---------------------------------------------------------------- validate
 
-const pick = (raw, mapping, field) => {
+const BLANK_MARKERS = new Set(['-', '_', '--', 'n/a', 'na', 'null', 'none']);
+const pick = (raw, mapping, field, options = {}) => {
   const col = mapping[field];
   if (!col) return undefined;
   const v = raw[col];
-  return v === undefined || v === null || String(v).trim() === '' ? undefined : String(v).trim();
+  if (v === undefined || v === null) return undefined;
+  const t = String(v).trim();
+  if (t === '' || (options.blank_markers && BLANK_MARKERS.has(t.toLowerCase()))) return undefined;
+  return t;
 };
 
 async function lookups() {
-  const [{ rows: users }, { rows: sources }, { rows: campaigns }] = await Promise.all([
+  const [{ rows: users }, { rows: sources }, { rows: campaigns }, statuses, fields, settings] = await Promise.all([
     query('SELECT id, lower(email) AS email, is_active FROM users'),
     query('SELECT id, key, lower(name) AS name FROM crm_sources'),
     query('SELECT id, lower(name) AS name FROM crm_campaigns'),
+    callStatuses(),
+    leadFields({ activeOnly: true }),
+    salesSettings(),
   ]);
+  const sourceBy = (v) => sources.find((s) => s.key === String(v).toLowerCase() || s.name === String(v).toLowerCase())?.id ?? null;
   return {
     user: new Map(users.map((u) => [u.email, u])),
-    source: (v) => sources.find((s) => s.key === String(v).toLowerCase() || s.name === String(v).toLowerCase())?.id ?? null,
-    campaign: (v) => campaigns.find((c) => c.name === String(v).toLowerCase())?.id ?? null,
+    source: (v) => sourceBy(v) ?? (sourceKeyFromText(v) ? sourceBy(sourceKeyFromText(v)) : null),
+    sourceKey: sourceBy,
+    campaign: (v) => campaigns.find((c) => c.name === String(v).trim().toLowerCase())?.id ?? null,
+    statuses,
+    fields: new Map(fields.map((f) => [f.key, f])),
+    fieldList: fields,
+    tz: settings.calendar?.timezone || 'Asia/Kolkata',
   };
 }
+
+// a district or city typed all in lower case is given capitals; anything else is kept as typed
+const tidyPlace = (v) => (v && v === v.toLowerCase() ? v.replace(/\b([a-z])/g, (c) => c.toUpperCase()) : v);
 
 function leadRow(raw, mapping, options, look) {
   const errors = [];
   const warnings = [];
-  const g = (f) => pick(raw, mapping, f);
-  const categoryText = g('category') ?? options.default_category;
-  const category = categoryText ? categoryFromInput(categoryText) : 'UNCLASSIFIED';
-  if (categoryText && category === 'UNCLASSIFIED' && !/^unclassified$/i.test(categoryText)) warnings.push(`Category "${categoryText}" was not recognised; the lead waits for classification`);
+  const notes = [];
+  const g = (f) => pick(raw, mapping, f, options);
   const data = {
-    category,
     organization_name: g('organization_name'), contact_name: g('contact_name'), designation: g('designation'),
-    email: g('email'), phone: g('phone'), website: g('website'), city: g('city'), state: g('state'), country: g('country'),
+    email: g('email'), phone: g('phone'), website: g('website'), city: tidyPlace(g('city')), country: g('country'),
     requirement: g('requirement'), enquiry: g('enquiry'), currency: g('currency')?.toUpperCase(),
     priority: g('priority')?.toUpperCase(), external_id: g('external_id'), source_system: g('source_system') || options.source_system || null,
     tags: g('tags') ? g('tags').split(/[,;]/).map((t) => t.trim()).filter(Boolean).slice(0, 10) : undefined,
     utm: Object.fromEntries([['source', g('utm_source')], ['medium', g('utm_medium')], ['campaign', g('utm_campaign')]].filter(([, v]) => v)),
   };
+  // an address or a state as people type them
+  if (data.email && !normalizeEmail(data.email)) { warnings.push(`Email "${data.email}" is not an email address; left out`); delete data.email; }
+  const state = g('state');
+  if (state) {
+    data.state = normalizeState(state) || state;
+    if (!normalizeState(state)) warnings.push(`State "${state}" is not an Indian state TaskFlow recognises; kept as given`);
+  }
+  // the answers to the lead's own questions
+  const custom = {};
+  for (const [field, col] of Object.entries(mapping)) {
+    if (!field.startsWith('cf:') || !col) continue;
+    const key = field.slice(3);
+    const def = look.fields.get(key);
+    const v = g(field);
+    if (!def || v === undefined) continue;
+    if (def.type === 'SELECT' || def.type === 'MULTI_SELECT') {
+      const m = matchOption(def, v);
+      if (m) custom[key] = m;
+      else { warnings.push(`${def.label}: "${v}" is not one of its choices; kept as a note`); notes.push(`${def.label}: ${v}`); }
+    } else if (def.type === 'URL') {
+      if (/^https?:\/\/\S+$/i.test(v)) custom[key] = v.slice(0, 500); else notes.push(`${def.label}: ${v}`);
+    } else if (def.type === 'NUMBER') {
+      const n = Number(v.replace(/[,\s₹]/g, ''));
+      if (Number.isFinite(n)) custom[key] = n; else notes.push(`${def.label}: ${v}`);
+    } else custom[key] = v.slice(0, def.type === 'LONG_TEXT' ? 5000 : 500);
+  }
+  if (Object.keys(custom).length) data.custom_fields = custom;
+  // the calling status, and what it says about the lead
+  const statusText = g('call_status');
+  const status = statusText ? findStatus(look.statuses, statusText) : null;
+  if (statusText && !status) warnings.push(`Calling status "${statusText}" is not in the list; add it in Settings, or the lead starts without one`);
+  if (status) {
+    data.call_status_id = status.id;
+    data.status = status.lifecycle;
+    if (status.lifecycle === 'DISQUALIFIED') data.disqualify_reason = g('lost_reason') || status.label;
+  } else if (g('lost_reason')) notes.push(`Lost reason: ${g('lost_reason')}`);
+  const rating = g('rating');
+  if (rating !== undefined) {
+    const n = Number(rating);
+    if (Number.isInteger(n) && n >= 1 && n <= 5) data.rating = n; else warnings.push(`Rating "${rating}" is not one to five; left out`);
+  }
+  // who it is: the file's category column, else what an answer or the status says, else the import's default
+  const categoryText = g('category') ?? null;
+  let category = categoryText ? categoryFromInput(categoryText) : 'UNCLASSIFIED';
+  if (categoryText && category === 'UNCLASSIFIED' && !/^unclassified$/i.test(categoryText)) warnings.push(`Category "${categoryText}" was not recognised; the lead waits for classification`);
+  if (category === 'UNCLASSIFIED') category = categoryFromFields(custom, look.fieldList)?.category || status?.implies_category || 'UNCLASSIFIED';
+  if (category === 'UNCLASSIFIED' && options.default_category) category = categoryFromInput(options.default_category);
+  data.category = category;
   if (g('budget_amount') !== undefined) {
     const n = Number(String(g('budget_amount')).replace(/[,\s₹]/g, ''));
     if (!Number.isFinite(n) || n < 0) errors.push(`Budget "${g('budget_amount')}" is not an amount`); else data.budget_amount = n;
   }
   if (data.currency && !/^[A-Z]{3}$/.test(data.currency)) errors.push(`Currency "${data.currency}" is not a three-letter code`);
   if (data.priority && !['LOW', 'MEDIUM', 'HIGH', 'URGENT'].includes(data.priority)) errors.push(`Priority must be Low, Medium, High or Urgent`);
-  const capturedAt = g('captured_at');
-  if (capturedAt) {
-    const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(capturedAt) ? `${capturedAt}T12:00:00+05:30` : capturedAt);
-    if (Number.isNaN(d.getTime()) || d.getTime() > Date.now() + 86_400_000) errors.push(`Date "${capturedAt}" is not a past date`); else data.captured_at = d.toISOString();
+  for (const [field, out] of [['captured_at', 'captured_at'], ['modified_at', 'modified_at']]) {
+    const text = g(field);
+    if (!text) continue;
+    const iso = parseImportDate(text, look.tz) || (Number.isNaN(new Date(text).getTime()) ? null : new Date(text).toISOString());
+    if (!iso || new Date(iso).getTime() > Date.now() + 86_400_000) {
+      if (field === 'captured_at') errors.push(`Date "${text}" is not a past date`); else warnings.push(`Last-modified "${text}" is not a date; left out`);
+    } else data[out] = iso;
   }
   // the business source is kept as given; "imported" is how it came in, not where it came from
   const src = g('source');
-  if (src) { data.source_id = look.source(src); if (!data.source_id) warnings.push(`Source "${src}" is not in the list; add it in Settings or the lead keeps no source`); }
+  if (src) {
+    data.source_id = look.source(src);
+    if (!data.source_id) warnings.push(`Source "${src}" is not in the list; add it in Settings or the lead keeps no source`);
+  } else if (custom.event_name) data.source_id = look.sourceKey('event');
   else if (options.source_id) data.source_id = options.source_id;
   const camp = g('campaign');
-  if (camp) { data.campaign_id = look.campaign(camp); if (!data.campaign_id) warnings.push(`Campaign "${camp}" is not in the list`); }
-  else if (options.campaign_id) data.campaign_id = options.campaign_id;
+  if (camp) {
+    data.campaign_id = look.campaign(camp);
+    if (!data.campaign_id) {
+      if (options.create_campaigns) data.campaign_name = camp.slice(0, 160);
+      else warnings.push(`Campaign "${camp}" is not in the list`);
+    }
+  } else if (options.campaign_id) data.campaign_id = options.campaign_id;
+  // the agent's notes, kept on the timeline
+  const text = g('notes');
+  if (text) notes.unshift(text);
+  if (notes.length) data.import_notes = notes;
+  // the owner: worked here means owned here, whatever the category
+  const worked = isEligible(category) || (category === 'UNCLASSIFIED' && teleSalesHere());
   const ownerEmail = g('owner_email');
   if (ownerEmail) {
     const u = look.user.get(ownerEmail.toLowerCase());
-    if (!u) errors.push(`Owner "${ownerEmail}" is not a TaskFlow user`);
-    else if (!u.is_active) errors.push(`Owner "${ownerEmail}" is no longer active`);
-    else if (isEligible(category)) data.owner_user_id = u.id;
-  } else if (options.default_owner_id && isEligible(category)) data.owner_user_id = options.default_owner_id;
+    const problem = !u ? `"${ownerEmail}" is not a TaskFlow user` : !u.is_active ? `"${ownerEmail}" is no longer active` : null;
+    if (problem && options.unknown_owner === 'WARN') {
+      warnings.push(`Owner ${problem}; ${options.default_owner_id ? 'given to the default owner instead' : 'left unassigned'}`);
+      if (options.default_owner_id && worked) data.owner_user_id = options.default_owner_id;
+    } else if (problem) errors.push(`Owner ${problem}`);
+    else if (worked) data.owner_user_id = u.id;
+  } else if (options.default_owner_id && worked) data.owner_user_id = options.default_owner_id;
   for (const [f, msg] of Object.entries(validateLead(data))) errors.push(`${f.replace(/_/g, ' ')}: ${msg}`);
   return { data, errors, warnings };
 }
@@ -225,18 +359,21 @@ function accountRow(raw, mapping, options, look) {
 }
 
 /** Checks every row with the mapping and options, and records each row's status. */
-export async function validateImport(jobId, { mapping, options = {} }, actor) {
+export async function validateImport(jobId, { mapping, options: given = {} }, actor) {
   const { rows: jobs } = await query('SELECT * FROM crm_import_jobs WHERE id = $1', [jobId]);
   const job = jobs[0];
   if (!job) throw notFound('Import not found');
   if (!['UPLOADED', 'VALIDATED'].includes(job.status)) throw conflict('This import has already run');
+  // a preset's way of reading the file, unless the person chose otherwise
+  const options = { ...(PRESET_OPTIONS[job.preset] || {}), ...Object.fromEntries(Object.entries(given).filter(([, v]) => v !== undefined)) };
   const fields = IMPORT_FIELDS[job.entity];
+  const look = await lookups();
   for (const [f, col] of Object.entries(mapping || {})) {
-    if (!fields[f]) throw badRequest(`Unknown field "${f}"`);
+    const known = fields[f] || (job.entity === 'LEADS' && f.startsWith('cf:') && look.fields.has(f.slice(3)));
+    if (!known) throw badRequest(`Unknown field "${f}"`);
     if (col && !job.header.includes(col)) throw badRequest(`The file has no column "${col}"`);
   }
   const strategy = ['SKIP', 'UPDATE', 'CREATE'].includes(options.duplicate_strategy) ? options.duplicate_strategy : 'SKIP';
-  const look = await lookups();
   const { rows } = await query('SELECT id, row_no, raw FROM crm_import_rows WHERE job_id = $1 ORDER BY row_no', [jobId]);
   const seen = { ext: new Map(), email: new Map(), phone: new Map(), domain: new Map(), name: new Map() };
   const counts = { total: rows.length, valid: 0, invalid: 0, duplicate: 0, routed: 0, warnings: 0 };
@@ -250,28 +387,34 @@ export async function validateImport(jobId, { mapping, options = {} }, actor) {
         if (job.entity === 'LEADS') {
           const email = normalizeEmail(data.email);
           const phone = normalizePhone(data.phone);
-          // inside the file first
-          const inFile = (data.external_id && seen.ext.get(`${data.source_system}|${data.external_id}`))
-            || (email && seen.email.get(email)) || (phone && seen.phone.get(phone));
-          if (inFile) { status = 'DUPLICATE'; warnings.push(`Same person as row ${inFile} of this file`); }
-          if (data.external_id) seen.ext.set(`${data.source_system}|${data.external_id}`, r.row_no);
-          if (email) seen.email.set(email, r.row_no);
-          if (phone) seen.phone.set(phone, r.row_no);
+          // inside the file first. Two rows the other system keeps under different ids are
+          // two records there: they are both imported, and a shared email or phone is flagged
+          const extKey = data.external_id ? `${data.source_system}|${data.external_id}` : null;
+          const sameExt = extKey && seen.ext.get(extKey);
+          const shared = (email && seen.email.get(email)) || (phone && seen.phone.get(phone));
+          if (sameExt) { status = 'DUPLICATE'; warnings.push(`Same record as row ${sameExt} of this file`); }
+          else if (shared && !extKey) { status = 'DUPLICATE'; warnings.push(`Same person as row ${shared.row} of this file`); }
+          else if (shared) warnings.push(`Shares an email or phone with row ${shared.row}, which ${shared.ext ? 'the other system keeps as a different record' : 'has no id'}; check for a duplicate after importing`);
+          if (extKey) seen.ext.set(extKey, r.row_no);
+          if (email && !seen.email.has(email)) seen.email.set(email, { row: r.row_no, ext: extKey });
+          if (phone && !seen.phone.has(phone)) seen.phone.set(phone, { row: r.row_no, ext: extKey });
           if (status !== 'DUPLICATE') {
             const { rows: found } = await client.query(
-              `SELECT id, ref, external_id FROM crm_leads WHERE merged_into_id IS NULL AND (
+              `SELECT id, ref, external_id, source_system FROM crm_leads WHERE merged_into_id IS NULL AND (
                  ($1::text IS NOT NULL AND external_id = $1 AND source_system IS NOT DISTINCT FROM $2)
                  OR ($3::text IS NOT NULL AND email_normalized = $3) OR ($4::text IS NOT NULL AND phone_normalized = $4))
-               ORDER BY (external_id = $1) DESC NULLS LAST, id LIMIT 1`,
+               ORDER BY (external_id = $1 AND source_system IS NOT DISTINCT FROM $2) DESC NULLS LAST, id LIMIT 5`,
               [data.external_id ?? null, data.source_system ?? null, email, phone],
             );
-            if (found[0]) {
-              duplicateOf = found[0].id;
-              const sameExternal = data.external_id && found[0].external_id === data.external_id;
+            const exact = found.find((f) => data.external_id && f.external_id === data.external_id && f.source_system === data.source_system);
+            // a lead the same system knows under another id is a different record of that system
+            const match = exact || found.find((f) => !(data.external_id && f.external_id && f.source_system === data.source_system));
+            if (match) {
+              duplicateOf = match.id;
               // the same external id is always the same record; a shared email or phone is the person's choice
-              status = sameExternal || strategy !== 'CREATE' ? 'DUPLICATE' : status;
-              warnings.push(`Matches lead ${found[0].ref}${sameExternal ? ' (same external id)' : ''}`);
-            }
+              status = exact || strategy !== 'CREATE' ? 'DUPLICATE' : status;
+              warnings.push(`Matches lead ${match.ref}${exact ? ' (same external id)' : ''}`);
+            } else if (found[0]) warnings.push(`Shares an email or phone with lead ${found[0].ref}, a different record in ${data.source_system}; check for a duplicate`);
           }
           if (status === 'VALID' && isExcluded(data.category)) status = 'ROUTED';
         } else {
@@ -356,6 +499,57 @@ export async function processImports({ batch = 200 } = {}) {
   return { applied };
 }
 
+async function campaignFor(client, data) {
+  if (data.campaign_id || !data.campaign_name) return data.campaign_id ?? null;
+  const { rows: found } = await client.query('SELECT id FROM crm_campaigns WHERE lower(name) = lower($1) LIMIT 1', [data.campaign_name]);
+  if (found[0]) return found[0].id;
+  const key = data.campaign_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60) || `campaign-${Date.now()}`;
+  const { rows } = await client.query(
+    `INSERT INTO crm_campaigns (key, name, notes) VALUES ($1, $2, 'Added by an import; set its dates and spend in Settings')
+     ON CONFLICT (key) DO UPDATE SET name = crm_campaigns.name RETURNING id`, [key, data.campaign_name],
+  );
+  return rows[0].id;
+}
+
+/**
+ * What an imported lead brings from the system it came from: the agent's
+ * notes on its timeline (marked as imported, dated now: the file does not say
+ * when they were written), and its clocks. The other system's last-modified
+ * time stands in for the last call when its status says someone was called,
+ * and for the last conversation when its status says they spoke — so leads
+ * worked before are not raised as never contacted.
+ */
+async function applyHistory(client, leadId, data, job, rowNo) {
+  const { rows: done } = await client.query(
+    `SELECT 1 FROM crm_lead_activities WHERE lead_id = $1 AND type = 'IMPORT_NOTE' AND meta->>'import_row' = $2 LIMIT 1`, [leadId, `${job.id}:${rowNo}`],
+  );
+  if (done[0]) return;
+  const from = job.preset === 'TELECRM' ? 'TeleCRM' : job.filename;
+  for (const body of data.import_notes || []) {
+    await logLeadActivity(client, leadId, { type: 'IMPORT_NOTE', subject: `Notes from ${from}`, body, meta: { import_row: `${job.id}:${rowNo}`, from } });
+  }
+  if (!(data.import_notes || []).length) {
+    await client.query(`INSERT INTO crm_lead_activities (lead_id, type, direction, subject, meta) VALUES ($1, 'IMPORT_NOTE', 'INTERNAL', $2, $3)`,
+      [leadId, `Imported from ${from}`, { import_row: `${job.id}:${rowNo}`, from }]);
+  }
+  const { rows: st } = data.call_status_id ? await client.query('SELECT * FROM crm_call_statuses WHERE id = $1', [data.call_status_id]) : { rows: [] };
+  const status = st[0];
+  const at = data.modified_at || data.captured_at || null;
+  const called = status && status.outcome !== 'NONE';
+  const spoke = status?.outcome === 'CONNECTED';
+  const retry = status?.retry_after_minutes && !['WON', 'DISQUALIFIED'].includes(status.lifecycle);
+  await client.query(
+    `UPDATE crm_leads SET last_activity_at = COALESCE($2::timestamptz, captured_at),
+            disqualify_reason = CASE WHEN status = 'DISQUALIFIED' THEN COALESCE($7, disqualify_reason) ELSE disqualify_reason END,
+            last_called_at = CASE WHEN $3 THEN $2::timestamptz ELSE last_called_at END,
+            first_response_at = CASE WHEN $3 THEN COALESCE(first_response_at, $2::timestamptz) ELSE first_response_at END,
+            last_contacted_at = CASE WHEN $4 THEN $2::timestamptz ELSE last_contacted_at END,
+            retry_at = CASE WHEN $5 THEN $2::timestamptz + make_interval(mins => $6::int) ELSE retry_at END
+      WHERE id = $1`,
+    [leadId, at, Boolean(called && at), Boolean(spoke && at), Boolean(retry && at), status?.retry_after_minutes ?? 0, data.disqualify_reason ?? null],
+  );
+}
+
 async function applyRow(job, row, actor) {
   const strategy = job.options?.duplicate_strategy || 'SKIP';
   const data = row.data || {};
@@ -365,31 +559,60 @@ async function applyRow(job, row, actor) {
         await query(`UPDATE crm_import_rows SET status = 'SKIPPED', applied_at = now() WHERE id = $1`, [row.id]);
         return;
       }
-      // fill what the existing lead is missing; never overwrite a value with a blank or a different one
+      // fill what the existing lead is missing; never overwrite a value with a blank or a different one —
+      // except what the other system owns (its status, rating, lost reason) while nobody here has changed it
       await withTransaction(async (client) => {
         const { rows } = await client.query('SELECT * FROM crm_leads WHERE id = $1 FOR UPDATE', [row.duplicate_of]);
         const lead = rows[0];
         const before = {};
         const sets = [];
+        const kept = [];
         const params = [lead.id];
         for (const f of FILLABLE_LEAD) {
           if (data[f] && !lead[f]) { before[f] = lead[f]; params.push(cleanText(data[f], 2000)); sets.push(`${f} = $${params.length}`); }
         }
         if (data.email && !lead.email) { params.push(normalizeEmail(data.email)); sets.push(`email_normalized = $${params.length}`); }
         if (data.phone && !lead.phone) { params.push(normalizePhone(data.phone)); sets.push(`phone_normalized = $${params.length}`); }
+        if (data.owner_user_id && !lead.owner_user_id) { before.owner_user_id = null; params.push(data.owner_user_id); sets.push(`owner_user_id = $${params.length}`, 'assigned_at = now()'); }
+        const custom = { ...(lead.custom_fields || {}) };
+        let customChanged = false;
+        for (const [k, v] of Object.entries(data.custom_fields || {})) if (custom[k] === undefined || custom[k] === null) { custom[k] = v; customChanged = true; }
+        if (customChanged) { before.custom_fields = lead.custom_fields; params.push(custom); sets.push(`custom_fields = $${params.length}`); }
+        const ownedThere = !lead.call_status_source || lead.call_status_source === 'IMPORT';
+        if (data.call_status_id && data.call_status_id !== lead.call_status_id) {
+          if (ownedThere && lead.status !== 'CONVERTED') {
+            Object.assign(before, { call_status_id: lead.call_status_id, status: lead.status, disqualify_reason: lead.disqualify_reason });
+            params.push(data.call_status_id); sets.push(`call_status_id = $${params.length}`, `call_status_at = now()`, `call_status_source = 'IMPORT'`);
+            params.push(data.status); sets.push(`status = $${params.length}`);
+            if (data.disqualify_reason) { params.push(data.disqualify_reason); sets.push(`disqualify_reason = $${params.length}`); }
+          } else kept.push('Calling status changed in TaskFlow since; kept');
+        }
+        if (data.rating && data.rating !== lead.rating && ownedThere) { before.rating = lead.rating; params.push(data.rating); sets.push(`rating = $${params.length}`); }
         if (sets.length) await client.query(`UPDATE crm_leads SET ${sets.join(', ')}, updated_at = now() WHERE id = $1`, params);
+        // notes the lead has not had yet
+        const { rows: had } = await client.query(`SELECT body FROM crm_lead_activities WHERE lead_id = $1 AND type = 'IMPORT_NOTE' AND body IS NOT NULL`, [lead.id]);
+        const fresh = (data.import_notes || []).filter((n) => !had.some((h) => h.body === n));
+        for (const body of fresh) {
+          await logLeadActivity(client, lead.id, { type: 'IMPORT_NOTE', subject: `Notes from ${job.preset === 'TELECRM' ? 'TeleCRM' : job.filename}`, body, meta: { import_row: `${job.id}:${row.row_no}` } });
+        }
+        const changed = sets.length > 0 || fresh.length > 0;
         await client.query(
           `UPDATE crm_import_rows SET status = $2, entity_id = $3, before = $4, applied_at = now(), warnings = warnings || $5::text[] WHERE id = $1`,
-          [row.id, sets.length ? 'UPDATED' : 'SKIPPED', lead.id, before, sets.length ? [] : ['Nothing new to add to the existing lead']],
+          [row.id, changed ? 'UPDATED' : 'SKIPPED', lead.id, before, [...kept, ...(changed ? [] : ['Nothing new to add to the existing lead'])]],
         );
       });
       return;
     }
-    const { lead } = await createLead({ ...data }, {
+    const campaignId = await withTransaction((client) => campaignFor(client, data));
+    const input = { ...data, campaign_id: campaignId };
+    delete input.campaign_name;
+    const { lead } = await createLead(input, {
       actor, channel: 'IMPORT', sourceSystem: data.source_system || null, idempotencyKey: `import:${job.id}:${row.row_no}`, importJobId: job.id, origin: 'USER',
+      quiet: job.options?.run_automation === false,
     });
+    await withTransaction((client) => applyHistory(client, lead.id, data, job, row.row_no));
     await query(`UPDATE crm_import_rows SET status = $2, entity_id = $3, applied_at = now() WHERE id = $1`,
-      [row.id, lead.destination === 'TASKFLOW' ? 'IMPORTED' : 'ROUTED', lead.id]);
+      [row.id, lead.destination === 'TELECRM' ? 'ROUTED' : 'IMPORTED', lead.id]);
     return;
   }
   // organizations
@@ -451,7 +674,8 @@ export async function undoImport(jobId, actor) {
       };
       if (job.entity === 'LEADS' && ['IMPORTED', 'ROUTED'].includes(r.status)) {
         const { rows: l } = await client.query(
-          `SELECT l.*, (SELECT COUNT(*)::int FROM crm_lead_activities a WHERE a.lead_id = l.id AND a.type NOT IN ('CAPTURE')) AS worked,
+          `SELECT l.*, (SELECT COUNT(*)::int FROM crm_lead_activities a WHERE a.lead_id = l.id
+                          AND a.type NOT IN ('CAPTURE', 'ASSIGNMENT', 'ROUTING', 'IMPORT_NOTE')) AS worked,
                   (SELECT COUNT(*)::int FROM tasks t WHERE t.crm_lead_id = l.id) AS tasks,
                   (SELECT COUNT(*)::int FROM crm_handoffs h WHERE h.lead_id = l.id AND h.status <> 'PENDING') AS handed
              FROM crm_leads l WHERE l.id = $1 FOR UPDATE`, [r.entity_id],

@@ -16,7 +16,7 @@ import { refreshScore, effectiveScore } from './scoring.js';
 import { routeLead, routeFor } from './routing.js';
 import {
   CATEGORY_LABEL, OPEN_LEAD_STATUSES, PIPELINE_FOR_CATEGORY, cleanText, companyDomain, domainOf, emitEvent, isEligible,
-  nextNumber, normalizeEmail, normalizePhone, salesSettings, scopeCondition,
+  isOrgCategory, nextNumber, normalizeEmail, normalizePhone, salesSettings, scopeCondition,
 } from './core.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -27,6 +27,7 @@ export const LEAD_SELECT = `
          osrc.name AS original_source_name, ocam.name AS original_campaign_name,
          a.name AS account_name, a.owner_user_id AS account_owner_id,
          cb.full_name AS created_by_name,
+         cs.label AS call_status_label, cs.color AS call_status_color, cs.key AS call_status_key, cs.outcome AS call_status_outcome,
          (SELECT MIN(t.due_date) FROM tasks t
            WHERE t.crm_lead_id = l.id AND t.followup_kind IS NOT NULL AND t.completed_at IS NULL AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL) AS next_followup_due,
          (SELECT COUNT(*)::int FROM tasks t
@@ -40,7 +41,8 @@ export const LEAD_SELECT = `
     LEFT JOIN crm_campaigns cam ON cam.id = l.campaign_id
     LEFT JOIN crm_sources osrc ON osrc.id = l.original_source_id
     LEFT JOIN crm_campaigns ocam ON ocam.id = l.original_campaign_id
-    LEFT JOIN accounts a ON a.id = l.account_id`;
+    LEFT JOIN accounts a ON a.id = l.account_id
+    LEFT JOIN crm_call_statuses cs ON cs.id = l.call_status_id`;
 
 export function decorateLead(row, settings = {}, now = Date.now()) {
   if (!row) return row;
@@ -50,6 +52,8 @@ export function decorateLead(row, settings = {}, now = Date.now()) {
   const nextDue = row.next_followup_due || row.next_follow_up_at;
   return {
     ...row,
+    // what to call the lead when it has neither an organization nor a name yet
+    display_name: row.organization_name || row.contact_name || row.phone || row.email || row.ref,
     category_label: CATEGORY_LABEL[row.category],
     effective_score: effectiveScore(row),
     is_open: open,
@@ -178,20 +182,19 @@ export async function findDuplicates({ id = null, email = null, phone = null, we
 
 // ---------------------------------------------------------------- create
 
-/** The minimum a lead needs, by category, plus what Settings adds. */
+/**
+ * The minimum a lead needs, by category, plus what Settings adds. A business
+ * or CSR lead is an organization; a retailer, FPO or individual can start as
+ * just a phone number, as calling leads do, and gains a name on the call.
+ */
 export function validateLead(input, settings = {}) {
   const errors = {};
   const cat = input.category || 'UNCLASSIFIED';
   const hasContact = Boolean(normalizeEmail(input.email) || normalizePhone(input.phone));
-  if (cat === 'INDIVIDUAL') {
-    if (!cleanText(input.contact_name)) errors.contact_name = 'A name is needed';
-  } else if (isEligible(cat) && !cleanText(input.organization_name)) {
-    // Taskflow's own leads are organizations; a retailer or FPO bound for
-    // TeleCRM is kept with whatever it gave rather than turned away
-    errors.organization_name = 'The organization is needed for a business lead';
+  if (isOrgCategory(cat) && !cleanText(input.organization_name)) errors.organization_name = 'The organization is needed for a business lead';
+  if (!hasContact && !cleanText(input.organization_name)) {
+    errors.email = cleanText(input.contact_name) ? 'Give an email or a phone number' : 'Give a phone number, an email or an organization';
   }
-  if (!cleanText(input.organization_name) && !cleanText(input.contact_name)) errors.organization_name = 'Give an organization or a person';
-  if (!hasContact && !cleanText(input.organization_name)) errors.email = 'Give an email or a phone number';
   if (input.email && !normalizeEmail(input.email)) errors.email = 'This is not an email address';
   if (input.phone && !normalizePhone(input.phone)) errors.phone = 'This is not a phone number';
   for (const field of settings.required?.lead?.[cat] || []) {
@@ -207,7 +210,7 @@ export function validateLead(input, settings = {}) {
  */
 export async function createLead(input, {
   actor = null, channel = 'MANUAL', sourceSystem = null, idempotencyKey = null, client: outer = null, assign = true,
-  importJobId = null, origin = 'USER',
+  importJobId = null, origin = 'USER', quiet = false,
 } = {}) {
   const settings = await salesSettings();
   const category = input.category || 'UNCLASSIFIED';
@@ -300,11 +303,23 @@ export async function createLead(input, {
       );
       await client.query('UPDATE crm_leads SET assigned_at = now() WHERE id = $1', [lead.id]);
     }
+    if (input.call_status_id || input.rating) {
+      await client.query(
+        `UPDATE crm_leads SET call_status_id = $2, call_status_at = CASE WHEN $2::int IS NULL THEN NULL ELSE now() END,
+                call_status_by = CASE WHEN $2::int IS NULL THEN NULL ELSE $3::int END, call_status_source = CASE WHEN $2::int IS NULL THEN NULL ELSE $4 END,
+                rating = $5 WHERE id = $1`,
+        [lead.id, input.call_status_id ?? null, actor?.id ?? null, channel === 'IMPORT' ? 'IMPORT' : 'USER', input.rating ?? null],
+      );
+    }
     await refreshScore(client, lead.id);
-    await emitEvent(client, {
-      type: 'lead.captured', entityType: 'LEAD', entityId: lead.id, origin, actorId: actor?.id ?? null,
-      payload: { category: effectiveCategory, channel, destination: route.destination },
-    });
+    // a lead brought over from another system's history is not a new enquiry:
+    // automation that greets or chases new leads does not run for it
+    if (!quiet) {
+      await emitEvent(client, {
+        type: 'lead.captured', entityType: 'LEAD', entityId: lead.id, origin, actorId: actor?.id ?? null,
+        payload: { category: effectiveCategory, channel, destination: route.destination },
+      });
+    }
     if (assign && route.destination === 'TASKFLOW' && !input.owner_user_id) await autoAssignLead(client, lead.id, { actor, origin });
     return { id: lead.id, created: true, duplicate: null };
   };
@@ -337,7 +352,7 @@ export async function getLead(id, { client = null } = {}) {
   return decorateLead(rows[0], await salesSettings());
 }
 
-export const LEAD_VIEWS = ['open', 'mine', 'team', 'unassigned', 'new', 'overdue', 'stale', 'nurture', 'converted', 'disqualified',
+export const LEAD_VIEWS = ['open', 'mine', 'team', 'unassigned', 'new', 'overdue', 'stale', 'retry', 'nurture', 'won', 'converted', 'disqualified',
   'needs_classification', 'telecrm', 'archived', 'all'];
 
 /**
@@ -365,7 +380,9 @@ export async function listLeads(filters = {}, scope = { all: true }) {
     case 'overdue': where.push(openSql, `(l.next_follow_up_at < now() OR EXISTS (SELECT 1 FROM tasks t WHERE t.crm_lead_id = l.id AND t.followup_kind IS NOT NULL
                        AND t.completed_at IS NULL AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL AND t.due_date < now()))`); break;
     case 'stale': where.push(openSql, `COALESCE(l.last_contacted_at, l.captured_at) < now() - (${push(staleDays)} || ' days')::interval`); break;
+    case 'retry': where.push(openSql, 'l.retry_at IS NOT NULL'); break;
     case 'nurture': where.push(`l.status = 'NURTURE'`); break;
+    case 'won': where.push(`l.status = 'WON'`); break;
     case 'converted': where.push(`l.status = 'CONVERTED'`); break;
     case 'disqualified': where.push(`l.status = 'DISQUALIFIED'`); break;
     case 'needs_classification': where.push(`l.routing_status = 'NEEDS_CLASSIFICATION'`); break;
@@ -391,12 +408,25 @@ export async function listLeads(filters = {}, scope = { all: true }) {
   if (filters.to) where.push(`l.captured_at < (${push(filters.to)}::date + 1)`);
   if (filters.min_score) where.push(`COALESCE(l.score_override, l.score) >= ${push(Number(filters.min_score))}`);
   if (filters.entry_channel) where.push(`l.entry_channel = ${push(filters.entry_channel)}`);
+  if (filters.call_status_id === 'none') where.push('l.call_status_id IS NULL');
+  else if (filters.call_status_id) where.push(`l.call_status_id = ${push(Number(filters.call_status_id))}`);
+  if (filters.rating) where.push(`l.rating >= ${push(Number(filters.rating))}`);
+  if (filters.city) where.push(`l.city ILIKE ${push(`%${String(filters.city).trim()}%`)}`);
+  // custom fields: cf_<key>=<value>; a multi-choice field matches any lead holding that choice
+  for (const [k, v] of Object.entries(filters)) {
+    const m = /^cf_([a-z][a-z0-9_]{1,40})$/.exec(k);
+    if (!m || v === undefined || v === '') continue;
+    const key = push(m[1]);
+    const val = push(String(v));
+    where.push(`(l.custom_fields->>${key} = ${val} OR (jsonb_typeof(l.custom_fields->${key}) = 'array' AND l.custom_fields->${key} ? ${val}))`);
+  }
 
   const SORTS = {
     newest: 'l.captured_at DESC, l.id DESC', oldest: 'l.captured_at ASC, l.id ASC',
     score: 'COALESCE(l.score_override, l.score) DESC NULLS LAST, l.captured_at DESC',
     follow_up: 'next_followup_due ASC NULLS LAST, l.next_follow_up_at ASC NULLS LAST',
     activity: 'l.last_activity_at DESC NULLS LAST', organization: 'lower(l.organization_name) ASC NULLS LAST, l.id',
+    rating: 'l.rating DESC NULLS LAST, l.captured_at DESC', retry: 'l.retry_at ASC NULLS LAST',
   };
   const order = SORTS[filters.sort] || SORTS.newest;
   const pageSize = Math.min(Math.max(Number(filters.page_size) || 50, 1), 200);
@@ -427,6 +457,8 @@ export async function leadCounts(scope, userId) {
        COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND (l.next_follow_up_at < now() OR EXISTS (
           SELECT 1 FROM tasks t WHERE t.crm_lead_id = l.id AND t.followup_kind IS NOT NULL AND t.completed_at IS NULL AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL AND t.due_date < now())))::int AS overdue,
        COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND COALESCE(l.last_contacted_at, l.captured_at) < now() - (${stale} || ' days')::interval)::int AS stale,
+       COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND l.retry_at IS NOT NULL)::int AS retry,
+       COUNT(*) FILTER (WHERE l.status = 'WON')::int AS won,
        COUNT(*) FILTER (WHERE l.routing_status = 'NEEDS_CLASSIFICATION')::int AS needs_classification,
        COUNT(*) FILTER (WHERE l.destination = 'TELECRM' AND l.routing_status IN ('HANDOFF_PENDING', 'HANDOFF_FAILED'))::int AS telecrm_pending,
        COUNT(*) FILTER (WHERE l.captured_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata')::int AS today
@@ -440,7 +472,7 @@ export async function leadCounts(scope, userId) {
 
 const EDITABLE = ['organization_name', 'contact_name', 'designation', 'email', 'phone', 'website', 'city', 'state', 'country',
   'enquiry', 'requirement', 'budget_amount', 'currency', 'budget_confirmed', 'timeline', 'decision_maker_engaged', 'need_clarity',
-  'fit', 'priority', 'tags', 'referral', 'next_follow_up_at', 'custom_fields', 'department_id', 'source_id', 'campaign_id'];
+  'fit', 'priority', 'tags', 'referral', 'next_follow_up_at', 'custom_fields', 'department_id', 'source_id', 'campaign_id', 'rating'];
 
 /**
  * Edits a lead. A category change goes through the boundary; an owner change
@@ -508,7 +540,10 @@ export async function updateLead(id, data, { actor, client: outer = null, origin
     if (changed.status) {
       await emitEvent(client, { type: 'lead.status_changed', entityType: 'LEAD', entityId: id, origin, depth, actorId: actor?.id ?? null, payload: { from: lead.status, to: changed.status } });
       // a closed lead's pending follow-ups are cancelled, with the reason recorded
-      if (['DISQUALIFIED'].includes(changed.status)) await cancelLeadFollowUps(client, id, `Lead disqualified`, actor);
+      if (['DISQUALIFIED', 'WON'].includes(changed.status)) {
+        await cancelLeadFollowUps(client, id, changed.status === 'WON' ? 'Lead won' : 'Lead disqualified', actor);
+        await client.query('UPDATE crm_leads SET retry_at = NULL WHERE id = $1', [id]);
+      }
     }
   };
   if (outer) await run(outer); else await withTransaction(run);
@@ -570,10 +605,10 @@ export async function convertLead(id, body, { actor }) {
     if (lead.status === 'CONVERTED') {
       return { lead: await getLead(id, { client }), accountId: lead.converted_account_id, opportunityId: lead.converted_opportunity_id, contactId: lead.converted_contact_id, already: true };
     }
-    if (lead.destination !== 'TASKFLOW') {
+    if (lead.destination !== 'TASKFLOW' || lead.category === 'UNCLASSIFIED') {
       throw conflict(lead.destination === 'TELECRM'
         ? `${CATEGORY_LABEL[lead.category]} leads belong in TeleCRM and cannot become Taskflow opportunities`
-        : 'Classify this lead before converting it');
+        : 'Say who this lead is (its category) before converting it');
     }
     const settings = await salesSettings();
     const ownerId = lead.owner_user_id || actor.id;
@@ -592,8 +627,9 @@ export async function convertLead(id, body, { actor }) {
           [accountId, lead.category, actor.id]);
       }
     } else {
+      // a farmer or other individual buys as themselves: the customer record carries their name
       const name = cleanText(body.account?.name, 200) || lead.organization_name || lead.contact_name;
-      if (!name) throw badRequest('Name the organization');
+      if (!name) throw badRequest(lead.category === 'INDIVIDUAL' ? 'Give the person\'s name first' : 'Name the organization');
       const stage = await firstStage(client, PIPELINE_FOR_CATEGORY[lead.category]);
       const { rows: acc } = await client.query(
         `INSERT INTO accounts (name, type, stage_id, owner_user_id, department_id, website, domain, contact_name, contact_email, contact_phone,
@@ -603,7 +639,7 @@ export async function convertLead(id, body, { actor }) {
          RETURNING id`,
         [name, stage?.id ?? null, ownerId, departmentId, lead.website, lead.domain, lead.contact_name, lead.email, lead.phone,
           lead.state, lead.city, lead.country, null, lead.category, actor.id,
-          body.account?.org_type ?? (lead.category === 'CSR_NGO' ? null : 'COMPANY'), body.account?.segment_id ?? null,
+          body.account?.org_type ?? ({ CSR_NGO: null, RETAILER: 'RETAILER', FPO: 'FPO', INDIVIDUAL: 'INDIVIDUAL' }[lead.category] ?? 'COMPANY'), body.account?.segment_id ?? null,
           lead.original_source_id, lead.original_campaign_id],
       );
       accountId = acc[0].id;
@@ -659,7 +695,7 @@ export async function convertLead(id, body, { actor }) {
          VALUES ($1,$2,$3,$4,$5::numeric,COALESCE($6,$7),$8::date,$8::date,$9::text,$10::date,$11,CASE WHEN $9::text IS NULL THEN NULL ELSE now() END,
                  CASE WHEN $9::text IS NULL THEN NULL ELSE $12::int END,$13,$14,$15,$16,$17,$18,$19::numeric,$20,$21,$12)
          RETURNING id`,
-        [accountId, cleanText(o.name, 200) || `${lead.organization_name || lead.contact_name} — ${lead.category === 'CSR_NGO' ? 'CSR' : 'enquiry'}`,
+        [accountId, cleanText(o.name, 200) || `${lead.organization_name || lead.contact_name} — ${lead.category === 'CSR_NGO' ? 'CSR' : lead.requirement ? cleanText(lead.requirement, 60) : 'enquiry'}`,
           stageId, ownerId, o.estimated_value ?? lead.budget_amount ?? null, o.currency ?? null, lead.currency || settings.calendar?.currency || 'INR',
           o.expected_close ?? null, nextStep, nextStep ? (o.next_step_due ?? null) : null, nextStep ? (o.next_step_owner_id ?? ownerId) : null, actor.id,
           pipe[0].id, type, lead.id, lead.original_source_id || lead.source_id, lead.original_campaign_id || lead.campaign_id,
