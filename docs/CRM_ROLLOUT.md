@@ -87,6 +87,38 @@ After the migration:
 
 A second migration run changes nothing.
 
+### Migration 028 (tele-sales)
+
+`028_telesales.sql` is additive as well. It widens three CHECK constraints,
+keeping every value they allowed:
+
+- lead status gains `WON`;
+- pipeline and scoring-model categories gain the retail categories.
+
+It also adds:
+
+- calling statuses, seeded with TeleCRM's 14;
+- lead fields, seeded with the enquiry form's questions;
+- the Retail, FPO & farmers pipeline and its 7 stages;
+- scoring models for retailer, FPO and individual;
+- three sources (Instagram, Facebook, Google search);
+- nullable or defaulted lead columns (calling status, attempts, retry time,
+  rating).
+
+No existing row is changed. The population rehearsal test now runs 027 and 028
+together and expects 16 new stage rows.
+
+Two behaviours change with it:
+
+- **Retailers, FPOs and individuals are worked in TaskFlow by default**, and
+  leads of unknown category are worked by their owner. See
+  `docs/TELECRM_MIGRATION.md`.
+- **Commercial bookings and receipts** in reports include retail deals; CSR
+  is still separate.
+
+After deploying, check **Settings → Visibility, routing & calendar →
+"Are worked"**: an earlier build's form saved "In TeleCRM" as its default.
+
 ## 3. Before deploying
 
 ### 3.1 Back up (do before deploying)

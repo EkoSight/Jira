@@ -81,6 +81,11 @@ record-level visibility, merging.
 | D14 | Live outbound automation (WhatsApp sends) is **off** until an admin switches it on after a test run. | Brief §11 | Settings → Automation |
 | D15 | **Organizations created without a category** (an older API client, or the existing form path before it asked) are created exactly as before (201, in the pipeline) and marked `LEGACY_UNCONFIRMED` with `category_source = 'UNSPECIFIED'`, so they join the classification queue like the organizations that predate categories. | Existing API contracts keep working; nothing is guessed | — |
 | D16 | **Record-level access starts off.** Until an administrator switches it on, everyone with CRM access sees every record, as before the release. Turning it on applies D3 everywhere at once. | Narrowing what people see on deploy day, before anyone decided it, would break existing work (brief: nothing existing may break) | Settings → Visibility. The setup checklist shows it as open until decided |
+| D18 | **TeleCRM is being retired (subscription ends January 2027): retailers, FPOs and individuals are worked in TaskFlow by default**, in a Retail, FPO & farmers pipeline with calling statuses and a call list. This supersedes D1's routing and D10 for new installations; the hand-off stays available as a setting for the transition. | The owner's decision (31 Oct 2026) | Settings → Visibility, routing & calendar → "Are worked" |
+| D19 | **A lead whose category is not known is worked by its owner** (flagged "Who is it?") instead of waiting in a restricted queue, while tele-sales is worked here. It stays out of pipelines, scoring and totals until classified. | With TeleCRM gone there is nowhere else for it to go, and the caller is the one who finds out | Same setting |
+| D20 | **Calling statuses keep TeleCRM's 14 names**, each mapped onto the lead lifecycle. Just Curious → keep warm (out of the call list); Job Seeker → closed as lost; Won → won on the lead. An unanswered call never moves an interested lead backwards. | The team keeps its words; the lifecycle keeps reports consistent | Settings → Calling statuses (Q-T1) |
+| D21 | **Imported history is quiet**: it sets no "not contacted yet" alarms and runs no new-lead automation. The other system's last-modified time stands in for the last call or conversation when its status says one happened. | 688 historical leads must not page the team or message customers | Import option "Treat them as new enquiries" |
+| D22 | **Two records the other system keeps under different ids are never merged by an import**, even when they share an email or phone; they are flagged for a person. | The rehearsal found 7 TeleCRM leads sharing an email with different phones and ids | — |
 | D17 | **Scheduled reports are in-app notices**, not emails, with numbers computed separately for each recipient's access. | No CRM mail path exists yet; a notice cannot leak data to an address outside TaskFlow | Email delivery can be added later |
 
 ---
@@ -184,6 +189,21 @@ Evidence:
 | B20 | **[Brief]** Setup wizard, contextual help, guides, demo data | Partial | Setup checklist, Help tab and `docs/CRM_GUIDE.md` are verified (walk: setup checklist). **No demo data script**; the browser walk-through's fixtures are not shipped |
 | B21 | **[Brief]** Migration rehearsal, backup/restore, rollback | Partial | `docs/CRM_ROLLOUT.md`; salesMigration test (populated database, every existing column fingerprinted); reconciliation script exercised across the upgrade. **Rehearsal on a copy of production is still to be done** by whoever deploys |
 
+### TeleCRM retirement (31 Oct 2026)
+
+| ID | Requirement | Status | Evidence / note |
+|---|---|---|---|
+| T1 | Import the TeleCRM export as it is | Verified | telesales test T1 (Hindi answers, blanks, dates, states, statuses, notes, owners, shared emails, quiet history, re-import that keeps work done here); the real 688-row export rehearsed in a scratch schema (all imported, every status count matching) and imported through the screen in the browser walk |
+| T2 | Work retailers, FPOs and individuals in TaskFlow; bring queued ones in | Verified | telesales test T4; browser: switch the setting and bring in (4 leads came back) |
+| T3 | Calling statuses, attempts, retries, callbacks, lost reasons, won on the lead | Verified | telesales test T2; browser on a phone: no answer → next, interested with note, callback and stars, lost needs a reason |
+| T4 | Call list | Verified | telesales test T3; browser on a phone |
+| T5 | Lead fields (custom), with category from an answer | Verified | telesales tests T1, T4; browser: settings and lead page |
+| T6 | Retail, FPO & farmers pipeline; individual converts under their own name | Verified | telesales test T4; browser: retail board |
+| T7 | Calls & statuses report | Verified | telesales test T5; browser: bars, breakdown by service, a bar opens its leads |
+| T8 | Call recording and automatic call logs from the phone | Blocked: calling provider (Q1) | Not possible from a web app; Exotel adapter and signed webhook built |
+| T9 | Bulk WhatsApp / SMS to a list | Not built | Automation sends per lead; needs Meta account (Q2) |
+| T10 | Direct connectors (Facebook Lead Ads, IndiaMART…) | Partial | Capture API and webhook; no named connectors |
+
 ## 5. Acceptance journeys
 
 | Journey | What it proves | Automated | Browser |
@@ -217,5 +237,6 @@ Evidence:
 
 ---
 
-Last update: 30 October 2026. Statuses reflect the test suites and browser
-walk-throughs run on this branch on that date.
+Last update: 31 October 2026. Statuses reflect the test suites and browser
+walk-throughs run on this branch on that date. The TeleCRM move is described in
+`docs/TELECRM_MIGRATION.md`.

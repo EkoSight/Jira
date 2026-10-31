@@ -8,7 +8,8 @@ on screen shows the short form of the same definition.
 
 | Rule | What it means |
 |---|---|
-| **Population** | Leads: only those in Taskflow's categories (B2B corporate, CSR / NGO) that were not merged into another lead. TeleCRM leads (retailer, FPO, individual) and leads waiting in *Needs classification* are never counted. Deals: only unarchived deals on unarchived organizations whose category is B2B corporate or CSR / NGO, plus legacy organizations still awaiting confirmation (when the setting keeps them in, the default). |
+| **Population** | Leads worked in TaskFlow (not merged into another lead): every category, including leads whose category is not known yet, while retailers, FPOs and individuals are worked here (the default). While the setting still hands those to TeleCRM, TeleCRM's leads and the review queue are not counted. Deals: unarchived deals on unarchived organizations in a category worked here, plus legacy organizations still awaiting confirmation (when the setting keeps them in, the default). |
+| **Commercial vs CSR** | "Commercial" means every pipeline except CSR / NGO: B2B and Retail, FPO & farmers. CSR commitments and receipts are always their own numbers. |
 | **Visibility** | A report counts only the records the person viewing it may open. Two people can see different totals for the same filters, and that is correct. Scheduled reports are computed separately for each recipient, with that recipient's access. |
 | **Dates** | Periods are **local days** in the CRM time zone (Settings → Calendar; default Asia/Kolkata). "From 1 Oct to 31 Oct" means 1 Oct 00:00 to 1 Nov 00:00 local time. |
 | **Currency** | Money is reported in **one currency at a time** (the *Currency* filter; default the main currency). Deals in other currencies are counted in a separate note ("deals in USD are counted separately"), never converted or added in. A conversion needs a recorded rate, and the report says when one was used. |
@@ -57,7 +58,7 @@ passed. Stale means no conversation has happened, whatever is scheduled.
 | **Lost** | Deals with status Lost | `closed_at` in period |
 | **Win rate** | Won ÷ (Won + Lost) among deals closed in the period. Open and paused deals are not in it. | `closed_at` in period |
 | **Average cycle** | Average days from creation to close, for deals won in the period | `closed_at` in period |
-| **Commercial bookings** | Sum of *agreed value* of won **B2B** deals | `closed_at` in period; chosen currency |
+| **Commercial bookings** | Sum of *agreed value* of won deals outside the CSR pipeline (B2B and retail) | `closed_at` in period; chosen currency |
 | **CSR committed** | Sum of *committed amount* on won **CSR** deals. A commitment is not money received. | `closed_at` in period; chosen currency |
 | **CSR non-monetary won** | Won CSR deals with no money attached | `closed_at` in period |
 
@@ -66,7 +67,7 @@ passed. Stale means no conversation has happened, whatever is scheduled.
 | Number | Counts | Date basis |
 |---|---|---|
 | **Invoiced** | Issued invoices (not cancelled) | `issued_on` in period; invoice currency = chosen |
-| **Received (commercial)** | Receipts on B2B deals, excluding refunds and voided entries | `received_on` in period; payment currency = chosen |
+| **Received (commercial)** | Receipts on deals outside the CSR pipeline, excluding refunds and voided entries | `received_on` in period; payment currency = chosen |
 | **Received (CSR)** | Receipts on CSR deals (tranches), as above | as above |
 | **Refunds** | Refunds paid, excluding voided entries | `received_on` in period |
 | **Outstanding on schedules** | For won deals with a payment schedule: scheduled minus received net of refunds, floored at zero per deal. Cancelled schedule lines are left out. | now; schedule and payment currency = chosen |
@@ -86,6 +87,26 @@ visible lead, or to a visible deal when it has no lead.
 | **Due today** | Open, and due today (local) |
 | **Completed** | Completed in the period |
 | **Missed** | Completed in the period with outcome No answer, Busy, Wrong number or Not done |
+
+## Calls & statuses
+
+- For **leads captured in the period**, where they stand now.
+- For **calls logged in the period**, who made them and how many connected.
+
+| Number | Counts |
+|---|---|
+| Leads by calling status | Leads captured in the period, grouped by their calling status today, or "No calling status yet". A cohort figure: it moves as those leads are called. Clicking a status opens those leads. |
+| Calls | Calls logged in the period, by the person who made them: manual call logs, calls recorded by setting a calling status, and provider calls. Only calls on leads the viewer may see. |
+| Connected | Of those, calls that were answered (status completed, outcome not no-answer, busy or wrong number) |
+| Connect rate | Connected ÷ Calls |
+| Leads called | Different leads those calls were about |
+| Talk time | Sum of call durations, where a duration is known (provider calls; manual logs only when the caller entered one) |
+| Won / Lost | Calling status changes in the period, by that person, that closed a lead as won, or as lost (lost includes statuses such as Job Seeker that close the lead) |
+| Breakdown | Leads captured in the period by state, category, source, owner, or any choice lead field. For several-choice fields, a lead counts once under each choice it holds. "Won or converted" counts leads now won or converted; "Lost" counts leads now closed as lost. |
+
+Calls before the TeleCRM import are not in TaskFlow. The TeleCRM export
+carries each lead's status, not its calls, so imported leads count as "Leads
+called" only from their first call here.
 
 ## Sources & campaigns
 

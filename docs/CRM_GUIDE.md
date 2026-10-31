@@ -3,7 +3,8 @@
 The same guide is inside TaskFlow under **Sales CRM → Help**, searchable. This
 copy adds the integration contracts an administrator or developer needs.
 
-- [What goes where: Taskflow or TeleCRM](#what-goes-where-taskflow-or-telecrm)
+- [Who is worked where](#who-is-worked-where)
+- [Calling](#calling)
 - [Sales agent: your day](#sales-agent-your-day)
 - [Manager: running the team](#manager-running-the-team)
 - [Administrator: setting it up](#administrator-setting-it-up)
@@ -15,35 +16,81 @@ copy adds the integration contracts an administrator or developer needs.
 
 ---
 
-## What goes where: Taskflow or TeleCRM
+## Who is worked where
 
-Taskflow's sales CRM works **B2B corporate** and **CSR / NGO** leads.
-**Retailers**, **FPOs** (farmer producer organizations) and **individual**
-farmers or consumers are handled in **TeleCRM**.
+Every category is worked in TaskFlow. TeleCRM's subscription ends in January
+2027, and what it did is here now; see
+[`TELECRM_MIGRATION.md`](TELECRM_MIGRATION.md).
 
 | Category | Where it is worked |
 |---|---|
-| B2B corporate — companies, institutions, government, agri-businesses | Taskflow, B2B pipeline |
-| CSR / NGO — CSR teams, foundations, trusts, NGOs | Taskflow, CSR / NGO pipeline |
-| Retailer — shops, dealers, agri-input retailers | TeleCRM (TeleCRM queue in Taskflow) |
-| FPO — farmer producer organizations and companies | TeleCRM |
-| Individual — a farmer or consumer acting for themselves | TeleCRM |
-| Not known yet | "Needs classification" queue |
+| B2B corporate — companies, institutions, government, agri-businesses | B2B pipeline |
+| CSR / NGO — CSR teams, foundations, trusts, NGOs | CSR / NGO pipeline |
+| Retailer — shops, dealers, agri-input retailers | Retail, FPO & farmers pipeline and the call list |
+| FPO — farmer producer organizations and companies | Retail, FPO & farmers pipeline and the call list |
+| Individual — a farmer, student or consumer acting for themselves | Retail, FPO & farmers pipeline and the call list |
+| Not known yet | Worked by its owner, marked "Who is it?" |
 
-- Every lead has a category; choose it first. A retailer, FPO or individual
-  lead is **kept** (nothing is thrown away) but goes to the TeleCRM queue. It
-  never enters the pipeline, anyone's lead pool, automation or the sales totals.
+- Every lead has a category; choose it first, or "Not known yet".
 - An FPO stays an FPO even when it is registered as a company. A person who
   works at a company is a business contact (B2B), not an "individual".
 - A lead whose category is not known — a web form without the question, an
-  unknown caller, an import row without the column — waits in **Needs
-  classification** until someone with routing permission classifies it.
-- The same rule applies on every way in: the screen, the hosted form, the
-  capture API, imports, calls, WhatsApp, conversion and editing. It is enforced
-  on the server, not just hidden on the screen.
+  unknown caller, an import row without the column — is worked by whoever owns
+  it. Ask on the call, then choose the category on the lead or answer
+  "Associated with agriculture as", which sets it. Until then it is not in a
+  pipeline, scoring or the sales totals.
+- A B2B or CSR lead needs an organization. A retailer, FPO or individual can
+  start as just a phone number.
+- **While TeleCRM is still in use**, an administrator can send retailers, FPOs
+  and individuals there instead (Settings → Visibility, routing & calendar →
+  "Are worked"). They then go to a TeleCRM hand-off list and are not worked
+  here.
+  - The rule is enforced on the server on every way in: the screen, the hosted
+    form, the capture API, imports, calls, WhatsApp, conversion and editing.
+  - "Bring waiting TeleCRM and review leads into TaskFlow" brings them back
+    when you switch.
 - Organizations that existed before categories are marked *legacy, awaiting
   confirmation*. They stay where they were (in the pipeline, in totals) until
   an administrator confirms each one. Nothing is reclassified automatically.
+
+## Calling
+
+**Sales CRM → Calling** is the call list (TeleCRM's dialler list). It shows one
+lead at a time:
+
+1. callbacks that are due (or due within 15 minutes);
+2. new leads nobody has called, newest first;
+3. leads whose retry time has come, oldest first.
+
+Settings can put retries before new leads.
+
+- **Call** opens the phone's dialler. TaskFlow does not record the call or
+  read the phone's call log; that needs a calling provider (see Calls below).
+- **How did it go?** Choose a calling status:
+  - *Didn't connect* (Ringing Not Responding, Busy): the lead comes back after
+    3 hours or 1 hour, and stops after 6 tries so the caller can close it or
+    book a callback.
+  - *Spoke to them* (Just Curious, Interested, Hot…).
+  - *Close the lead*: Won, Job Seeker, or Lost. Lost asks why.
+- Each status counts the attempt and logs the call on the timeline.
+- An unanswered call does not undo what an earlier conversation established:
+  an interested lead that does not pick up stays interested.
+- **Call back** books a callback (in an hour, this evening, tomorrow morning,
+  any time). It replaces the automatic retry and shows in My Day with a
+  reminder.
+- Write what was said and give stars. **Save and next** moves on; **Skip for
+  now** leaves a lead for later in the session.
+- Managers can open someone else's call list.
+
+The same form is on every lead's page ("How did the call go?"). Several leads'
+statuses can be changed at once from the lead list (no call is claimed for
+them).
+
+**A sale closed on the call** (a kit paid on UPI) can be marked **Won** on the
+lead. To record a quotation, payment or delivery, **Convert to deal**:
+
+- the customer record is the shop, the FPO, or the person themselves;
+- the deal goes in the Retail, FPO & farmers pipeline.
 
 ## Sales agent: your day
 
@@ -289,32 +336,56 @@ score is the weighted share met, from 0 to 100.
 - For a contract that renews, open the won deal → **Open a renewal**. There is
   one renewal per deal; asking again returns the same one.
 
-### A retailer routed to TeleCRM
+### A retailer who wants a Soil Doctor clinic
 
-1. Krishna Agro Store calls in. The agent adds a lead and chooses
-   **Retailer**. Taskflow says it is handled in TeleCRM and saves it to the
-   TeleCRM queue, not the pipeline.
-2. Someone with routing permission opens **Leads → TeleCRM queue** and presses
-   **Export**, which produces an Excel file. They upload the file to TeleCRM,
-   then **confirm** each lead, optionally with TeleCRM's reference. Only that
-   confirmation marks a lead as handed over. Taskflow has no TeleCRM API
-   connection and never claims a transfer that a person has not confirmed.
-3. If it turns out to be a distributor that should be a B2B customer,
-   **classify** it as B2B corporate: it enters Taskflow and is assigned.
+1. Kishore, an agri-input retailer in Rajasthan, fills in the Instagram form:
+   "Agri Retailer or Shop Owner", "Soil Doctor Clinic Setup". The lead comes
+   in as a Retailer with those answers and is assigned by the rules.
+2. In **Calling** it is a new lead near the top. Isha taps Call: no answer.
+   She chooses *Ringing Not Responding*, and it comes back three hours later.
+3. On the second call he answers: he sells fertiliser and wants to know
+   what a clinic costs. Isha chooses *Interested*,
+   writes that down, gives four stars and books *Tomorrow morning*.
+4. Next day he is ready. Isha presses **Convert to deal**. A customer record
+   for the shop and a deal in the Retail, FPO & farmers pipeline are created;
+   the quotation, payments and handover follow as for any deal.
+
+### While TeleCRM is still in use
+
+With the setting on "In TeleCRM", a retailer is saved to the TeleCRM hand-off
+list instead.
+
+1. Someone with routing permission opens **Leads → TeleCRM queue**, exports it
+   to Excel and uploads the file to TeleCRM.
+2. They confirm each lead. Only that confirmation marks a lead as handed over;
+   TaskFlow never claims a transfer that a person has not confirmed.
+
+On the day you stop using TeleCRM:
+
+1. Switch the setting to TaskFlow.
+2. Press **Bring waiting TeleCRM and review leads into TaskFlow**.
+3. Import TeleCRM's last export.
 
 ## Importing and exporting
 
 **Import** (Sales CRM → Imports):
 
-1. Download the template. Keep the header row, and format phone and ID columns
-   as Text so leading zeros stay.
+1. Download the template, or upload an export from TeleCRM as it is. TeleCRM
+   files are recognised and read as TeleCRM writes them; see
+   [`TELECRM_MIGRATION.md`](TELECRM_MIGRATION.md). Keep the header row, and
+   format phone and ID columns as Text so leading zeros stay.
 2. Upload CSV or Excel. Check the column matches and choose what to do with
    records that already exist:
    - **skip** (default)
    - **update** the existing record
    - **create anyway**
 3. Press **Check the rows**. Every row gets a status with its reason: valid,
-   problem, already there, or for TeleCRM.
+   problem or already there.
+   - Dates may be day/month/year.
+   - Misspelt Indian states are corrected.
+   - An invalid email is left out with a note, rather than losing the lead.
+   - Rows the other system keeps under different ids are never treated as
+     duplicates of each other.
 4. Download the **corrections file**, fix the problem rows, and upload just
    those again. Uploading the same file twice does not duplicate anything.
 5. Start the import. It runs in the background a batch at a time.

@@ -95,9 +95,9 @@ const TOPICS = [
   {
     id: 'retailer', who: 'Worked example', title: 'A retailer who wants a Soil Doctor clinic',
     body: [
-      '1. Krishan, an agri-input retailer in Rajasthan, fills the Instagram form: “Agri Retailer or Shop Owner”, “Soil Doctor Clinic Setup”. The lead comes in as a Retailer with those answers and goes to the caller by the assignment rules.',
+      '1. Kishore, an agri-input retailer in Rajasthan, fills the Instagram form: “Agri Retailer or Shop Owner”, “Soil Doctor Clinic Setup”. The lead comes in as a Retailer with those answers and goes to the caller by the assignment rules.',
       '2. In Calling it is a new lead, so it is near the top. Isha taps Call; no answer. She chooses Ringing Not Responding; it comes back three hours later.',
-      '3. On the second call he answers: deals in seeds and pesticide, crops cotton and bajra, will discuss with his partner. Isha chooses Interested, writes that down, gives four stars and books Tomorrow morning.',
+      '3. On the second call he answers: he sells fertiliser and wants to know what a clinic costs. Isha chooses Interested, writes that down, gives four stars and books Tomorrow morning.',
       '4. Next day he is ready. Isha opens the lead and presses Convert to deal: a customer record for the shop and a deal in the Retail, FPO & farmers pipeline, where the quotation, payments and handover work as for any deal.',
       '5. A small sale closed on the call — a kit paid for on UPI — can simply be marked Won on the lead. Convert it later if you want the payment recorded on a deal.',
     ],

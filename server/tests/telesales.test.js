@@ -98,12 +98,12 @@ const telecrm = (overrides) => row({
 test('T1: a TeleCRM export is read with its preset, keeps every record and status, and a later export updates without undoing work done here', async (t) => {
   if (skip(t)) return;
   const file = csv([HEADER,
-    telecrm({ 'Lead id': 'T-1', Status: 'Interested', 'Full Name': 'Krishan', 'Mobile Number': '918005548643', 'First Call Descripton': 'Agri retailer, seeds and pesticide. Will discuss with partner.',
+    telecrm({ 'Lead id': 'T-1', Status: 'Interested', 'Full Name': 'Kishore', 'Mobile Number': '919990001001', 'First Call Descripton': 'Sells fertiliser; wants a price for the clinic.',
       'You are associated with agriculture as': 'कृषि विक्रेता (Agri-Retailer)', 'Service Needed': 'Soil Doctor Clinic Setup', 'State Lead Belongs To': 'Maharastra',
       'Shop Duration': '1 year', 'District': 'nagpur', 'How did you hear about us': 'इंस्टाग्राम (Instagram)', 'Campaign Name': 'Maharastra Campaign (15.09.2026)',
       'Created On': '30/10/2026 11:50:36', 'Modified On': '30/10/2026 11:51:35', 'Rating': '5', 'Batch Names': 'Form responses 1' }),
-    telecrm({ 'Lead id': 'T-2', Status: 'Ringing Not Responding', 'Mobile Number': '919426366907', 'Created On': '29/10/2026 11:08:11', 'Modified On': '29/10/2026 11:19:12' }),
-    telecrm({ 'Lead id': 'T-3', Status: 'Lost', 'Lost Reason': 'No Need', 'Full Name': 'Musafir', 'Mobile Number': '919752139476', 'You are associated with agriculture as': 'Farmer (किसान)',
+    telecrm({ 'Lead id': 'T-2', Status: 'Ringing Not Responding', 'Mobile Number': '919990001002', 'Created On': '29/10/2026 11:08:11', 'Modified On': '29/10/2026 11:19:12' }),
+    telecrm({ 'Lead id': 'T-3', Status: 'Lost', 'Lost Reason': 'No Need', 'Full Name': 'Mohan', 'Mobile Number': '919990001003', 'You are associated with agriculture as': 'Farmer (किसान)',
       'Created On': '14/01/2026 16:12:21', 'Modified On': '16/03/2026 15:08:00', 'E-Mail Address': 'shared@example.com' }),
     telecrm({ 'Lead id': 'T-4', Status: 'Won', 'Full Name': 'Sahyadri FPC', 'Mobile Number': '919800000004', 'You are associated with agriculture as': 'एफपीओ / एफपीसी FPO / FPC',
       'Service Needed': 'Soil and Water Testing Service  Soil Doctor Kit', 'State Lead Belongs To': 'Gujrat', 'Created On': '01/09/2026 10:00:00', 'Modified On': '20/10/2026 10:00:00',
@@ -145,7 +145,7 @@ test('T1: a TeleCRM export is read with its preset, keeps every record and statu
   const { rows: [src] } = await query('SELECT s.key, c.name FROM crm_leads l JOIN crm_sources s ON s.id = l.original_source_id JOIN crm_campaigns c ON c.id = l.original_campaign_id WHERE l.id = $1', [t1.id]);
   assert.deepEqual(src, { key: 'instagram', name: 'Maharastra Campaign (15.09.2026)' }, 'the campaign is added as TeleCRM named it');
   const { rows: notes } = await query(`SELECT subject, body FROM crm_lead_activities WHERE lead_id = $1 AND type = 'IMPORT_NOTE'`, [t1.id]);
-  assert.deepEqual(notes, [{ subject: 'Notes from TeleCRM', body: 'Agri retailer, seeds and pesticide. Will discuss with partner.' }]);
+  assert.deepEqual(notes, [{ subject: 'Notes from TeleCRM', body: 'Sells fertiliser; wants a price for the clinic.' }]);
 
   const t2 = await lead(`external_id = 'T-2'`);
   assert.equal(t2.category, 'UNCLASSIFIED');
@@ -187,8 +187,8 @@ test('T1: a TeleCRM export is read with its preset, keeps every record and statu
     return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second}`;
   };
   const later = csv([HEADER,
-    telecrm({ 'Lead id': 'T-1', Status: 'Lost', 'Lost Reason': 'Budget Issues', 'Mobile Number': '918005548643', 'Created On': '30/10/2026 11:50:36', 'Modified On': stamp(30) }),
-    telecrm({ 'Lead id': 'T-2', Status: 'Interested', 'Full Name': 'Trazo', 'Mobile Number': '919426366907', 'First Call Descripton': 'Called back, wants a kit',
+    telecrm({ 'Lead id': 'T-1', Status: 'Lost', 'Lost Reason': 'Budget Issues', 'Mobile Number': '919990001001', 'Created On': '30/10/2026 11:50:36', 'Modified On': stamp(30) }),
+    telecrm({ 'Lead id': 'T-2', Status: 'Interested', 'Full Name': 'Tarun', 'Mobile Number': '919990001002', 'First Call Descripton': 'Called back, wants a kit',
       'Created On': '29/10/2026 11:08:11', 'Modified On': stamp(20) }),
     telecrm({ 'Lead id': 'T-7', Status: 'Fresh', 'Mobile Number': '919800000007', 'Created On': stamp(10), 'Modified On': stamp(10) }),
   ]);
@@ -201,7 +201,7 @@ test('T1: a TeleCRM export is read with its preset, keeps every record and statu
   assert.equal(after1.status, 'QUALIFIED', 'the status Isha set here is kept');
   assert.equal(after1.call_status_id, await status('hot'));
   const after2 = await lead('id = $1', [t2.id]);
-  assert.deepEqual([after2.call_status_id, after2.status, after2.contact_name], [await status('interested'), 'QUALIFYING', 'Trazo'], 'what only TeleCRM changed is brought up to date');
+  assert.deepEqual([after2.call_status_id, after2.status, after2.contact_name], [await status('interested'), 'QUALIFYING', 'Tarun'], 'what only TeleCRM changed is brought up to date');
   const { rows: n2 } = await query(`SELECT body FROM crm_lead_activities WHERE lead_id = $1 AND type = 'IMPORT_NOTE' AND body IS NOT NULL`, [t2.id]);
   assert.deepEqual(n2.map((n) => n.body), ['Called back, wants a kit']);
   const rows2 = ok(await call('GET', `/sales/imports/${up2.job.id}`, { token: tokens.manager })).rows;
