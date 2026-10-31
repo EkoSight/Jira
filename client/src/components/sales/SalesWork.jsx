@@ -4,9 +4,11 @@ import { api, downloadFile, postDownload } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
 import {
-  CATEGORY, ELIGIBLE, EXCLUDED, FOLLOWUP_KIND, PRIORITY, dayOf, money, when,
+  CATEGORY, CHOOSABLE, ELIGIBLE, FOLLOWUP_KIND, PRIORITY, dayOf, editableFields, fieldValueLabel, handedOut, money, when,
 } from '../../lib/sales.js';
-import { CategoryBadge, DestinationBadge, FollowUpActions, LeadStatusBadge, LogCallDialog } from './parts.jsx';
+import {
+  CallStatusBadge, CategoryBadge, DestinationBadge, FollowUpActions, LeadFieldInputs, LeadStatusBadge, LogCallDialog, Stars,
+} from './parts.jsx';
 
 // ---------------------------------------------------------------- my day
 
@@ -130,8 +132,11 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
   const [more, setMore] = useState(false);
   const [dupes, setDupes] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [custom, setCustom] = useState({});
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
-  const excluded = EXCLUDED.includes(form.category);
+  const excluded = handedOut(meta, form.category);
+  const business = ELIGIBLE.includes(form.category);
+  const fields = editableFields(meta);
 
   // possible duplicates, with why, as the person types
   useEffect(() => {
@@ -146,9 +151,11 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
     try {
       const body = Object.fromEntries(Object.entries(form).filter(([, v]) => v !== '' && v !== null));
       for (const k of ['source_id', 'campaign_id', 'owner_user_id']) if (body[k]) body[k] = Number(body[k]);
+      const answers = Object.fromEntries(Object.entries(custom).filter(([, v]) => v !== '' && v !== null && !(Array.isArray(v) && !v.length)));
+      if (Object.keys(answers).length) body.custom_fields = answers;
       if (body.budget_amount) body.budget_amount = Number(body.budget_amount);
       const r = await api.sales.post('/leads', body);
-      toast.success(r.lead.destination === 'TASKFLOW' ? `${r.lead.ref} added${r.lead.owner_name ? ` for ${r.lead.owner_name}` : ''}`
+      toast.success(r.lead.destination === 'TASKFLOW' ? `${r.lead.ref} added${r.lead.owner_name ? ` for ${r.lead.owner_name}` : ''}${r.lead.category === 'UNCLASSIFIED' ? ' — ask who they are on the call' : ''}`
         : r.lead.destination === 'TELECRM' ? `${r.lead.ref} queued for TeleCRM` : `${r.lead.ref} is waiting for classification`);
       onSaved(r.lead);
       onClose();
@@ -165,19 +172,25 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
       <div className="stack">
         <Field label="Who is it? *">
           <div className="row wrap" role="radiogroup" style={{ gap: 6 }}>
-            {[...ELIGIBLE, ...EXCLUDED].map((k) => (
-              <button key={k} type="button" role="radio" aria-checked={form.category === k} className={`kind-chip${form.category === k ? ' is-active' : ''}`} onClick={() => set({ category: k })}>{CATEGORY[k].label}</button>
+            {[...CHOOSABLE, ...(meta.tele_sales_here ? ['UNCLASSIFIED'] : [])].map((k) => (
+              <button key={k} type="button" role="radio" aria-checked={form.category === k} className={`kind-chip${form.category === k ? ' is-active' : ''}`} onClick={() => set({ category: k })}>
+                {k === 'UNCLASSIFIED' ? 'Not known yet' : CATEGORY[k].label}{handedOut(meta, k) ? ' (TeleCRM)' : ''}
+              </button>
             ))}
           </div>
         </Field>
-        {excluded && <div className="mkt-callout is-warning small">{CATEGORY[form.category].label} enquiries are handled in TeleCRM. This is kept and queued for the TeleCRM hand-off; it does not enter Taskflow’s pipeline. A person who works at a company is a B2B contact, not an individual.</div>}
+        {excluded && <div className="mkt-callout is-warning small">{CATEGORY[form.category].label} enquiries are still handed to TeleCRM (Settings → Visibility, routing & calendar). This is kept and queued for the hand-off; it does not enter TaskFlow’s pipeline.</div>}
+        {form.category === 'UNCLASSIFIED' && <div className="mkt-callout small">Saved to whoever takes it; ask on the call who they are. A person who works at a company is a B2B contact, not an individual.</div>}
         <div className="grid-2">
-          <Field label={form.category === 'INDIVIDUAL' ? 'Organization (if any)' : 'Organization *'}><input className="input" autoFocus value={form.organization_name} onChange={(e) => set({ organization_name: e.target.value })} placeholder="Coromandel Agro Inputs" /></Field>
+          <Field label={business ? 'Organization *' : form.category === 'RETAILER' ? 'Shop name' : form.category === 'FPO' ? 'FPO name' : 'Organization (if any)'}>
+            <input className="input" autoFocus value={form.organization_name} onChange={(e) => set({ organization_name: e.target.value })} placeholder={business ? 'Coromandel Agro Inputs' : form.category === 'RETAILER' ? 'Krishna Agro Kendra' : ''} />
+          </Field>
           <Field label="Contact person"><input className="input" value={form.contact_name} onChange={(e) => set({ contact_name: e.target.value })} placeholder="Priya Nair" /></Field>
           <Field label="Phone"><input className="input" type="tel" inputMode="tel" value={form.phone} onChange={(e) => set({ phone: e.target.value })} placeholder="98765 43210" /></Field>
           <Field label="Email"><input className="input" type="email" value={form.email} onChange={(e) => set({ email: e.target.value })} /></Field>
         </div>
-        <Field label="What do they need?"><textarea className="textarea" rows={2} value={form.requirement} onChange={(e) => set({ requirement: e.target.value })} placeholder="Soil testing for 400 dealers before kharif" /></Field>
+        <Field label="What do they need?"><textarea className="textarea" rows={2} value={form.requirement} onChange={(e) => set({ requirement: e.target.value })} placeholder={business ? 'Soil testing for 400 dealers before kharif' : 'A Soil Doctor kit for the shop'} /></Field>
+        {!business && fields.length > 0 && <LeadFieldInputs fields={fields} values={custom} onChange={setCustom} />}
         <div className="grid-2">
           <Field label="Source" hint="Where the enquiry came from (not how it was typed in)">
             <select className="select" value={form.source_id} onChange={(e) => set({ source_id: e.target.value })}>
@@ -218,6 +231,7 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
             </Field>
           </div>
         )}
+        {more && business && fields.length > 0 && <LeadFieldInputs fields={fields} values={custom} onChange={setCustom} />}
         {hits.length > 0 && (
           <div className="mkt-callout small">
             <strong>Possible duplicates</strong> — check before adding; nothing is merged automatically.
@@ -236,8 +250,8 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
 // ---------------------------------------------------------------- the lead list
 
 const VIEW_LABEL = {
-  open: 'Open', mine: 'Mine', team: 'Team', unassigned: 'Unassigned', new: 'New', overdue: 'Overdue', stale: 'Stale',
-  nurture: 'Nurture', converted: 'Converted', disqualified: 'Disqualified', all: 'All', needs_classification: 'Needs classification',
+  open: 'Open', mine: 'Mine', team: 'Team', unassigned: 'Unassigned', new: 'New', overdue: 'Overdue', stale: 'Stale', retry: 'Retry due',
+  nurture: 'Nurture', won: 'Won', converted: 'Converted', disqualified: 'Lost', all: 'All', needs_classification: 'Who is it?',
   telecrm: 'TeleCRM queue', archived: 'Archived',
 };
 
@@ -247,7 +261,11 @@ export function Leads({ meta }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const view = params.get('view') || 'open';
-  const [filters, setFilters] = useState({ q: '', category: '', status: '', owner_id: '', source_id: '', sort: 'newest' });
+  // a report can open the list already narrowed to one calling status
+  const [filters, setFilters] = useState({ q: '', category: '', status: '', owner_id: '', source_id: '', call_status_id: params.get('call_status_id') || '', state: '', sort: 'newest' });
+  // the lead's own questions that can narrow the list, and the ones worth a glance in each row
+  const choiceFields = (meta.lead_fields || []).filter((f) => f.is_active && f.filterable && f.type.includes('SELECT'));
+  const rowFields = (meta.lead_fields || []).filter((f) => f.is_active && f.show_in_list);
   const [data, setData] = useState(null);
   const [counts, setCounts] = useState({});
   const [page, setPage] = useState(1);
@@ -265,12 +283,21 @@ export function Leads({ meta }) {
   useEffect(() => { const t = setTimeout(load, filters.q ? 300 : 0); return () => clearTimeout(t); }, [load, filters.q]);
   useEffect(() => { api.sales.get('/views', { area: 'leads' }).then((r) => setSavedViews(r.views)).catch(() => {}); }, []);
 
-  const views = ['open', 'mine', ...(can('crm.view.team') ? ['team'] : []), 'unassigned', 'new', 'overdue', 'stale', 'nurture', 'converted', 'disqualified',
-    ...(routing ? ['needs_classification', 'telecrm'] : []), 'all', 'archived'];
+  const views = ['open', 'mine', ...(can('crm.view.team') ? ['team'] : []), 'unassigned', 'new', 'overdue', 'retry', 'stale', 'nurture', 'won', 'converted', 'disqualified',
+    ...(routing ? ['needs_classification'] : []), ...(routing && (!meta.tele_sales_here || counts.telecrm_pending) ? ['telecrm'] : []), 'all', 'archived'];
   const setView = (v) => { setPage(1); setParams({ tab: 'leads', view: v }, { replace: true }); };
   const toggle = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const runBulk = async (action, value, reason) => {
+    if (action === 'call_status') {
+      try {
+        const r = await api.sales.post('/leads/bulk-call-status', { ids: [...selected], status_id: Number(value), lost_reason: reason || null });
+        toast.success(`${r.changed} changed${r.skipped.length ? `, ${r.skipped.length} not changed (${r.skipped[0].why})` : ''}`);
+        setBulk(null);
+        load();
+      } catch (err) { toast.error(err); }
+      return;
+    }
     try {
       const r = await api.sales.post('/leads/bulk', { ids: [...selected], action, value, reason });
       toast.success(`${r.done.length} changed${r.refused.length ? `, ${r.refused.length} refused (${r.refused[0].error})` : ''}`);
@@ -314,9 +341,19 @@ export function Leads({ meta }) {
         <select className="select" aria-label="Source" value={filters.source_id} onChange={(e) => setFilters({ ...filters, source_id: e.target.value })}>
           <option value="">Any source</option>{meta.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
+        <select className="select" aria-label="Calling status" value={filters.call_status_id} onChange={(e) => { setPage(1); setFilters({ ...filters, call_status_id: e.target.value }); }}>
+          <option value="">Any calling status</option><option value="none">No status yet</option>
+          {(meta.call_statuses || []).map((s) => <option key={s.id} value={s.id}>{s.label}{s.is_active ? '' : ' (retired)'}</option>)}
+        </select>
+        {choiceFields.map((f) => (
+          <select key={f.key} className="select" aria-label={f.label} value={filters[`cf_${f.key}`] || ''} onChange={(e) => { setPage(1); setFilters({ ...filters, [`cf_${f.key}`]: e.target.value }); }}>
+            <option value="">{f.label}: any</option>{f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        ))}
+        <input className="input" style={{ maxWidth: 140 }} placeholder="State" aria-label="State" value={filters.state} onChange={(e) => { setPage(1); setFilters({ ...filters, state: e.target.value }); }} />
         <select className="select" aria-label="Sort" value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value })}>
-          <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="score">Highest score</option>
-          <option value="follow_up">Next follow-up</option><option value="activity">Recent activity</option><option value="organization">Organization A–Z</option>
+          <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="score">Highest score</option><option value="rating">Highest rating</option>
+          <option value="follow_up">Next follow-up</option><option value="retry">Next retry</option><option value="activity">Recent activity</option><option value="organization">Organization A–Z</option>
         </select>
         {savedViews.length > 0 && (
           <select className="select" aria-label="Saved views" value="" onChange={(e) => { const v = savedViews.find((x) => String(x.id) === e.target.value); if (v) { const { view: vv, ...f } = v.filters; setFilters({ ...filters, ...f }); if (vv) setView(vv); } }}>
@@ -326,11 +363,12 @@ export function Leads({ meta }) {
         <button type="button" className="btn btn-sm btn-ghost" onClick={saveView}>Save this view</button>
       </div>
       {view === 'telecrm' && routing && <TeleCrmQueue onChanged={load} />}
-      {view === 'needs_classification' && routing && <div className="mkt-callout small">These arrived without a category we could trust. Open one to classify it: B2B or CSR/NGO enters Taskflow (and is assigned), retailer, FPO and individual go to the TeleCRM queue. Nothing here is lost or deleted.</div>}
+      {view === 'needs_classification' && routing && <div className="mkt-callout small">These arrived without a category anyone could trust. {meta.tele_sales_here ? 'Their owners work them and say who they are on the call; you can classify them here too.' : 'Open one to classify it: B2B or CSR/NGO enters TaskFlow (and is assigned); retailer, FPO and individual go to the TeleCRM queue.'} Nothing here is lost or deleted.</div>}
       {selected.size > 0 && (
         <div className="row wrap sales-bulk" role="region" aria-label="Bulk actions">
           <strong className="small">{selected.size} selected</strong>
           {can('crm.assign') && <button type="button" className="btn btn-sm" onClick={() => setBulk('assign')}>Assign…</button>}
+          {can('crm.assign') && <button type="button" className="btn btn-sm" onClick={() => setBulk('call_status')}>Calling status…</button>}
           <button type="button" className="btn btn-sm" onClick={() => setBulk('priority')}>Priority…</button>
           <button type="button" className="btn btn-sm" onClick={() => setBulk('tag')}>Tag…</button>
           {routing && <button type="button" className="btn btn-sm" onClick={() => setBulk('category')}>Category…</button>}
@@ -354,11 +392,16 @@ export function Leads({ meta }) {
                 <tr key={l.id} className={l.overdue_followups ? 'is-late' : ''}>
                   <td><input type="checkbox" aria-label={`Select ${l.ref}`} checked={selected.has(l.id)} onChange={() => toggle(l.id)} /></td>
                   <td className="sales-lead-cell">
-                    <Link to={`/sales/leads/${l.id}`} style={{ fontWeight: 600 }}>{l.organization_name || l.contact_name || l.ref}</Link>
-                    <div className="small muted">{l.ref}{l.contact_name && l.organization_name ? ` · ${l.contact_name}` : ''}</div>
+                    <Link to={`/sales/leads/${l.id}`} style={{ fontWeight: 600 }}>{l.display_name}</Link> <Stars value={l.rating} />
+                    <div className="small muted">{l.ref}{l.contact_name && l.organization_name ? ` · ${l.contact_name}` : ''}{l.phone && l.display_name !== l.phone ? ` · ${l.phone}` : ''}{l.state ? ` · ${l.state}` : ''}</div>
+                    {rowFields.some((f) => l.custom_fields?.[f.key]) && <div className="small muted truncate">{rowFields.map((f) => fieldValueLabel(f, l.custom_fields?.[f.key])).filter(Boolean).join(' · ')}</div>}
                   </td>
                   <td><CategoryBadge category={l.category} />{l.destination !== 'TASKFLOW' && <> <DestinationBadge destination={l.destination} /></>}</td>
-                  <td><LeadStatusBadge status={l.status} />{l.is_stale && <> <Badge tone="warning">stale</Badge></>}</td>
+                  <td>
+                    {l.call_status_label ? <CallStatusBadge lead={l} /> : <LeadStatusBadge status={l.status} />}
+                    {l.is_stale && <> <Badge tone="warning">stale</Badge></>}
+                    {l.retry_at && <div className="small muted">retry {when(l.retry_at)}{l.call_attempts ? ` · ${l.call_attempts} tr${l.call_attempts === 1 ? 'y' : 'ies'}` : ''}</div>}
+                  </td>
                   <td>{l.owner_name || <span className="muted">Nobody</span>}</td>
                   <td className="tnum">{l.effective_score ?? '—'}</td>
                   <td>{l.next_followup_due ? <span className={new Date(l.next_followup_due) < new Date() ? 'critical-text' : ''}>{when(l.next_followup_due)}</span> : <span className="muted">none</span>}</td>
@@ -372,10 +415,10 @@ export function Leads({ meta }) {
             {data.leads.map((l) => (
               <button key={l.id} type="button" className="link-row sales-card" onClick={() => navigate(`/sales/leads/${l.id}`)}>
                 <div className="grow stack-xs" style={{ minWidth: 0 }}>
-                  <div className="row" style={{ gap: 6 }}><CategoryBadge category={l.category} /><span className="truncate" style={{ fontWeight: 600 }}>{l.organization_name || l.contact_name}</span></div>
-                  <div className="small muted">{l.ref} · {l.owner_name || 'unassigned'} · {l.next_followup_due ? `next ${when(l.next_followup_due)}` : 'no follow-up'}</div>
+                  <div className="row" style={{ gap: 6 }}><CategoryBadge category={l.category} /><span className="truncate" style={{ fontWeight: 600 }}>{l.display_name}</span></div>
+                  <div className="small muted">{l.ref} · {l.owner_name || 'unassigned'} · {l.next_followup_due ? `next ${when(l.next_followup_due)}` : l.retry_at ? `retry ${when(l.retry_at)}` : 'no follow-up'}</div>
                 </div>
-                <LeadStatusBadge status={l.status} />
+                {l.call_status_label ? <CallStatusBadge lead={l} /> : <LeadStatusBadge status={l.status} />}
               </button>
             ))}
           </div>
@@ -398,14 +441,17 @@ export function Leads({ meta }) {
 function BulkDialog({ kind, meta, count, onClose, onRun }) {
   const [value, setValue] = useState('');
   const [reason, setReason] = useState('');
-  const needsReason = ['assign', 'category', 'archive'].includes(kind);
+  const status = kind === 'call_status' ? (meta.call_statuses || []).find((s) => String(s.id) === String(value)) : null;
+  const needsReason = ['assign', 'category', 'archive'].includes(kind) || Boolean(status?.needs_reason);
   return (
-    <Modal title={`${{ assign: 'Assign', priority: 'Set priority of', tag: 'Tag', category: 'Reclassify', archive: 'Archive' }[kind]} ${count} lead${count === 1 ? '' : 's'}`} onClose={onClose}
+    <Modal title={`${{ assign: 'Assign', priority: 'Set priority of', tag: 'Tag', category: 'Reclassify', archive: 'Archive', call_status: 'Set the calling status of' }[kind]} ${count} lead${count === 1 ? '' : 's'}`} onClose={onClose}
       footer={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={(kind !== 'archive' && !value) || (needsReason && reason.trim().length < 3)} onClick={() => onRun(kind, kind === 'assign' ? Number(value) : value, reason)}>Apply</button></>}>
       <div className="stack">
         {kind === 'assign' && <select className="select" value={value} onChange={(e) => setValue(e.target.value)}><option value="">Choose…</option>{meta.users.filter((u) => u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}</select>}
         {kind === 'priority' && <select className="select" value={value} onChange={(e) => setValue(e.target.value)}><option value="">Choose…</option>{Object.entries(PRIORITY).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>}
         {kind === 'tag' && <input className="input" value={value} onChange={(e) => setValue(e.target.value)} placeholder="kharif-2026" />}
+        {kind === 'call_status' && <select className="select" value={value} onChange={(e) => setValue(e.target.value)}><option value="">Choose…</option>{(meta.call_statuses || []).filter((s) => s.is_active).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select>}
+        {kind === 'call_status' && <div className="small muted">Only the status changes: no call is recorded and no attempt is counted.</div>}
         {kind === 'category' && <select className="select" value={value} onChange={(e) => setValue(e.target.value)}><option value="">Choose…</option>{Object.entries(CATEGORY).filter(([k]) => k !== 'UNCLASSIFIED').map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}</select>}
         {needsReason && <Field label="Why (kept on each lead's history) *"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} /></Field>}
         <div className="small muted">Each lead is checked on its own; any you may not change are listed as refused.</div>

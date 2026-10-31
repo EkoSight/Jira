@@ -5,9 +5,9 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Field, Modal } from './ui.jsx';
 import { NextActionFields, nextActionBody, nextActionDraft, nextActionProblem } from './DealParts.jsx';
 import { INDIAN_STATES } from '../lib/crm.js';
-import { CATEGORY, ELIGIBLE, EXCLUDED } from '../lib/sales.js';
+import { CATEGORY, ELIGIBLE, EXCLUDED, handedOut, useSalesMeta } from '../lib/sales.js';
 
-const PIPELINE_KEY = { B2B_CORPORATE: 'b2b', CSR_NGO: 'csr' };
+const PIPELINE_KEY = { B2B_CORPORATE: 'b2b', CSR_NGO: 'csr', RETAILER: 'retail', FPO: 'retail', INDIVIDUAL: 'retail' };
 
 /**
  * Adding or editing a lead. A lead often starts as little more than a company
@@ -35,6 +35,7 @@ export default function AccountDialog({ account, stages: given = [], onClose, on
     }).catch(() => {});
   }, [account]);
   const { user } = useAuth();
+  const { meta } = useSalesMeta();
   const { departments, users } = useRefData();
   const toast = useToast();
   const navigate = useNavigate();
@@ -149,10 +150,10 @@ export default function AccountDialog({ account, stages: given = [], onClose, on
     >
       <div className="stack" style={{ gap: 14 }}>
         <Field label="What kind of organization is this? *"
-          hint={EXCLUDED.includes(form.lead_category)
-            ? `${CATEGORY[form.lead_category].label} enquiries are handled in TeleCRM. Saving sends this to the TeleCRM queue instead of the pipeline.`
+          hint={handedOut(meta, form.lead_category)
+            ? `${CATEGORY[form.lead_category].label} enquiries still go to TeleCRM. Saving sends this to the TeleCRM queue instead of the pipeline.`
             : editing && !account?.lead_category ? 'An existing organization: confirming its category keeps it in the right pipeline and reports.'
-              : 'B2B corporate and CSR/NGO organizations are worked in Taskflow.'}>
+              : EXCLUDED.includes(form.lead_category) ? 'Worked in the Retail, FPO & farmers pipeline.' : 'Worked in its own pipeline: B2B corporate or CSR / NGO.'}>
           <select className="select" value={form.lead_category} onChange={(e) => {
             const category = e.target.value;
             const first = stages.find((x) => x.kind === 'open' && x.pipeline_key === (PIPELINE_KEY[category] || 'b2b'));
@@ -160,7 +161,7 @@ export default function AccountDialog({ account, stages: given = [], onClose, on
           }}>
             {editing && !account?.lead_category && <option value="">Not confirmed yet</option>}
             {ELIGIBLE.map((k) => <option key={k} value={k}>{CATEGORY[k].label}</option>)}
-            <optgroup label="Handled in TeleCRM">
+            <optgroup label={EXCLUDED.some((k) => handedOut(meta, k)) ? 'Handed to TeleCRM' : 'Retail, FPO & farmers'}>
               {EXCLUDED.map((k) => <option key={k} value={k}>{CATEGORY[k].label}</option>)}
             </optgroup>
           </select>
@@ -214,7 +215,7 @@ export default function AccountDialog({ account, stages: given = [], onClose, on
           </Field>
         </div>
 
-        {!editing && !EXCLUDED.includes(form.lead_category) && (
+        {!editing && !handedOut(meta, form.lead_category) && (
           <Field label="Starting stage">
             <select className="select" value={form.stage_id} onChange={(e) => set({ stage_id: e.target.value })}>
               {stages.filter((x) => !x.retired_at && x.kind === 'open' && (!x.pipeline_key || x.pipeline_key === (PIPELINE_KEY[form.lead_category] || 'b2b'))).map((x) => (

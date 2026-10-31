@@ -4,10 +4,12 @@ import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import {
-  CallButtons, CategoryBadge, DestinationBadge, FollowUpActions, FollowUpDialog, LeadStatusBadge, LogCallDialog, WhatsAppPanel,
+  CallButtons, CallStatusBadge, CategoryBadge, DestinationBadge, FollowUpActions, FollowUpDialog, LeadFieldInputs, LeadStatusBadge, LogCallDialog,
+  Stars, WhatsAppPanel,
 } from '../components/sales/parts.jsx';
+import { CallStatusForm } from '../components/sales/Calling.jsx';
 import {
-  CATEGORY, ELIGIBLE, EXCLUDED, FOLLOWUP_KIND, LEAD_STATUS, PRIORITY, ROUTING_STATUS, dayOf, money, useSalesMeta, when,
+  CATEGORY, CHOOSABLE, FOLLOWUP_KIND, LEAD_STATUS, PRIORITY, ROUTING_STATUS, dayOf, editableFields, fieldValueLabel, handedOut, money, phoneLabel, useSalesMeta, when,
 } from '../lib/sales.js';
 
 const EDITABLE = [
@@ -15,8 +17,10 @@ const EDITABLE = [
   ['phone', 'Phone'], ['website', 'Website'], ['city', 'City'], ['state', 'State'], ['requirement', 'Requirement'],
 ];
 
-function EditLead({ lead, onClose, onSaved }) {
+function EditLead({ lead, meta, onClose, onSaved }) {
   const toast = useToast();
+  const fields = editableFields(meta);
+  const [custom, setCustom] = useState(() => ({ ...(lead.custom_fields || {}) }));
   const [form, setForm] = useState(() => Object.fromEntries([...EDITABLE.map(([k]) => [k, lead[k] || '']), ['priority', lead.priority],
     ['budget_amount', lead.budget_amount ?? ''], ['fit', lead.fit || ''], ['need_clarity', lead.need_clarity || ''], ['timeline', lead.timeline || ''],
     ['budget_confirmed', lead.budget_confirmed ?? ''], ['decision_maker_engaged', lead.decision_maker_engaged ?? '']]));
@@ -27,6 +31,9 @@ function EditLead({ lead, onClose, onSaved }) {
       if (String(v) === String(before)) continue;
       body[k] = v === '' ? null : ['budget_confirmed', 'decision_maker_engaged'].includes(k) ? v === 'true' : k === 'budget_amount' ? Number(v) : v;
     }
+    const changedFields = Object.fromEntries(fields.map((f) => f.key).filter((k) => JSON.stringify(custom[k] ?? null) !== JSON.stringify(lead.custom_fields?.[k] ?? null))
+      .map((k) => [k, custom[k] === '' || (Array.isArray(custom[k]) && !custom[k].length) ? null : custom[k]]));
+    if (Object.keys(changedFields).length) body.custom_fields = changedFields;
     if (!Object.keys(body).length) return onClose();
     try { await api.sales.patch(`/leads/${lead.id}`, body); toast.success('Saved'); onSaved(); onClose(); } catch (err) { toast.error(err); }
     return undefined;
@@ -39,6 +46,7 @@ function EditLead({ lead, onClose, onSaved }) {
     <Modal title={`Edit ${lead.ref}`} size="lg" onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" onClick={save}>Save</button></>}>
       <div className="stack">
         <div className="grid-2">{EDITABLE.map(([k, label]) => <Field key={k} label={label}><input className="input" value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}</div>
+        {fields.length > 0 && <><h3 className="small">Their answers</h3><LeadFieldInputs fields={fields} values={custom} onChange={setCustom} /></>}
         <h3 className="small">Qualification (feeds the score)</h3>
         <div className="grid-2">
           <Field label="Fit"><select className="select" value={form.fit} onChange={(e) => setForm({ ...form, fit: e.target.value })}><option value="">Not known</option><option value="STRONG">Strong</option><option value="PARTIAL">Partial</option><option value="WEAK">Weak</option></select></Field>
@@ -154,8 +162,11 @@ export default function SalesLead() {
   };
   const route = async (category) => {
     const reason = window.prompt(`Classify as ${CATEGORY[category].label}. Why?`) || '';
-    try { await api.sales.post(`/routing/leads/${lead.id}/route`, { category, reason }); toast.success(ELIGIBLE.includes(category) ? 'Now in Taskflow’s pipeline' : 'Queued for TeleCRM'); load(); } catch (err) { toast.error(err); }
+    try { await api.sales.post(`/routing/leads/${lead.id}/route`, { category, reason }); toast.success(handedOut(meta, category) ? 'Queued for TeleCRM' : 'Now worked in TaskFlow'); load(); } catch (err) { toast.error(err); }
   };
+  // the owner says who an unknown lead is, from what they heard on the call
+  const settle = (category) => update({ category, reason: 'Said on the call' }, `Now ${CATEGORY[category].label}`);
+  const canCall = inTaskflow && lead.status !== 'CONVERTED' && !lead.is_archived && !lead.merged_into_id && (data.can.edit || !lead.owner_user_id);
   const nextOpen = data.followups.filter((f) => !f.completed_at && !f.crm_cancel_reason);
   const score = data.score;
 
@@ -164,9 +175,10 @@ export default function SalesLead() {
       <div className="row-between wrap">
         <div className="stack-xs">
           <div className="small"><Link to="/sales?tab=leads" className="btn-link">Leads</Link> / {lead.ref}</div>
-          <h1 className="row wrap" style={{ gap: 8 }}>{lead.organization_name || lead.contact_name || lead.ref}</h1>
+          <h1 className="row wrap" style={{ gap: 8 }}>{lead.display_name}</h1>
           <div className="row wrap" style={{ gap: 6 }}>
-            <CategoryBadge category={lead.category} /><LeadStatusBadge status={lead.status} /><DestinationBadge destination={lead.destination} />
+            <CategoryBadge category={lead.category} /><CallStatusBadge lead={lead} /><LeadStatusBadge status={lead.status} />
+            {!inTaskflow && <DestinationBadge destination={lead.destination} />}<Stars value={lead.rating} />
             <Badge>{PRIORITY[lead.priority]}</Badge>
             {lead.is_archived && <Badge tone="critical">Archived{lead.archive_reason ? `: ${lead.archive_reason}` : ''}</Badge>}
             {lead.merged_into_id && <Link to={`/sales/leads/${lead.merged_into_id}`}><Badge tone="warning">Merged into another lead</Badge></Link>}
@@ -188,7 +200,17 @@ export default function SalesLead() {
           {data.can.route && (
             <div className="row wrap" style={{ gap: 4 }}>
               <span>Classify as:</span>
-              {[...ELIGIBLE, ...EXCLUDED].filter((c) => c !== lead.category).map((c) => <button key={c} type="button" className="btn btn-sm" onClick={() => route(c)}>{CATEGORY[c].label}</button>)}
+              {CHOOSABLE.filter((c) => c !== lead.category).map((c) => <button key={c} type="button" className="btn btn-sm" onClick={() => route(c)}>{CATEGORY[c].label}</button>)}
+            </div>
+          )}
+        </div>
+      )}
+      {inTaskflow && lead.category === 'UNCLASSIFIED' && (
+        <div className="mkt-callout is-warning small stack-sm">
+          <div><strong>Who is it?</strong> Not known yet. Ask on the call; until then it is not in the pipeline, scoring or the sales totals.</div>
+          {(data.can.edit || data.can.route) && (
+            <div className="row wrap" style={{ gap: 4 }}>
+              {CHOOSABLE.map((c) => <button key={c} type="button" className="btn btn-sm" onClick={() => settle(c)}>{CATEGORY[c].label}</button>)}
             </div>
           )}
         </div>
@@ -225,6 +247,22 @@ export default function SalesLead() {
         </div>
       </div>
 
+      {canCall && (
+        <section className="card">
+          <div className="card-head">
+            <h3>How did the call go?</h3>
+            <span className="small muted">
+              {lead.call_attempts ? `${lead.call_attempts} call${lead.call_attempts === 1 ? '' : 's'}` : 'Not called yet'}
+              {lead.last_called_at ? ` · last ${when(lead.last_called_at)}` : ''}{lead.retry_at ? ` · tries again ${when(lead.retry_at)}` : ''}
+            </span>
+          </div>
+          <div className="card-pad stack-sm">
+            {lead.phone && <a className="btn btn-sm call-dial-inline" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}><Icon name="phone" size={13} /> Call {phoneLabel(lead.phone)}</a>}
+            <CallStatusForm lead={lead} meta={meta} onDone={load} />
+          </div>
+        </section>
+      )}
+
       {inTaskflow && (
         <div className="row wrap" style={{ gap: 6 }}>
           <CallButtons phone={lead.phone} target={target} onLog={() => setDialog('call')} />
@@ -232,7 +270,7 @@ export default function SalesLead() {
           <button type="button" className="btn btn-sm" onClick={() => setDialog('note')}><Icon name="note" size={13} /> Note</button>
           {data.can.edit && lead.status !== 'CONVERTED' && (
             <select className="select" style={{ width: 'auto' }} aria-label="Status" value="" onChange={(e) => e.target.value && setStatus(e.target.value)}>
-              <option value="">Set status…</option>{['CONTACTED', 'QUALIFYING', 'QUALIFIED', 'NURTURE', 'DISQUALIFIED'].filter((s) => s !== lead.status).map((s) => <option key={s} value={s}>{LEAD_STATUS[s].label}</option>)}
+              <option value="">Set stage…</option>{['CONTACTED', 'QUALIFYING', 'QUALIFIED', 'NURTURE', 'WON', 'DISQUALIFIED'].filter((s) => s !== lead.status).map((s) => <option key={s} value={s}>{LEAD_STATUS[s].label}</option>)}
             </select>
           )}
         </div>
@@ -283,7 +321,12 @@ export default function SalesLead() {
               ['Came in by', `${String(lead.entry_channel).toLowerCase().replace('_', ' ')}${lead.source_system ? ` (${lead.source_system})` : ''}`],
               ['External id', lead.external_id], ['Captured', when(lead.captured_at)], ['Organization', lead.account_name],
               ['Consent', lead.consent?.given ? `given ${dayOf(lead.consent.at)}${lead.consent.channel ? ` via ${lead.consent.channel.toLowerCase()}` : ''}` : null],
-            ].filter(([, v]) => v).map(([k, v]) => <div key={k} className="sales-dl-row"><dt>{k}</dt><dd>{k === 'Organization' ? <Link to={`/accounts/${lead.account_id}`}>{v}</Link> : v}</dd></div>)}
+              ['Lost because', lead.status === 'DISQUALIFIED' ? lead.disqualify_reason : null], ['Tags', (lead.tags || []).join(', ')],
+              ...(meta.lead_fields || []).map((f) => [f.label, fieldValueLabel(f, lead.custom_fields?.[f.key]), f]),
+            ].filter(([, v]) => v).map(([k, v, f]) => (
+              <div key={k} className="sales-dl-row"><dt>{k}</dt><dd>{k === 'Organization' ? <Link to={`/accounts/${lead.account_id}`}>{v}</Link>
+                : f?.type === 'URL' ? <a href={v} target="_blank" rel="noreferrer noopener">{f.key === 'telecrm_link' ? 'Open in TeleCRM' : v}</a> : v}</dd></div>
+            ))}
           </dl>
         </div>
       )}
@@ -333,7 +376,7 @@ export default function SalesLead() {
         </div>
       )}
 
-      {dialog === 'edit' && <EditLead lead={lead} onClose={() => setDialog(null)} onSaved={load} />}
+      {dialog === 'edit' && <EditLead lead={lead} meta={meta} onClose={() => setDialog(null)} onSaved={load} />}
       {dialog === 'convert' && <ConvertDialog lead={lead} onClose={() => setDialog(null)} />}
       {dialog === 'call' && <LogCallDialog target={target} phone={lead.phone} users={meta.users} onClose={() => setDialog(null)} onSaved={load} />}
       {dialog === 'followup' && <FollowUpDialog target={target} users={meta.users} onClose={() => setDialog(null)} onSaved={load} />}

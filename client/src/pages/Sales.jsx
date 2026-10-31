@@ -6,6 +6,7 @@ import { Leads, MyDay } from '../components/sales/SalesWork.jsx';
 import { Approvals, Calls, Reports } from '../components/sales/SalesInsight.jsx';
 import { Imports, SalesSettings } from '../components/sales/SalesAdmin.jsx';
 import SalesHelp from '../components/sales/SalesHelp.jsx';
+import { Calling } from '../components/sales/Calling.jsx';
 import { forgetSalesMeta, useSalesMeta } from '../lib/sales.js';
 
 /**
@@ -20,7 +21,7 @@ export default function Sales() {
   const [version, setVersion] = useState(0);
   const { meta, error } = useSalesMeta(version);
   const tabs = [
-    ['day', 'My Day'], ['leads', 'Leads'],
+    ['day', 'My Day'], ['calling', 'Calling'], ['leads', 'Leads'],
     ...(can('crm.approve') ? [['approvals', 'Approvals']] : []),
     ['calls', 'Calls'], ['reports', 'Reports'],
     ...(can('crm.import') ? [['imports', 'Imports']] : []),
@@ -39,13 +40,14 @@ export default function Sales() {
         <h1>Sales CRM</h1>
         <div className="row small" style={{ gap: 10 }}>
           <Link to="/pipeline" className="btn-link">Deals board</Link>
-          <span className="muted">B2B corporate and CSR / NGO · retailers, FPOs and individuals go to TeleCRM</span>
+          <span className="muted">{meta.tele_sales_here ? 'B2B corporate, CSR / NGO, retailers, FPOs and farmers' : 'B2B corporate and CSR / NGO · retailers, FPOs and individuals go to TeleCRM'}</span>
         </div>
       </div>
       <div className="tabs tabs-scroll" role="tablist" aria-label="Sales CRM">
         {tabs.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => goTo(k)}>{l}</button>)}
       </div>
       {tab === 'day' && <MyDay meta={meta} />}
+      {tab === 'calling' && <Calling meta={meta} />}
       {tab === 'leads' && <Leads meta={meta} />}
       {tab === 'approvals' && <Approvals />}
       {tab === 'calls' && <Calls />}

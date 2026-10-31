@@ -6,12 +6,23 @@ import { useMemo, useState } from 'react';
  */
 const TOPICS = [
   {
-    id: 'start', who: 'Everyone', title: 'What goes where: Taskflow or TeleCRM',
+    id: 'start', who: 'Everyone', title: 'Who is worked where',
     body: [
-      'Taskflow’s sales CRM works B2B corporate leads and CSR / NGO leads. Retailers, FPOs (farmer producer organizations) and individual farmers or consumers are handled in TeleCRM.',
-      'Every lead has a category. Choose it first when you add a lead. If you pick Retailer, FPO or Individual, TaskFlow keeps the lead and puts it in the TeleCRM queue; it never enters the pipeline, anyone’s lead pool or the sales totals.',
+      'Every lead has a category. B2B corporate and CSR / NGO leads are organizations and have their own pipelines. Retailers, FPOs (farmer producer organizations) and individual farmers or consumers are worked here too, in the Retail, FPO & farmers pipeline and the call list — TeleCRM’s subscription ends in January 2027, and everything it did is now in TaskFlow.',
+      'While TeleCRM is still in use, an administrator can keep sending retailers, FPOs and individuals there (Settings → Visibility, routing & calendar). When that is on, those leads go to the TeleCRM queue instead and are not worked here.',
       'An FPO stays an FPO even if it is a registered company. A person who works at a company is a business contact (B2B), not an “individual”.',
-      'A lead whose category is not known (a web form without it, an unknown caller) waits in “Needs classification” until someone with routing permission classifies it. Nothing is lost or deleted.',
+      'A lead whose category is not known (a web form without it, an unknown caller) is worked by whoever owns it and marked “Who is it?”. Ask on the call and choose the category on the lead, or answer “Associated with agriculture as” — that sets it. Nothing is lost or deleted.',
+    ],
+  },
+  {
+    id: 'calling', who: 'Caller', title: 'Calling: the call list, statuses and callbacks',
+    body: [
+      'Sales CRM → Calling shows one lead at a time: callbacks that are due first, then new leads nobody has called (newest first), then leads to try again. Tap Call — your phone dials; TaskFlow does not record the call.',
+      'Afterwards choose how it went. “Didn’t connect” (Ringing Not Responding, Busy) brings the lead back automatically later — after three hours or one hour — and stops after six tries so you can close it or book a callback. “Spoke to them” (Interested, Just Curious, Hot…) records the conversation. “Close the lead” is Won or Lost; Lost asks why.',
+      'If they asked to be called at a time, pick it under Call back (In an hour, This evening, Tomorrow morning…). That replaces the automatic retry and appears in My Day.',
+      'An interested lead that does not pick up stays interested: the status shows what happened this time, and nothing they told you earlier is undone.',
+      'Write what was said — crops, shop, what they want, objections — and give stars if they are a strong prospect. Save and next takes you to the next lead; Skip for now leaves one for later.',
+      'Calling statuses, lost reasons and the order of the list are in Settings → Calling statuses & lost reasons. They started as TeleCRM’s, with the same names.',
     ],
   },
   {
@@ -82,18 +93,27 @@ const TOPICS = [
     ],
   },
   {
-    id: 'routed', who: 'Worked example', title: 'A retailer routed to TeleCRM',
+    id: 'retailer', who: 'Worked example', title: 'A retailer who wants a Soil Doctor clinic',
     body: [
-      'Krishna Agro Store calls in. The agent adds a lead and chooses Retailer. TaskFlow says it is handled in TeleCRM and saves it to the TeleCRM queue — not the pipeline.',
-      'Someone with routing permission opens Leads → TeleCRM queue, presses Export (an Excel file), uploads it to TeleCRM, then confirms each lead (optionally with TeleCRM’s reference). Only that confirmation marks a lead as handed over.',
-      'If it turns out to be a distributor that should be a B2B customer, classify it as B2B corporate: it enters Taskflow and is assigned.',
+      '1. Krishan, an agri-input retailer in Rajasthan, fills the Instagram form: “Agri Retailer or Shop Owner”, “Soil Doctor Clinic Setup”. The lead comes in as a Retailer with those answers and goes to the caller by the assignment rules.',
+      '2. In Calling it is a new lead, so it is near the top. Isha taps Call; no answer. She chooses Ringing Not Responding; it comes back three hours later.',
+      '3. On the second call he answers: deals in seeds and pesticide, crops cotton and bajra, will discuss with his partner. Isha chooses Interested, writes that down, gives four stars and books Tomorrow morning.',
+      '4. Next day he is ready. Isha opens the lead and presses Convert to deal: a customer record for the shop and a deal in the Retail, FPO & farmers pipeline, where the quotation, payments and handover work as for any deal.',
+      '5. A small sale closed on the call — a kit paid for on UPI — can simply be marked Won on the lead. Convert it later if you want the payment recorded on a deal.',
+    ],
+  },
+  {
+    id: 'routed', who: 'While TeleCRM is still in use', title: 'Handing leads to TeleCRM, and bringing them back',
+    body: [
+      'Only while Settings says retailers, FPOs and individuals are worked in TeleCRM: those leads are saved to the TeleCRM queue, not the pipeline. Someone with routing permission exports the queue to Excel, uploads it to TeleCRM, and confirms each lead. Only that confirmation marks a lead as handed over.',
+      'On the day you stop using TeleCRM: switch the setting to TaskFlow, then press “Bring waiting TeleCRM and review leads into TaskFlow”. Each comes back by its category, unowned ones are assigned, and the hand-off records stay as history. Then import TeleCRM’s last export to bring over their statuses and notes.',
     ],
   },
   {
     id: 'imports', who: 'Everyone with import permission', title: 'Importing from Excel or CSV',
     body: [
-      'Sales CRM → Imports → download the template. Keep the header row. Format phone and ID columns as Text so leading zeros stay.',
-      'Upload, check the column matches, choose what to do with records that already exist, and press Check the rows. Every row gets a status with its reason: valid, problem, already there, or for TeleCRM.',
+      'Sales CRM → Imports → download the template, or upload an export from TeleCRM as it is. Keep the header row. Format phone and ID columns as Text so leading zeros stay.',
+      'Upload, check the column matches, choose what to do with records that already exist, and press Check the rows. Every row gets a status with its reason: valid, problem or already there. Dates may be day/month/year; misspelt Indian states are corrected; an invalid email is left out with a note rather than losing the lead.',
       'Download the corrections file, fix the rows with problems, and upload just those again.',
       'Import runs in the background. Undo archives the records it created that nobody has worked on since; anything worked on is kept and listed with why.',
     ],
@@ -107,6 +127,7 @@ const TOPICS = [
       'A message stuck at “Accepted, waiting for status” means Meta has it but has not reported back; check the webhook subscription. “Failed” shows Meta’s reason. Retry only resends messages Meta never accepted.',
       'Calls: manual logging always works. Exotel click-to-call needs EXOTEL_* variables and your phone number on your profile. Any other phone system can post signed events to the call webhook.',
       'Website forms and ad platforms: use the hosted form, or POST JSON to the capture API with a key from Settings → Website forms & API keys. Send an idempotency_key or external_id so retries do not duplicate.',
+      'TeleCRM: export the leads from TeleCRM (all columns) and upload the file in Sales CRM → Imports. TaskFlow recognises it and reads it as TeleCRM writes it. Import again later (for example the last export before the subscription ends): leads already brought over are updated by their TeleCRM id, never duplicated, and a status someone has changed in TaskFlow since is kept.',
     ],
   },
   {

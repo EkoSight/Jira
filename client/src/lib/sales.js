@@ -6,15 +6,21 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 
 export const CATEGORY = {
-  B2B_CORPORATE: { label: 'B2B corporate', short: 'B2B', tone: 'brand', where: 'Taskflow' },
-  CSR_NGO: { label: 'CSR / NGO', short: 'CSR/NGO', tone: 'good', where: 'Taskflow' },
-  RETAILER: { label: 'Retailer', short: 'Retailer', tone: 'warning', where: 'TeleCRM' },
-  FPO: { label: 'FPO (farmer producer organization)', short: 'FPO', tone: 'warning', where: 'TeleCRM' },
-  INDIVIDUAL: { label: 'Individual / farmer', short: 'Individual', tone: 'warning', where: 'TeleCRM' },
-  UNCLASSIFIED: { label: 'Not classified yet', short: 'Unclassified', tone: 'neutral', where: 'Classification queue' },
+  B2B_CORPORATE: { label: 'B2B corporate', short: 'B2B', tone: 'brand' },
+  CSR_NGO: { label: 'CSR / NGO', short: 'CSR/NGO', tone: 'good' },
+  RETAILER: { label: 'Retailer', short: 'Retailer', tone: 'neutral' },
+  FPO: { label: 'FPO (farmer producer organization)', short: 'FPO', tone: 'neutral' },
+  INDIVIDUAL: { label: 'Individual / farmer', short: 'Individual', tone: 'neutral' },
+  UNCLASSIFIED: { label: 'Not known yet', short: 'Who is it?', tone: 'warning' },
 };
+/** Organizations sold to as such; always worked here. */
 export const ELIGIBLE = ['B2B_CORPORATE', 'CSR_NGO'];
+/** Retailers, FPOs and individuals: worked here, or handed to TeleCRM while the setting says so. */
 export const EXCLUDED = ['RETAILER', 'FPO', 'INDIVIDUAL'];
+/** Whether a category goes to TeleCRM now (the setting decides; meta says). */
+export const handedOut = (meta, key) => Boolean(meta?.categories?.find((c) => c.key === key)?.excluded);
+/** Categories a person can give a lead, organizations first. */
+export const CHOOSABLE = [...ELIGIBLE, ...EXCLUDED];
 
 export const LEAD_STATUS = {
   NEW: { label: 'New', tone: 'brand' },
@@ -23,11 +29,21 @@ export const LEAD_STATUS = {
   QUALIFIED: { label: 'Qualified', tone: 'good' },
   NURTURE: { label: 'Nurture', tone: 'neutral' },
   CONVERTED: { label: 'Converted', tone: 'good' },
-  DISQUALIFIED: { label: 'Disqualified', tone: 'critical' },
+  WON: { label: 'Won', tone: 'good' },
+  DISQUALIFIED: { label: 'Lost', tone: 'critical' },
 };
 
+/** A lead field's answer in words: the choice labels, or the text as given. */
+export function fieldValueLabel(field, value) {
+  if (value === null || value === undefined || value === '') return '';
+  const label = (v) => field?.options?.find((o) => o.value === v)?.label || v;
+  return Array.isArray(value) ? value.map(label).join(', ') : label(String(value));
+}
+/** The lead fields a person fills in (TeleCRM's reference fields are shown, not edited). */
+export const editableFields = (meta) => (meta?.lead_fields || []).filter((f) => f.is_active && !f.key.startsWith('telecrm_'));
+
 export const DESTINATION = {
-  TASKFLOW: { label: 'In Taskflow', tone: 'good' },
+  TASKFLOW: { label: 'In TaskFlow', tone: 'good' },
   TELECRM: { label: 'For TeleCRM', tone: 'warning' },
   TRIAGE: { label: 'Needs classification', tone: 'critical' },
 };
@@ -126,4 +142,11 @@ export function useSalesMeta(version = 0) {
 }
 export const forgetSalesMeta = () => { cached = null; };
 
+/** A phone number as it is read aloud: +91 98765 43210. Anything unusual is shown as given. */
+export function phoneLabel(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 12 && digits.startsWith('91')) return `+91 ${digits.slice(2, 7)} ${digits.slice(7)}`;
+  if (digits.length === 10) return `${digits.slice(0, 5)} ${digits.slice(5)}`;
+  return phone || '';
+}
 export const userName = (meta, id) => meta?.users?.find((u) => u.id === id)?.full_name || (id ? `User ${id}` : 'Nobody');

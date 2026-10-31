@@ -246,7 +246,7 @@ export default function Pipeline() {
   const [view, setView] = useState('board');
   // which pipeline the board shows: B2B corporate (as before) or CSR / NGO
   const [pipeline, setPipeline] = useState(() => {
-    try { return localStorage.getItem('taskflow:pipeline') === 'csr' ? 'csr' : 'b2b'; } catch { return 'b2b'; }
+    try { const v = localStorage.getItem('taskflow:pipeline'); return ['csr', 'retail'].includes(v) ? v : 'b2b'; } catch { return 'b2b'; }
   });
   const choosePipeline = (key) => {
     setPipeline(key);
@@ -308,9 +308,9 @@ export default function Pipeline() {
       <div className="row-between wrap">
         <div>
           <div className="row wrap" style={{ gap: 10 }}>
-            <h1>{pipeline === 'csr' ? 'CSR / NGO pipeline' : 'B2B pipeline'}</h1>
+            <h1>{{ csr: 'CSR / NGO pipeline', retail: 'Retail, FPO & farmers' }[pipeline] || 'B2B pipeline'}</h1>
             <div className="row" role="group" aria-label="Which pipeline" style={{ gap: 4 }}>
-              {[['b2b', 'B2B corporate'], ['csr', 'CSR / NGO']].map(([key, label]) => (
+              {[['b2b', 'B2B corporate'], ['csr', 'CSR / NGO'], ['retail', 'Retail, FPO & farmers']].map(([key, label]) => (
                 <button key={key} type="button" aria-pressed={pipeline === key}
                   className={`kind-chip${pipeline === key ? ' is-active' : ''}`} onClick={() => choosePipeline(key)}>{label}</button>
               ))}

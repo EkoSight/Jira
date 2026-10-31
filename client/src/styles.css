@@ -4031,3 +4031,55 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 }
 .sales-help-head { width: 100%; background: none; border: 0; cursor: pointer; text-align: left; font: inherit; color: inherit; }
 .sales-help-body p { margin: 0; line-height: 1.55; max-width: 72ch; }
+
+/* ---------------------------------------------------------------- tele-sales: calling statuses, stars, the call card */
+
+.call-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 8px 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--status-color) 45%, var(--border));
+  background: color-mix(in srgb, var(--status-color) 12%, var(--surface));
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.call-status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--status-color); flex: none; }
+.call-chip.is-active {
+  border-color: var(--status-color);
+  background: color-mix(in srgb, var(--status-color) 16%, var(--surface));
+  color: var(--ink);
+}
+.stars { display: inline-flex; gap: 1px; color: #e5a50a; font-size: 13px; line-height: 1; letter-spacing: 1px; }
+.stars-off { color: var(--border-strong); }
+.stars .star {
+  border: 0; background: none; padding: 2px; font-size: 18px; line-height: 1; cursor: pointer; color: var(--border-strong);
+}
+.stars .star.is-on { color: #e5a50a; }
+.stars .star:focus-visible { outline: 2px solid var(--brand); border-radius: 4px; }
+.call-counts { gap: 14px; }
+.call-card { border-color: color-mix(in srgb, var(--brand) 35%, var(--border)); }
+.call-name { font-size: 22px; font-weight: 700; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+.call-name:hover { text-decoration: underline; }
+.call-dial { justify-content: center; font-size: 16px; padding: 12px 16px; gap: 8px; }
+.call-dial-inline { align-self: flex-start; gap: 6px; }
+.call-note {
+  margin: 0; padding: 6px 10px; border-left: 3px solid var(--border-strong); background: var(--surface-2, var(--surface));
+  color: var(--ink-2); white-space: pre-wrap;
+}
+.call-bars { display: grid; gap: 6px; }
+.call-bar {
+  display: grid; grid-template-columns: minmax(120px, 240px) 1fr 48px; align-items: center; gap: 10px;
+  color: var(--ink); text-decoration: none; font-size: 13px;
+}
+.call-bar:hover .call-bar-label { text-decoration: underline; }
+.call-bar-track { height: 10px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.call-bar-fill { display: block; height: 100%; border-radius: 999px; }
+.call-bar-value { text-align: right; font-weight: 600; }
+@media (max-width: 640px) {
+  .call-bar { grid-template-columns: 1fr 40px; }
+  .call-bar-track { grid-column: 1 / -1; grid-row: 2; }
+}

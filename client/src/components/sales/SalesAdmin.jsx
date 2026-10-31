@@ -4,10 +4,12 @@ import { api, downloadFile } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
 import { CopyButton } from '../marketing/parts.jsx';
-import { CATEGORY, ELIGIBLE, EXCLUDED, dayOf, localDay, money, when } from '../../lib/sales.js';
+import { CATEGORY, CHOOSABLE, dayOf, localDay, money, when } from '../../lib/sales.js';
+import { CallingSettings, LeadFieldsSettings } from './SalesCallingSettings.jsx';
 
 const SECTIONS = [
-  ['setup', 'Setup checklist'], ['general', 'Visibility, routing & calendar'], ['pipelines', 'Pipelines & stages'], ['assignment', 'Assignment'],
+  ['setup', 'Setup checklist'], ['general', 'Visibility, routing & calendar'], ['calling', 'Calling statuses & lost reasons'], ['fields', 'Lead fields'],
+  ['pipelines', 'Pipelines & stages'], ['assignment', 'Assignment'],
   ['scoring', 'Scoring'], ['sources', 'Sources & campaigns'], ['capture', 'Website forms & API keys'], ['catalogue', 'Catalogue, approvals & rates'],
   ['integrations', 'Calls, WhatsApp & TeleCRM'], ['automation', 'Automation'], ['remediation', 'Existing records to classify'], ['targets', 'Targets'], ['audit', 'Audit log'],
 ];
@@ -30,6 +32,8 @@ function Setup({ meta, goTo }) {
   const s = meta.settings;
   const items = [
     ['general', 'Decide who sees what', s.visibility?.enforced ? `Sales agents see ${s.visibility?.agents === 'ALL' ? 'everything' : s.visibility?.agents === 'TEAM' ? 'their department’s records' : 'their own and shared records'}; managers see their departments.` : 'Record-level access is off: everyone with CRM access sees every record, as before. Recommended: agents see their own and shared records.', s.visibility?.enforced === true],
+    ['general', 'Work retailers, FPOs and farmers in TaskFlow', meta.tele_sales_here ? 'They are worked here: the retail pipeline, calling statuses and the call list. Import your TeleCRM leads from Sales CRM → Imports.' : 'They still go to TeleCRM. Switch on the day you stop using it (the subscription ends in January 2027).', meta.tele_sales_here],
+    ['calling', 'Check the calling statuses and lost reasons', `${(meta.call_statuses || []).filter((x) => x.is_active).length} statuses, as TeleCRM had them; rename, add or retire to match how the team works.`, true],
     ['general', 'Confirm the calendar', s.calendar?.confirmed ? `${s.calendar.timezone}, ${s.calendar.currency}, working ${s.calendar.workStart}–${s.calendar.workEnd}` : 'Time zone, currency, financial year and working hours are proposed defaults until you confirm them.', Boolean(s.calendar?.confirmed)],
     ['remediation', 'Classify existing organizations', state.remediation.organizations.length ? `${state.remediation.organizations.length} existing organization(s) have no confirmed category yet (${state.remediation.organizations.filter((o) => o.flagged).length} look like retailers or FPOs).` : 'Every organization has a confirmed category.', state.remediation.organizations.length === 0],
     ['pipelines', 'Review the two pipelines', 'Stage names, probabilities, required fields and approval gates.', true],
@@ -57,11 +61,27 @@ function Setup({ meta, goTo }) {
 
 // ---------------------------------------------------------------- general settings
 
+/** Leads still waiting for TeleCRM or for review come into TaskFlow, once it works them. */
+function BringIn() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const run = async () => {
+    if (!window.confirm('Bring every lead waiting for TeleCRM or for review into TaskFlow? Each is routed again by its category and assigned if it has no owner. Hand-off records stay as history.')) return;
+    setBusy(true);
+    try {
+      const r = await api.sales.post('/routing/bring-in');
+      toast.success(`${r.leads} lead(s) and ${r.organizations} organization(s) brought in${r.assigned ? `; ${r.assigned} assigned` : ''}`);
+    } catch (err) { toast.error(err); } finally { setBusy(false); }
+  };
+  return <div><button type="button" className="btn btn-sm" disabled={busy} onClick={run}>Bring waiting TeleCRM and review leads into TaskFlow</button></div>;
+}
+
 function General({ meta, onSaved }) {
   const toast = useToast();
+  const { can } = useAuth();
   const s = meta.settings;
   const [f, setF] = useState(() => ({
-    visibility: s.visibility?.agents || 'OWN', enforced: s.visibility?.enforced === true, legacy: s.routing?.legacyUnclassified || 'INCLUDE', excluded: s.routing?.excludedDestination || 'TELECRM',
+    visibility: s.visibility?.agents || 'OWN', enforced: s.visibility?.enforced === true, legacy: s.routing?.legacyUnclassified || 'INCLUDE', excluded: s.routing?.excludedDestination || 'TASKFLOW',
     ...s.calendar, workingDays: s.calendar?.workingDays || [1, 2, 3, 4, 5, 6], ...Object.fromEntries(Object.entries(s.followUps || {}).map(([k, v]) => [`fu_${k}`, v])),
     ...Object.fromEntries(Object.entries(s.quotes || {}).map(([k, v]) => [`q_${k}`, v ?? ''])),
   }));
@@ -87,10 +107,15 @@ function General({ meta, onSaved }) {
             <option value="OWN">Their own leads and deals, and ones shared with them</option><option value="TEAM">Everything in their department</option><option value="ALL">Everything</option>
           </select>
         </Field>
-        <h3>The TeleCRM boundary</h3>
-        <Field label="Retailer, FPO and individual leads go to">
-          <select className="select" value={f.excluded} onChange={(e) => setF({ ...f, excluded: e.target.value })}><option value="TELECRM">The TeleCRM hand-off queue</option><option value="TRIAGE">The classification queue, for a person to check first</option></select>
+        <h3>Retailers, FPOs and individuals</h3>
+        <Field label="Are worked" hint="TeleCRM’s subscription ends in January 2027. While it is still in use, new ones can keep going there; switch to TaskFlow on the day you stop, then bring the waiting ones in.">
+          <select className="select" value={f.excluded} onChange={(e) => setF({ ...f, excluded: e.target.value })}>
+            <option value="TASKFLOW">Here in TaskFlow — the retail pipeline and the call list</option>
+            <option value="TELECRM">In TeleCRM — put them on the hand-off list</option>
+            <option value="TRIAGE">In the classification queue, for a person to check first</option>
+          </select>
         </Field>
+        {meta.tele_sales_here && can('crm.routing') && <BringIn />}
         <Field label="Existing organizations with no confirmed category" hint="They are never reclassified automatically. Until someone confirms each, choose whether they count in pipelines and reports.">
           <select className="select" value={f.legacy} onChange={(e) => setF({ ...f, legacy: e.target.value })}><option value="INCLUDE">Keep them in, as they were</option><option value="EXCLUDE">Leave them out until confirmed</option></select>
         </Field>
@@ -277,7 +302,7 @@ function Assignment({ meta, onSaved }) {
       <div className="card card-pad stack-sm">
         <h3>Try a lead</h3>
         <div className="row wrap" style={{ gap: 6 }}>
-          <select className="select" style={{ width: 'auto' }} value={sim.category} onChange={(e) => setSim({ ...sim, category: e.target.value })}>{ELIGIBLE.map((c) => <option key={c} value={c}>{CATEGORY[c].label}</option>)}</select>
+          <select className="select" style={{ width: 'auto' }} value={sim.category} onChange={(e) => setSim({ ...sim, category: e.target.value })}>{CHOOSABLE.map((c) => <option key={c} value={c}>{CATEGORY[c].label}</option>)}</select>
           <select className="select" style={{ width: 'auto' }} value={sim.source_id} onChange={(e) => setSim({ ...sim, source_id: e.target.value })}><option value="">Any source</option>{meta.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
           <input className="input" style={{ width: 160 }} placeholder="State" value={sim.state} onChange={(e) => setSim({ ...sim, state: e.target.value })} />
           <button type="button" className="btn btn-sm" onClick={() => api.sales.post('/assignment/simulate', { category: sim.category, source_id: sim.source_id ? Number(sim.source_id) : null, state: sim.state || null }).then(setSimResult).catch(toast.error)}>Who would get it?</button>
@@ -319,7 +344,7 @@ function RuleDialog({ meta, rule, onClose, onSaved }) {
           <Field label="Name"><input className="input" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="CSR leads to the CSR team" /></Field>
           <Field label="Order" hint="Lower runs first"><input className="input" type="number" value={f.priority} onChange={(e) => setF({ ...f, priority: e.target.value })} /></Field>
         </div>
-        <Field label="For leads that are"><div className="row wrap" style={{ gap: 4 }}>{ELIGIBLE.map((c) => <button key={c} type="button" className={`kind-chip${f.categories.includes(c) ? ' is-active' : ''}`} onClick={() => toggle('categories', c)}>{CATEGORY[c].label}</button>)}</div></Field>
+        <Field label="For leads that are"><div className="row wrap" style={{ gap: 4 }}>{CHOOSABLE.map((c) => <button key={c} type="button" className={`kind-chip${f.categories.includes(c) ? ' is-active' : ''}`} onClick={() => toggle('categories', c)}>{CATEGORY[c].label}</button>)}</div></Field>
         <Field label="From sources (none: any)"><div className="row wrap" style={{ gap: 4 }}>{meta.sources.map((s) => <button key={s.id} type="button" className={`kind-chip${f.source_ids.includes(s.id) ? ' is-active' : ''}`} onClick={() => toggle('source_ids', s.id)}>{s.name}</button>)}</div></Field>
         <Field label="In states (comma-separated; blank: any)"><input className="input" value={f.states} onChange={(e) => setF({ ...f, states: e.target.value })} placeholder="Maharashtra, Karnataka" /></Field>
         <Field label="How to choose">
@@ -638,7 +663,7 @@ function Remediation({ meta }) {
             <div className="row wrap sales-bulk">
               <strong className="small">{picked.size} selected</strong>
               <button type="button" className="btn btn-sm btn-primary" onClick={() => classify({ use_suggestion: true, reason: 'Confirmed the suggestion' })}>Confirm the suggestions</button>
-              {[...ELIGIBLE, ...EXCLUDED].map((c) => <button key={c} type="button" className="btn btn-sm" onClick={() => classify({ category: c, reason: 'Classified in review' })}>{CATEGORY[c].short}</button>)}
+              {CHOOSABLE.map((c) => <button key={c} type="button" className="btn btn-sm" onClick={() => classify({ category: c, reason: 'Classified in review' })}>{CATEGORY[c].short}</button>)}
             </div>
           )}
           <div className="table-scroll"><table className="data-table"><thead><tr><th><input type="checkbox" aria-label="Select all" onChange={(e) => setPicked(e.target.checked ? new Set(list.map((o) => o.id)) : new Set())} /></th><th>Organization</th><th>Suggestion</th><th>Why</th><th className="num">Open deals</th><th>Owner</th></tr></thead>
@@ -684,6 +709,12 @@ function Audit() {
 
 // ---------------------------------------------------------------- imports
 
+const IMPORT_FIELD_LABEL = {
+  call_status: 'Calling status', lost_reason: 'Lost reason', rating: 'Rating (1–5)', notes: 'Notes (go on the timeline)', modified_at: 'Last modified',
+  owner_email: 'Owner email', captured_at: 'Captured on', external_id: 'Id in the other system', source_system: 'Other system', tags: 'Tags or lists',
+};
+const PRESET_NAME = { TELECRM: 'TeleCRM' };
+
 export function Imports({ meta }) {
   const toast = useToast();
   const [jobs, setJobs] = useState(null);
@@ -706,17 +737,29 @@ export function Imports({ meta }) {
     try {
       const r = await api.sales.send('/imports', file, file.type || 'application/octet-stream', { entity, filename: file.name });
       setUpload(r); setJob(r.job); setMapping(r.job.mapping); setDetail(null);
+      // a recognised export starts with its preset's choices, which the person can still change
+      setOptions((o) => ({ ...o, ...(r.preset_options || { duplicate_strategy: 'SKIP', create_campaigns: false, run_automation: true, unknown_owner: 'ERROR' }) }));
     } catch (err) { toast.error(err); }
   };
   const validate = async () => {
     try {
-      await api.sales.post(`/imports/${job.id}/validate`, { mapping, options: { duplicate_strategy: options.duplicate_strategy, default_owner_id: options.default_owner_id ? Number(options.default_owner_id) : null, source_id: options.source_id ? Number(options.source_id) : null } });
+      await api.sales.post(`/imports/${job.id}/validate`, {
+        mapping,
+        options: {
+          duplicate_strategy: options.duplicate_strategy, default_owner_id: options.default_owner_id ? Number(options.default_owner_id) : null,
+          source_id: options.source_id ? Number(options.source_id) : null, create_campaigns: Boolean(options.create_campaigns),
+          run_automation: options.run_automation !== false, unknown_owner: options.unknown_owner || 'ERROR',
+        },
+      });
       setDetail(await api.sales.get(`/imports/${job.id}`));
     } catch (err) { toast.error(err); }
   };
   const run = async () => { try { await api.sales.post(`/imports/${job.id}/run`); setDetail(await api.sales.get(`/imports/${job.id}`)); toast.success('Importing in the background'); } catch (err) { toast.error(err); } };
-  const fields = jobs?.fields?.[entity] || [];
+  const custom = entity === 'LEADS' ? (upload?.custom_fields || jobs?.custom_fields || []) : [];
+  const fields = [...(jobs?.fields?.[entity] || []), ...custom.map((c) => c.key)];
+  const fieldLabel = (f) => custom.find((c) => c.key === f)?.label || IMPORT_FIELD_LABEL[f] || f.replace(/_/g, ' ');
   const counts = detail?.job.counts || {};
+  const preset = upload?.preset || job?.preset;
   return (
     <div className="stack">
       <div className="card card-pad stack-sm">
@@ -725,21 +768,35 @@ export function Imports({ meta }) {
           {[['LEADS', 'Leads'], ['ACCOUNTS', 'Organizations']].map(([k, l]) => <button key={k} type="button" className={`kind-chip${entity === k ? ' is-active' : ''}`} onClick={() => { setEntity(k); setJob(null); setDetail(null); }}>{l}</button>)}
           <button type="button" className="btn btn-sm" onClick={() => downloadFile(api.sales.url('/imports/template', { entity }), `taskflow-${entity.toLowerCase()}-template.xlsx`).catch(toast.error)}><Icon name="download" size={13} /> Template with examples</button>
         </div>
-        <div className="small muted">Excel (.xlsx) or CSV, up to 20,000 rows. Format phone and ID columns as Text in Excel so leading zeros survive. Retailers, FPOs and individuals in the file go to the TeleCRM queue. Nothing is imported until you check the preview and press Import.</div>
+        <div className="small muted">Excel (.xlsx) or CSV, up to 20,000 rows. Format phone and ID columns as Text in Excel so leading zeros survive. {meta.tele_sales_here ? 'A TeleCRM export is recognised and read as TeleCRM writes it.' : 'Retailers, FPOs and individuals in the file go to the TeleCRM queue.'} Nothing is imported until you check the preview and press Import.</div>
         <input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Choose a file" onChange={(e) => pick(e.target.files[0])} />
       </div>
       {job && !detail && (
         <div className="card card-pad stack-sm">
           <h3>Match the columns ({job.total_rows} rows in {job.filename})</h3>
+          {preset && (
+            <div className="mkt-callout small stack-xs">
+              <strong>This is a {PRESET_NAME[preset]} export.</strong>
+              <span>It is read as {PRESET_NAME[preset]} writes it: “-” and “_” mean blank, dates are day/month/year in India time, its statuses become calling statuses, the form’s questions become lead fields (Hindi and English answers alike), the agent’s notes go on each lead’s timeline, and its lead id lets a later export update the same leads instead of adding them again.</span>
+              {upload?.preset_ignored?.length > 0 && <span className="muted">Left out on purpose: {upload.preset_ignored.join(', ')} (the assignee is matched by email; the manager columns are empty).</span>}
+            </div>
+          )}
           {upload?.warnings?.map((w) => <div key={w} className="mkt-callout is-warning small">{w}</div>)}
           <div className="grid-3">{fields.map((f) => (
-            <Field key={f} label={f.replace(/_/g, ' ')}><select className="select" value={mapping[f] || ''} onChange={(e) => setMapping({ ...mapping, [f]: e.target.value || undefined })}><option value="">Not in the file</option>{job.header.map((h) => <option key={h} value={h}>{h}</option>)}</select></Field>
+            <Field key={f} label={fieldLabel(f)}><select className="select" value={mapping[f] || ''} onChange={(e) => setMapping({ ...mapping, [f]: e.target.value || undefined })}><option value="">Not in the file</option>{job.header.map((h) => <option key={h} value={h}>{h}</option>)}</select></Field>
           ))}</div>
           <div className="grid-3">
-            <Field label="Already in TaskFlow"><select className="select" value={options.duplicate_strategy} onChange={(e) => setOptions({ ...options, duplicate_strategy: e.target.value })}><option value="SKIP">Skip it (listed in the summary)</option><option value="UPDATE">Fill in what the existing one is missing</option><option value="CREATE">Add anyway when only email or phone matches</option></select></Field>
-            <Field label="Owner when the file has none"><select className="select" value={options.default_owner_id} onChange={(e) => setOptions({ ...options, default_owner_id: e.target.value })}><option value="">The assignment rules</option>{meta.users.filter((u) => u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}</select></Field>
+            <Field label="Already in TaskFlow"><select className="select" value={options.duplicate_strategy} onChange={(e) => setOptions({ ...options, duplicate_strategy: e.target.value })}><option value="SKIP">Skip it (listed in the summary)</option><option value="UPDATE">{preset ? 'Bring it up to date (never undoing work done here)' : 'Fill in what the existing one is missing'}</option><option value="CREATE">Add anyway when only email or phone matches</option></select></Field>
+            <Field label={preset ? 'Owner when the assignee is not a TaskFlow user' : 'Owner when the file has none'}><select className="select" value={options.default_owner_id} onChange={(e) => setOptions({ ...options, default_owner_id: e.target.value })}><option value="">{preset ? 'Leave unassigned' : 'The assignment rules'}</option>{meta.users.filter((u) => u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}</select></Field>
             <Field label="Source when the file has none"><select className="select" value={options.source_id} onChange={(e) => setOptions({ ...options, source_id: e.target.value })}><option value="">Leave blank</option>{meta.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
           </div>
+          {entity === 'LEADS' && (
+            <div className="row wrap small" style={{ gap: 16 }}>
+              <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={Boolean(options.create_campaigns)} onChange={(e) => setOptions({ ...options, create_campaigns: e.target.checked })} /> Add campaigns the file names that are not in TaskFlow yet</label>
+              <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={options.run_automation !== false} onChange={(e) => setOptions({ ...options, run_automation: e.target.checked })} /> Treat them as new enquiries (automation for new leads runs)</label>
+              <label className="row" style={{ gap: 6 }}><input type="checkbox" checked={options.unknown_owner === 'WARN'} onChange={(e) => setOptions({ ...options, unknown_owner: e.target.checked ? 'WARN' : 'ERROR' })} /> An owner who is not a TaskFlow user is a warning, not a problem</label>
+            </div>
+          )}
           <div><button type="button" className="btn btn-primary btn-sm" onClick={validate}>Check the rows</button></div>
         </div>
       )}
@@ -747,18 +804,18 @@ export function Imports({ meta }) {
         <div className="card card-pad stack-sm">
           <div className="row-between wrap"><h3>Import #{detail.job.id} · {detail.job.status.toLowerCase()}</h3>
             <div className="row" style={{ gap: 6 }}>
-              {detail.job.status === 'VALIDATED' && <button type="button" className="btn btn-sm btn-primary" disabled={!counts.valid && !counts.routed && !(counts.duplicate && detail.job.options?.duplicate_strategy === 'UPDATE')} onClick={run}>Import {counts.valid + counts.routed} row(s)</button>}
+              {detail.job.status === 'VALIDATED' && <button type="button" className="btn btn-sm btn-primary" disabled={!counts.valid && !counts.routed && !(counts.duplicate && detail.job.options?.duplicate_strategy === 'UPDATE')} onClick={run}>Import {counts.valid + counts.routed}{counts.duplicate && detail.job.options?.duplicate_strategy === 'UPDATE' ? ` and update ${counts.duplicate}` : ''} row(s)</button>}
               <button type="button" className="btn btn-sm" onClick={() => downloadFile(api.sales.url(`/imports/${detail.job.id}/corrections`), `import-${detail.job.id}-corrections.xlsx`).catch(toast.error)}>Corrections file</button>
               {detail.job.status === 'DONE' && <button type="button" className="btn btn-sm btn-ghost" onClick={() => window.confirm('Undo this import? Records nobody has worked on since are archived (not deleted); anything worked on is kept and listed.') && api.sales.post(`/imports/${detail.job.id}/undo`).then((r) => { toast.success(`Undone: ${r.summary.archived} archived, ${r.summary.restored} restored, ${r.summary.kept} kept`); load(); api.sales.get(`/imports/${detail.job.id}`).then(setDetail); }).catch(toast.error)}>Undo</button>}
             </div>
           </div>
           <div className="row wrap" style={{ gap: 6 }}>
-            <Badge tone="good">{counts.valid ?? 0} valid</Badge><Badge tone="critical">{counts.invalid ?? 0} with problems</Badge><Badge tone="warning">{counts.duplicate ?? 0} already there</Badge><Badge tone="warning">{counts.routed ?? 0} for TeleCRM</Badge>
+            <Badge tone="good">{counts.valid ?? 0} valid</Badge><Badge tone="critical">{counts.invalid ?? 0} with problems</Badge><Badge tone="warning">{counts.duplicate ?? 0} already there</Badge>{counts.routed > 0 && <Badge tone="warning">{counts.routed} for TeleCRM</Badge>}{counts.warnings > 0 && <Badge>{counts.warnings} with notes</Badge>}
             {counts.result && Object.entries(counts.result).map(([k, n]) => <Badge key={k}>{n} {k}</Badge>)}
             {detail.job.status === 'RUNNING' && <span className="small muted">{detail.job.processed_rows} of {detail.job.total_rows} applied…</span>}
           </div>
           <div className="table-scroll"><table className="data-table"><thead><tr><th>Row</th><th>Status</th><th>Problems and notes</th><th>Name</th></tr></thead>
-            <tbody>{detail.rows.map((r) => <tr key={r.row_no} className={r.status === 'INVALID' ? 'is-late' : ''}><td>{r.row_no}</td><td>{r.status.toLowerCase()}</td><td className="small" style={{ whiteSpace: 'normal' }}>{[...r.errors, ...r.warnings].join('; ')}</td><td className="small">{r.data?.organization_name || r.data?.name || r.data?.contact_name}</td></tr>)}</tbody></table></div>
+            <tbody>{detail.rows.map((r) => <tr key={r.row_no} className={r.status === 'INVALID' ? 'is-late' : ''}><td>{r.row_no}</td><td>{r.status.toLowerCase()}</td><td className="small" style={{ whiteSpace: 'normal' }}>{[...r.errors, ...r.warnings].join('; ')}</td><td className="small">{r.data?.organization_name || r.data?.name || r.data?.contact_name || r.data?.phone}</td></tr>)}</tbody></table></div>
         </div>
       )}
       <div className="card">
@@ -766,7 +823,7 @@ export function Imports({ meta }) {
         <div className="card-pad stack-sm">
           {!jobs ? <Spinner /> : jobs.jobs.length === 0 ? <div className="empty small">None yet.</div> : jobs.jobs.map((j) => (
             <button key={j.id} type="button" className="link-row small" onClick={() => api.sales.get(`/imports/${j.id}`).then((d) => { setJob(d.job); setDetail(d); }).catch(toast.error)}>
-              <strong>#{j.id}</strong><span className="grow truncate">{j.entity.toLowerCase()} · {j.filename} · {j.created_by_name}</span><Badge>{j.status.toLowerCase()}</Badge><span className="muted">{dayOf(j.created_at)}</span>
+              <strong>#{j.id}</strong><span className="grow truncate">{j.entity.toLowerCase()}{j.preset ? ` (${PRESET_NAME[j.preset] || j.preset})` : ''} · {j.filename} · {j.created_by_name}</span><Badge>{j.status.toLowerCase()}</Badge><span className="muted">{dayOf(j.created_at)}</span>
             </button>
           ))}
         </div>
@@ -791,6 +848,8 @@ export function SalesSettings({ meta, onSaved, initial }) {
       <div className="grow" style={{ minWidth: 0 }}>
         {current === 'setup' && <Setup meta={meta} goTo={setSection} />}
         {current === 'general' && <General meta={meta} onSaved={onSaved} />}
+        {current === 'calling' && <CallingSettings meta={meta} onSaved={onSaved} />}
+        {current === 'fields' && <LeadFieldsSettings onSaved={onSaved} />}
         {current === 'pipelines' && <Pipelines />}
         {current === 'assignment' && <Assignment meta={meta} onSaved={onSaved} />}
         {current === 'scoring' && <Scoring />}

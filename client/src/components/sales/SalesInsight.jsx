@@ -55,6 +55,7 @@ function Drill({ metric, filters, onClose }) {
 }
 
 const REPORT_NAMES = { summary: 'Summary', sources: 'Sources & campaigns', agents: 'People', stages: 'Stages' };
+// a schedule sends the headline summary; the calling report is read on screen
 const FREQUENCY = { DAILY: 'Every morning (yesterday)', WEEKLY: 'Every Monday (last week)', MONTHLY: 'On the 1st (last month)' };
 
 /** Reports sent on a schedule as in-app notices; each person's numbers stay within their own access. */
@@ -134,11 +135,13 @@ export function Reports({ meta }) {
   const [drill, setDrill] = useState(null);
   const clean = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
   const key = JSON.stringify(clean);
+  const [by, setBy] = useState('state');
   const load = useCallback(() => {
     setData(null);
-    api.sales.get(`/reports/${tab}`, clean).then(setData).catch((err) => { setData({ error: err.message }); toast.error(err); });
+    // each answer is kept with the tab that asked for it, so a tab never draws another tab's numbers
+    api.sales.get(`/reports/${tab}`, tab === 'calling' ? { ...clean, by } : clean).then((r) => setData({ ...r, forTab: tab })).catch((err) => { setData({ error: err.message, forTab: tab }); toast.error(err); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, key]);
+  }, [tab, key, by]);
   useEffect(load, [load]);
   const preset = (kind) => {
     const today = localDay(0);
@@ -154,7 +157,9 @@ export function Reports({ meta }) {
         {[['today', 'Today'], ['week', '7 days'], ['month', 'This month'], ['fy', 'Financial year']].map(([k, l]) => <button key={k} type="button" className="btn btn-sm" onClick={() => preset(k)}>{l}</button>)}
         <input className="input" type="date" aria-label="From" value={filters.from} onChange={(e) => setFilters({ ...filters, from: e.target.value })} />
         <input className="input" type="date" aria-label="To" value={filters.to} onChange={(e) => setFilters({ ...filters, to: e.target.value })} />
-        <select className="select" aria-label="Category" value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}><option value="">B2B and CSR/NGO</option><option value="B2B_CORPORATE">B2B corporate</option><option value="CSR_NGO">CSR / NGO</option></select>
+        <select className="select" aria-label="Category" value={filters.category} onChange={(e) => setFilters({ ...filters, category: e.target.value })}>
+          <option value="">Every category worked here</option>{Object.entries(CATEGORY).map(([k, c]) => <option key={k} value={k}>{c.label}</option>)}
+        </select>
         <select className="select" aria-label="Owner" value={filters.owner_id} onChange={(e) => setFilters({ ...filters, owner_id: e.target.value })}><option value="">Everyone I can see</option>{meta.users.filter((u) => u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}</select>
         <select className="select" aria-label="Source" value={filters.source_id} onChange={(e) => setFilters({ ...filters, source_id: e.target.value })}><option value="">Any source</option>{meta.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
         <input className="input" aria-label="Currency" style={{ width: 70 }} maxLength={3} value={filters.currency} onChange={(e) => setFilters({ ...filters, currency: e.target.value.toUpperCase() })} />
@@ -162,9 +167,9 @@ export function Reports({ meta }) {
       </div>
       {scheduling && <ReportSchedules meta={meta} report={tab} filters={filters} onClose={() => setScheduling(false)} />}
       <div className="tabs tabs-scroll" role="tablist">
-        {[['summary', 'Summary'], ['sources', 'Sources & campaigns'], ['agents', 'People'], ['stages', 'Stages'], ['targets', 'Targets']].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
+        {[['summary', 'Summary'], ['calling', 'Calls & statuses'], ['sources', 'Sources & campaigns'], ['agents', 'People'], ['stages', 'Stages'], ['targets', 'Targets']].map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
       </div>
-      {!data ? <Spinner /> : data.error ? <EmptyState title="Could not load the report">{data.error}</EmptyState> : (
+      {!data || data.forTab !== tab ? <Spinner /> : data.error ? <EmptyState title="Could not load the report">{data.error}</EmptyState> : (
         <>
           {tab === 'summary' && (
             <div className="stack">
@@ -231,6 +236,49 @@ export function Reports({ meta }) {
               <div className="small muted">{data.note}</div>
               <div className="table-scroll"><table className="data-table"><thead><tr><th>Stage</th><th className="num">Open deals</th><th className="num">Value</th><th className="num">Ageing</th><th className="num">Stays ended in period</th><th className="num">Average days in stage</th></tr></thead>
                 <tbody>{data.stages.map((s) => <tr key={s.id}><td>{s.name}</td><td className="num">{s.open_deals}</td><td className="num tnum">{money(s.open_value, c)}</td><td className="num">{s.aging_days ? s.ageing : '—'}</td><td className="num">{s.stays_ended}</td><td className="num">{s.avg_days_in_stage ?? '—'}</td></tr>)}</tbody></table></div>
+            </div>
+          )}
+          {tab === 'calling' && (
+            <div className="stack">
+              <div className="small muted">{dayOf(data.filters.from)} – {dayOf(data.filters.to)} · {data.note} Only records you may see.</div>
+              <h3 className="small">Leads captured in the period, by calling status now</h3>
+              <div className="call-bars">
+                {(() => {
+                  const max = Math.max(1, ...data.statuses.map((s) => s.leads));
+                  return data.statuses.map((s) => (
+                    <Link key={s.id ?? 'none'} className="call-bar" to={`/sales?tab=leads&view=all&call_status_id=${s.id ?? 'none'}`} title="See these leads">
+                      <span className="call-bar-label">{s.label}</span>
+                      <span className="call-bar-track"><span className="call-bar-fill" style={{ width: `${(s.leads / max) * 100}%`, background: s.color || 'var(--ink-muted)' }} /></span>
+                      <span className="tnum call-bar-value">{s.leads}</span>
+                    </Link>
+                  ));
+                })()}
+              </div>
+              <h3 className="small">Calls logged in the period</h3>
+              {data.people.length === 0 ? <div className="empty small">No calls logged in this period.</div> : (
+                <div className="table-scroll"><table className="data-table">
+                  <thead><tr><th>Person</th><th className="num">Calls</th><th className="num">Connected</th><th className="num">Connect rate</th><th className="num">Leads called</th><th className="num">Talk time</th><th className="num">Won</th><th className="num">Lost</th></tr></thead>
+                  <tbody>{data.people.map((p) => (
+                    <tr key={p.id}><td>{p.full_name}</td><td className="num tnum">{p.calls}</td><td className="num tnum">{p.connected}</td><td className="num tnum">{p.connect_rate === null ? '—' : `${p.connect_rate}%`}</td>
+                      <td className="num tnum">{p.leads_called}</td><td className="num tnum">{p.talk_seconds ? `${Math.round(p.talk_seconds / 60)} min` : '—'}</td><td className="num tnum">{p.won}</td><td className="num tnum">{p.closed_lost}</td></tr>
+                  ))}</tbody>
+                </table></div>
+              )}
+              <div className="row-between wrap">
+                <h3 className="small">Leads captured in the period, by</h3>
+                <select className="select" style={{ width: 'auto' }} aria-label="Break down by" value={by} onChange={(e) => setBy(e.target.value)}>
+                  <option value="state">State</option><option value="category">Category</option><option value="source">Source</option><option value="owner">Owner</option>
+                  {(meta.lead_fields || []).filter((f) => f.is_active && f.type.includes('SELECT')).map((f) => <option key={f.key} value={`cf:${f.key}`}>{f.label}</option>)}
+                </select>
+              </div>
+              <div className="table-scroll"><table className="data-table">
+                <thead><tr><th>{by.startsWith('cf:') ? (meta.lead_fields || []).find((f) => `cf:${f.key}` === by)?.label : { state: 'State', category: 'Category', source: 'Source', owner: 'Owner' }[by]}</th><th className="num">Leads</th><th className="num">Won or converted</th><th className="num">Lost</th></tr></thead>
+                <tbody>{data.breakdown.map((b) => {
+                  const field = by.startsWith('cf:') ? (meta.lead_fields || []).find((f) => `cf:${f.key}` === by) : null;
+                  const label = field ? (field.options.find((o) => o.value === b.value)?.label || b.value) : by === 'category' ? (CATEGORY[b.value]?.label || b.value) : b.value;
+                  return <tr key={b.value}><td>{label}</td><td className="num tnum">{b.leads}</td><td className="num tnum">{b.won_or_converted}</td><td className="num tnum">{b.lost}</td></tr>;
+                })}</tbody>
+              </table></div>
             </div>
           )}
           {tab === 'targets' && (

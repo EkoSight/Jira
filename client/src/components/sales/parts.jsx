@@ -8,7 +8,73 @@ import {
 
 export function CategoryBadge({ category }) {
   const c = CATEGORY[category] || CATEGORY.UNCLASSIFIED;
-  return <Badge tone={c.tone} title={`${c.label} · worked in ${c.where}`}>{c.short}</Badge>;
+  return <Badge tone={c.tone} title={c.label}>{c.short}</Badge>;
+}
+
+/** The lead's calling status, in its own colour. */
+export function CallStatusBadge({ lead }) {
+  if (!lead.call_status_label) return null;
+  return (
+    <span className="call-status" style={{ '--status-color': lead.call_status_color || 'var(--ink-muted)' }}>
+      <span className="call-status-dot" aria-hidden="true" />{lead.call_status_label}
+    </span>
+  );
+}
+
+/** One to five stars; tapping the current rating clears it. */
+export function Stars({ value, onChange, label = 'Rating' }) {
+  if (!onChange) {
+    return value ? <span className="stars" aria-label={`${value} of 5 stars`}>{'★'.repeat(value)}<span className="stars-off">{'★'.repeat(5 - value)}</span></span> : null;
+  }
+  return (
+    <span className="stars" role="radiogroup" aria-label={label}>
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button key={n} type="button" role="radio" aria-checked={value === n} aria-label={`${n} star${n > 1 ? 's' : ''}`}
+          className={`star${value >= n ? ' is-on' : ''}`} onClick={() => onChange(value === n ? null : n)}>★</button>
+      ))}
+    </span>
+  );
+}
+
+/** Inputs for the lead's own questions (Settings → Lead fields). */
+export function LeadFieldInputs({ fields, values, onChange }) {
+  const set = (key, v) => onChange({ ...values, [key]: v });
+  return (
+    <div className="grid-2">
+      {fields.map((f) => {
+        const v = values?.[f.key];
+        if (f.type === 'SELECT') {
+          return (
+            <Field key={f.key} label={f.label} hint={f.help || undefined}>
+              <select className="select" value={v || ''} onChange={(e) => set(f.key, e.target.value || null)}>
+                <option value="">Not asked yet</option>{f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </Field>
+          );
+        }
+        if (f.type === 'MULTI_SELECT') {
+          const list = Array.isArray(v) ? v : [];
+          return (
+            <Field key={f.key} label={f.label} hint={f.help || undefined}>
+              <div className="row wrap" style={{ gap: 6 }}>
+                {f.options.map((o) => (
+                  <button key={o.value} type="button" aria-pressed={list.includes(o.value)} className={`kind-chip${list.includes(o.value) ? ' is-active' : ''}`}
+                    onClick={() => set(f.key, list.includes(o.value) ? list.filter((x) => x !== o.value) : [...list, o.value])}>{o.label}</button>
+                ))}
+              </div>
+            </Field>
+          );
+        }
+        return (
+          <Field key={f.key} label={f.label} hint={f.help || undefined}>
+            {f.type === 'LONG_TEXT'
+              ? <textarea className="textarea" rows={2} value={v ?? ''} onChange={(e) => set(f.key, e.target.value)} />
+              : <input className="input" type={{ NUMBER: 'number', DATE: 'date', URL: 'url' }[f.type] || 'text'} value={v ?? ''} onChange={(e) => set(f.key, e.target.value)} />}
+          </Field>
+        );
+      })}
+    </div>
+  );
 }
 export function LeadStatusBadge({ status }) {
   const s = LEAD_STATUS[status] || { label: status, tone: 'neutral' };
