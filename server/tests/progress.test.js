@@ -794,8 +794,9 @@ test('proposals, bookings, revenue billed and cash are separate, and blanks stay
   const id = ids.coromandelDeal;
   const base = `/opportunities/${id}`;
 
+  // dated today, so it falls in the month the dashboard counts even on the 1st
   const order = await call('POST', `${base}/orders`, {
-    token: tokens.manager, body: { kind: 'PURCHASE_ORDER', reference: 'CIL/PO/77', received_on: day(-1) },
+    token: tokens.manager, body: { kind: 'PURCHASE_ORDER', reference: 'CIL/PO/77', received_on: day(0) },
   });
   assert.equal(order.status, 201, JSON.stringify(order.body));
   assert.equal(order.body.totals.booked, null, 'an order with no amount is counted but adds no number');

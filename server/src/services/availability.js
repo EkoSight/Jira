@@ -79,7 +79,8 @@ export function nextWorkingDay(date, workingDays) {
 
 const SELECT = `
   SELECT a.*, u.full_name, u.avatar_color, u.department_id, d.name AS department_name,
-         c.full_name AS created_by_name
+         c.full_name AS created_by_name,
+         (SELECT l.id FROM leave_requests l WHERE l.availability_id = a.id ORDER BY l.id LIMIT 1) AS leave_request_id
     FROM user_availability a
     JOIN users u ON u.id = a.user_id
     LEFT JOIN departments d ON d.id = u.department_id
@@ -102,7 +103,24 @@ export function decorate(row, { today, workingDays, timezone = 'Asia/Kolkata' })
     is_upcoming: start > today,
     is_past: end < today,
     back_on: row.status === 'HALF_DAY' ? null : nextWorkingDay(end, workingDays),
+    source: sourceOf(row),
   };
+}
+
+/** Statuses that are leave: they belong to the leave-request lifecycle, not the calendar. */
+export const LEAVE_STATUSES = ['ON_LEAVE', 'HALF_DAY'];
+
+/**
+ * Where an entry came from:
+ *   LEAVE_REQUEST  the calendar copy of an approved leave request — changed
+ *                  only through that request (approval, payroll locks)
+ *   LEGACY_LEAVE   leave marked straight onto the calendar before leave
+ *                  requests existed; it never reached attendance or pay
+ *   PLANNING       "unavailable" — a planning note, not leave
+ */
+export function sourceOf(row) {
+  if (row.leave_request_id) return 'LEAVE_REQUEST';
+  return LEAVE_STATUSES.includes(row.status) ? 'LEGACY_LEAVE' : 'PLANNING';
 }
 
 /** Entries overlapping [from, to], optionally for some people. Cancelled ones excluded. */

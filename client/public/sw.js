@@ -1,5 +1,6 @@
 /* TaskFlow service worker — app shell caching + offline reads. */
-const VERSION = 'taskflow-v1';
+// bumped to clear payroll copies cached by earlier versions
+const VERSION = 'taskflow-v2';
 const SHELL_CACHE = `${VERSION}-shell`;
 const DATA_CACHE = `${VERSION}-data`;
 
@@ -36,6 +37,8 @@ self.addEventListener('fetch', (event) => {
   // email marketing's public pages and tracking (unsubscribe, forms, opens,
   // clicks) are for recipients: never cached on a colleague's device
   if (/\/api\/[^/]+\/m\//.test(url.pathname)) return;
+  // pay estimates are never kept on a device, and never shown from an old copy
+  if (/\/api\/[^/]+\/payroll(\/|$)/.test(url.pathname)) return;
 
   // API: network first, fall back to the last good response so the board still
   // renders something useful when the phone drops off the network.

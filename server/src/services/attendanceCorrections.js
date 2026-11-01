@@ -73,7 +73,7 @@ export async function getCorrection(id) {
 }
 
 export async function createCorrection(actor, input, now = new Date()) {
-  const { config } = await currentPolicy();
+  const { config } = await currentPolicy(now);
   const today = dateIn(config.timezone, now);
   const workDate = input.work_date;
   const kind = input.kind;
@@ -144,7 +144,8 @@ export async function decideCorrection(reviewer, id, { decision, note }, now = n
   if (decision === 'REJECTED' && !String(note || '').trim()) throw badRequest('Say why it is rejected');
   if (await isLocked(correction.user_id, correction.work_date)) throw conflict('Payroll for that month is locked — reopen it first');
 
-  const { config } = await currentPolicy();
+  // the cutoff that applies is the one in force on the corrected day
+  const { config } = await getPolicyFor(correction.work_date);
   await settleMissingCheckouts(correction.user_id, now);
 
   return withTransaction(async (client) => {
@@ -235,7 +236,7 @@ export async function cancelCorrection(actor, id) {
 /** Confirm a scheduled day nobody recorded as an unapproved absence — or clear it. */
 export async function reviewDay(reviewer, { user_id: userId, work_date: workDate, decision, note }, now = new Date()) {
   await assertReviewer(reviewer, userId, 'attendance.approve');
-  const { config } = await currentPolicy();
+  const { config } = await currentPolicy(now);
   if (workDate >= dateIn(config.timezone, now)) throw badRequest('Only past days can be reviewed');
   if (await isLocked(userId, workDate)) throw conflict('Payroll for that month is locked — reopen it first');
   const { rows: before } = await query('SELECT * FROM attendance_day_reviews WHERE user_id = $1 AND work_date = $2', [userId, workDate]);

@@ -3,16 +3,19 @@
  * monthly account a person can check line by line.
  *
  * Reading only. Nothing here changes a record, so a report can be refreshed as
- * often as anyone likes and always gives the same answer for the same data.
+ * often as anyone likes and always gives the same answer for the same data. An
+ * open session past its cutoff is shown as a missing check-out — worked out
+ * here, not written: turning it into MISSING_CHECKOUT on the record is the
+ * attendance sweep's job (settleMissingCheckouts), never a report's.
  */
 
 import crypto from 'node:crypto';
 import { query } from '../db/pool.js';
 import { clock, computeDay, computeMonth, computeSalary } from '../lib/attendanceCalc.js';
-import { enginePolicy, policyTimeline, policyOn, setupStatus } from './attendancePolicy.js';
+import { enginePolicy, policyAt, policyTimeline, policyOn, setupStatus } from './attendancePolicy.js';
 import {
   SESSION_COLUMNS, addDays, cutoffFor, dateIn, holidaysBetween, profilesFor, requiredSeconds,
-  scheduleOn, secondsInto, settleMissingCheckouts, userBasics,
+  scheduleOn, secondsInto, userBasics,
 } from './attendance.js';
 
 export const PENDING_LEAVE = ['SUBMITTED', 'EMERGENCY_REVIEW', 'NOTICE_EXCEPTION'];
@@ -64,9 +67,9 @@ function leaveOnDate(request, date, schedule, config) {
  * Returns Map(userId → { user, profile, days: [...] }).
  */
 export async function buildLedgers(userIds, from, to, { now = new Date() } = {}) {
-  await settleMissingCheckouts(null, now);
   const timeline = await policyTimeline();
-  const current = timeline[timeline.length - 1].config;
+  // "today" as the version in force today sees it — not a version scheduled for later
+  const current = policyAt(timeline, now).config;
   const today = dateIn(current.timezone, now);
 
   const [users, profiles, holidays, sessions, leaves, reviews, extras] = await Promise.all([
@@ -102,11 +105,14 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
 
       let phase = date > today ? 'FUTURE' : date === today ? 'TODAY' : 'PAST';
       if (row?.status === 'OPEN' && cutoffFor(date, config) > now) phase = 'TODAY';
+      // past its cutoff with no check-out: a missing check-out, whether or not
+      // the sweep has written that onto the record yet
+      const status = row?.status === 'OPEN' && cutoffFor(date, config) <= now ? 'MISSING_CHECKOUT' : row?.status;
 
       const session = row && row.check_in_at ? {
         checkIn: secondsInto(date, row.check_in_at, tz),
         checkOut: row.check_out_at ? secondsInto(date, row.check_out_at, tz) : null,
-        status: row.status,
+        status,
         regularized: row.regularized,
       } : null;
 
@@ -136,7 +142,7 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
         before_start: Boolean(schedule.beforeStart),
         holiday: schedule.holiday || null,
         session: row ? {
-          id: row.id, status: row.status, check_in_at: row.check_in_at, check_out_at: row.check_out_at,
+          id: row.id, status, check_in_at: row.check_in_at, check_out_at: row.check_out_at,
           check_in_source: row.check_in_source, check_out_source: row.check_out_source,
           review_flags: row.review_flags, regularized: row.regularized,
           has_location: row.check_in_lat !== null || row.check_out_lat !== null,
@@ -219,6 +225,9 @@ export async function computePayroll(userId, month, { now = new Date() } = {}) {
     setup.push({ code: 'MONTH_BEFORE_START', label: `Attendance tracking starts on ${startDate}; this month began before it and is handled outside TaskFlow` });
   }
   if (!ledger.profile?.joining_date) setup.push({ code: 'JOINING_DATE', label: 'Joining date not recorded' });
+  if (!ledger.user.is_active && !ledger.profile?.exit_date) {
+    setup.push({ code: 'EXIT_DATE', label: 'Account deactivated but no exit date recorded' });
+  }
 
   // per day: what stayed unpaid after offsets
   const allocatedTo = new Map();

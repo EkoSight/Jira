@@ -16,7 +16,7 @@ import { createApp } from '../src/app.js';
 import { runMigrations } from '../src/db/migrate.js';
 import { query, closePool } from '../src/db/pool.js';
 import { hashPassword } from '../src/lib/password.js';
-import { addDays, checkOut, dateIn, instantAt } from '../src/services/attendance.js';
+import { addDays, checkOut, dateIn, instantAt, settleMissingCheckouts } from '../src/services/attendance.js';
 import { csvCell } from '../src/lib/csv.js';
 import { monthBounds } from '../src/services/attendanceLedger.js';
 
@@ -280,15 +280,31 @@ test('a session left open past the cutoff becomes a missing check-out; the time 
     [ids.nina, day, at(day, '09:05')],
   );
 
+  // reading shows it as a missing check-out, and writes nothing (audit G / acceptance 14)
   const me = await call('GET', '/attendance/today', { token: tokens.nina });
   assert.equal(me.status, 200);
+  assert.ok(me.body.missing_checkouts.some((m) => m.work_date === day));
+  assert.notEqual(me.body.open_session?.work_date, day, 'a session past its cutoff is not offered for check-out');
+  const month = await call('GET', `/attendance/me?month=${day.slice(0, 7)}`, { token: tokens.nina });
+  assert.equal(month.body.days.find((d) => d.date === day).classification, 'MISSING_CHECKOUT');
+  const read = await query('SELECT status FROM attendance_sessions WHERE user_id = $1 AND work_date = $2', [ids.nina, day]);
+  assert.equal(read.rows[0].status, 'OPEN', 'a read never changes the record');
+  const none = await query(`SELECT 1 FROM attendance_audit WHERE subject_user_id = $1 AND action = 'MARKED_MISSING_CHECKOUT'`, [ids.nina]);
+  assert.equal(none.rows.length, 0);
+
+  // the sweep makes the transition, once, on the record and in the audit log
+  const first = await settleMissingCheckouts(null);
+  assert.ok(first.settled >= 1);
+  const again = await settleMissingCheckouts(null);
+  assert.equal(again.settled, 0, 'running the sweep twice changes nothing more');
   const { rows } = await query('SELECT status, check_out_at FROM attendance_sessions WHERE user_id = $1 AND work_date = $2', [ids.nina, day]);
   assert.equal(rows[0].status, 'MISSING_CHECKOUT');
   assert.equal(rows[0].check_out_at, null, 'no check-out time was invented');
-  assert.ok(me.body.missing_checkouts.some((m) => m.work_date === day));
 
-  const audit = await query(`SELECT action, source FROM attendance_audit WHERE subject_user_id = $1 AND action = 'MARKED_MISSING_CHECKOUT'`, [ids.nina]);
+  const audit = await query(`SELECT action, source, after FROM attendance_audit WHERE subject_user_id = $1 AND action = 'MARKED_MISSING_CHECKOUT'`, [ids.nina]);
+  assert.equal(audit.rows.length, 1);
   assert.equal(audit.rows[0].source, 'SYSTEM');
+  assert.ok(audit.rows[0].after.policy_id, 'the policy that set the cutoff is on record');
 });
 
 // ---------------------------------------------------------------- corrections
@@ -546,14 +562,32 @@ test('leave: paid only on approval and only up to the monthly allowance; the res
   const selfDecide = await call('POST', `/leave/${self.body.request.id}/decide`, { token: tokens.manager, body: { decision: 'APPROVED_PAID' } });
   assert.equal(selfDecide.status, 403, 'no approving your own leave');
 
-  // nothing about pending leave is paid
+  // with no joining date the allowance is not known — shown as provisional, never as a number (audit E)
   const monday = plannedMonday(10);
-  const before = await call('GET', `/leave/balance?month=${monday.slice(0, 7)}`, { token: tokens.vartika });
-  assert.equal(before.body.buckets[0].allowance, 2);
-  assert.equal(before.body.buckets[0].used, 0);
+  const unknown = await call('GET', `/leave/balance?month=${monday.slice(0, 7)}`, { token: tokens.vartika });
+  assert.equal(unknown.body.eligibility, 'UNKNOWN');
+  assert.equal(unknown.body.provisional, true);
+  assert.equal(unknown.body.buckets[0].allowance, null);
+  assert.equal(unknown.body.buckets[0].left, null);
 
   const peer = await call('POST', `/leave/${ids.plannedLeave}/decide`, { token: tokens.rahul, body: { decision: 'APPROVED_PAID' } });
   assert.equal(peer.status, 403);
+
+  // paid approval waits for the joining date; nothing is decided or written meanwhile
+  const blocked = await call('POST', `/leave/${ids.plannedLeave}/decide`, { token: tokens.manager, body: { decision: 'APPROVED_PAID' } });
+  assert.equal(blocked.status, 409);
+  assert.equal(blocked.body.details.code, 'ELIGIBILITY_UNKNOWN', JSON.stringify(blocked.body));
+  const still = await query('SELECT status, availability_id FROM leave_requests WHERE id = $1', [ids.plannedLeave]);
+  assert.ok(['SUBMITTED', 'NOTICE_EXCEPTION', 'EMERGENCY_REVIEW'].includes(still.rows[0].status), 'still pending');
+  assert.equal(still.rows[0].availability_id, null, 'no calendar projection for a refused decision');
+
+  // once the joining date is on record, the allowance is definite
+  const profile = await call('PUT', `/attendance/profiles/${ids.vartika}`, { token: tokens.admin, body: { joining_date: '2025-01-01' } });
+  assert.equal(profile.status, 200, JSON.stringify(profile.body));
+  const before = await call('GET', `/leave/balance?month=${monday.slice(0, 7)}`, { token: tokens.vartika });
+  assert.equal(before.body.eligibility, 'ELIGIBLE');
+  assert.equal(before.body.buckets[0].allowance, 2);
+  assert.equal(before.body.buckets[0].used, 0, 'nothing about pending leave is paid');
 
   const ok = await call('POST', `/leave/${ids.plannedLeave}/decide`, { token: tokens.manager, body: { decision: 'APPROVED_PAID' } });
   assert.equal(ok.status, 200, JSON.stringify(ok.body));

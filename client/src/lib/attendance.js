@@ -62,6 +62,10 @@ export const DAY_META = {
   IN_PROGRESS: { label: 'Checked in', tone: 'brand' },
   NOT_CHECKED_IN: { label: 'Not checked in', tone: 'neutral' },
   UPCOMING: { label: 'Upcoming', tone: 'neutral' },
+  // approved leave on a day still to come: planned, not yet counted
+  PLANNED_PAID_LEAVE: { label: 'Paid leave · planned', tone: 'brand' },
+  PLANNED_UNPAID_LEAVE: { label: 'Unpaid leave · planned', tone: 'warning' },
+  PLANNED_PARTIAL_LEAVE: { label: 'Part leave · planned', tone: 'brand' },
   PAID_LEAVE: { label: 'Paid leave', tone: 'brand' },
   UNPAID_LEAVE: { label: 'Unpaid leave', tone: 'warning' },
   PARTIAL_LEAVE: { label: 'Part leave', tone: 'brand' },
@@ -95,6 +99,9 @@ export const FLAG_LABEL = {
   STALE_READING_OUT: 'Older location reading (out)',
   NETWORK_LOCATION: 'Wi-Fi/network location (in)',
   NETWORK_LOCATION_OUT: 'Wi-Fi/network location (out)',
+  ON_LEAVE_PART_OF_DAY: 'On leave part of the day',
+  LEAVE_PENDING: 'Leave request pending',
+  ACCOUNTING_CHECK_FAILED: 'Figures do not add up — report it',
 };
 
 export const BLOCKER_LABEL = {
@@ -103,7 +110,34 @@ export const BLOCKER_LABEL = {
   PENDING_LEAVE: 'Leave still pending',
   EXTRA_PENDING: 'Extra time not reviewed',
   MONTH_NOT_OVER: 'Month not over',
+  ACCOUNTING_CHECK: 'A day whose figures do not add up',
 };
+
+/**
+ * One blocker, in words. Blockers arrive as a bare code from the attendance
+ * month and as { code, label } from payroll; both are read here, and anything
+ * unrecognised still reads as text — never as "[object Object]".
+ */
+export function blockerLabel(blocker) {
+  if (blocker === null || blocker === undefined) return 'Unknown item';
+  if (typeof blocker === 'string') return BLOCKER_LABEL[blocker] || readableCode(blocker);
+  if (typeof blocker === 'object') {
+    const code = typeof blocker.code === 'string' ? blocker.code : null;
+    if (code && BLOCKER_LABEL[code]) return BLOCKER_LABEL[code];
+    if (typeof blocker.label === 'string' && blocker.label.trim()) return blocker.label;
+    return code ? readableCode(code) : 'Unknown item';
+  }
+  return readableCode(String(blocker));
+}
+
+/** A stable key for a blocker of either shape. */
+export const blockerKey = (blocker) => (typeof blocker === 'object' && blocker ? blocker.code || blocker.label : String(blocker));
+
+/** SOME_CODE → "Some code": a readable fallback for a code this screen does not know yet. */
+function readableCode(code) {
+  const words = String(code).replace(/[_-]+/g, ' ').trim().toLowerCase();
+  return words ? words[0].toUpperCase() + words.slice(1) : 'Unknown item';
+}
 
 export const CORRECTION_KINDS = [
   { value: 'MISSED_CHECK_IN', label: 'I forgot to check in', needs: ['in'] },
@@ -405,3 +439,39 @@ export function readLocation({
 export const mapsLink = (lat, lng) => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${lat},${lng}`)}`;
 
 export const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * What the payroll month's headline may honestly say. A total is only the
+ * team's when every row is calculated; otherwise it is labelled as covering
+ * the calculated rows, and with none calculated there is no total at all —
+ * never a zero that reads like a result.
+ */
+export function payrollCoverage(people = []) {
+  const total = people.length;
+  const calculatedRows = people.filter((p) => p.salary?.status === 'CALCULATED');
+  const count = (status) => people.filter((p) => p.status === status).length;
+  const sum = (key) => calculatedRows.reduce((acc, p) => acc + (Number(p.salary[key]) || 0), 0);
+  const calculated = calculatedRows.length;
+  const state = total === 0 ? 'EMPTY' : calculated === 0 ? 'NONE' : calculated < total ? 'PARTIAL' : 'COMPLETE';
+  const currencies = [...new Set(calculatedRows.map((p) => p.salary.currency || 'INR'))];
+  return {
+    total,
+    calculated,
+    missing: total - calculated,
+    needs_setup: count('NEEDS_SETUP'),
+    provisional: count('PROVISIONAL'),
+    ready: count('READY'),
+    state,
+    // one currency or none: a sum across currencies would mean nothing
+    earnings: state === 'NONE' || state === 'EMPTY' || currencies.length > 1 ? null : sum('attendance_adjusted_earnings'),
+    adjustment: state === 'NONE' || state === 'EMPTY' || currencies.length > 1 ? null : sum('attendance_adjustment'),
+    currency: currencies[0] || 'INR',
+    mixed_currency: currencies.length > 1,
+    // calculated rows whose figure can still change: unresolved time is not
+    // deducted until it is decided, so these amounts can go down
+    with_unresolved: calculatedRows.filter((p) => (p.totals?.unresolved || 0) > 0).length,
+    not_ready_calculated: calculatedRows.filter((p) => p.status !== 'READY').length,
+    // a final team figure needs every row calculated and every row ready
+    final: state === 'COMPLETE' && count('READY') === total,
+  };
+}

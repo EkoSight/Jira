@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
+import { Link } from 'react-router-dom';
 import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { LeaveDialog } from './Attendance.jsx';
+import { useLoad } from '../lib/useLoad.js';
+import { LoadState } from './LoadState.jsx';
 import {
   AVAILABILITY_STATUSES, DAY_PART_LABEL, STATUS_META,
   addDays, dayLabel, describeConflict, describeEntry, formatDays, moveDeadlineTo, rangeLabel,
@@ -14,7 +18,9 @@ import { formatDate } from '../lib/format.js';
  *
  * Only the exceptions are recorded — on leave, a half day, unavailable — and
  * everyone can see them, because the point is that work gets planned around
- * them. There is deliberately no box for the reason: it is often medical or
+ * them. Leave and half days are requested through Leave, approved, and then
+ * appear here; only "unavailable" (time away that is not leave) is written
+ * straight onto this calendar. There is deliberately no box for the reason: it is often medical or
  * personal, and it is nobody else's business. The note is what the person
  * chooses to tell the team.
  */
@@ -32,6 +38,9 @@ export function AwayBadge({ entry, today, compact = false }) {
     </Badge>
   );
 }
+
+/** Kinds that are leave: requested through Leave, never written here directly. */
+const LEAVE_KINDS = ['ON_LEAVE', 'HALF_DAY'];
 
 const WHEN = [
   { value: 'today', label: 'Today' },
@@ -61,6 +70,8 @@ export function AvailabilityDialog({ entry = null, forUserId = null, initialDate
   const [note, setNote] = useState(entry?.note ?? '');
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
+  const [asLeave, setAsLeave] = useState(false);
+  const isLeave = LEAVE_KINDS.includes(status);
 
   // a half day is always one date, so "a date range" makes no sense for it
   useEffect(() => { if (status === 'HALF_DAY' && when === 'range') setWhen('date'); }, [status]);
@@ -71,6 +82,8 @@ export function AvailabilityDialog({ entry = null, forUserId = null, initialDate
 
   const save = async () => {
     if (when === 'range' && last < first) return toast.error('The last day cannot be before the first');
+    // leave has one lifecycle: a request, approved, then shown here (audit B)
+    if (isLeave && !editing) { setAsLeave(true); return undefined; }
     setSaving(true);
     try {
       const body = {
@@ -130,6 +143,21 @@ export function AvailabilityDialog({ entry = null, forUserId = null, initialDate
 
   const person = users.find((u) => u.id === Number(who));
 
+  if (asLeave) {
+    return (
+      <LeaveDialog
+        forUser={Number(who) === user.id ? null : person}
+        initial={{
+          start: first,
+          end: status === 'HALF_DAY' ? first : last,
+          dayPart: status === 'HALF_DAY' ? (dayPart === 'MORNING' ? 'FIRST_HALF' : 'SECOND_HALF') : 'FULL',
+        }}
+        onClose={onClose}
+        onSaved={() => { onSaved?.(); onClose(); }}
+      />
+    );
+  }
+
   return (
     <Modal
       title={editing ? 'Change this entry' : who === user.id ? 'Mark yourself away' : `Mark ${person?.full_name || 'someone'} away`}
@@ -138,7 +166,7 @@ export function AvailabilityDialog({ entry = null, forUserId = null, initialDate
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>
-            {saving ? 'Saving…' : planned && status === 'ON_LEAVE' ? 'Plan this leave' : 'Save'}
+            {saving ? 'Saving…' : isLeave ? 'Continue to the leave request' : 'Save'}
           </button>
         </>
       }
@@ -156,7 +184,7 @@ export function AvailabilityDialog({ entry = null, forUserId = null, initialDate
 
         <Field label="What">
           <div className="row wrap" style={{ gap: 6 }} role="radiogroup">
-            {AVAILABILITY_STATUSES.map((option) => (
+            {AVAILABILITY_STATUSES.filter((option) => !editing || !LEAVE_KINDS.includes(option.value)).map((option) => (
               <button key={option.value} type="button" role="radio" aria-checked={status === option.value}
                 title={option.hint}
                 className={`kind-chip${status === option.value ? ' is-active' : ''}`}
@@ -168,6 +196,15 @@ export function AvailabilityDialog({ entry = null, forUserId = null, initialDate
           <div className="small muted" style={{ marginTop: 4 }}>
             {AVAILABILITY_STATUSES.find((o) => o.value === status)?.hint}
           </div>
+          {isLeave && (
+            <div className="callout is-quiet small" style={{ marginTop: 6 }}>
+              <Icon name="alert" size={14} />
+              <span>
+                Leave is requested and approved, then shows here — so it is counted the same way in attendance and pay.
+                Next you give the type and a reason{Number(who) === user.id ? '' : ' (it goes to their approvers; recording it is not approving it)'}.
+              </span>
+            </div>
+          )}
         </Field>
 
         <Field label="When">
@@ -214,11 +251,13 @@ export function AvailabilityDialog({ entry = null, forUserId = null, initialDate
           </Field>
         )}
 
-        <Field label="Note for the team (optional)"
-          hint="Everyone can read this. There is no need to give a reason — just what they should know.">
-          <input className="input" value={note} maxLength={300} onChange={(e) => setNote(e.target.value)}
-            placeholder="Back Monday — reachable on phone for anything urgent" />
-        </Field>
+        {!isLeave && (
+          <Field label="Note for the team (optional)"
+            hint="Everyone can read this. There is no need to give a reason — just what they should know.">
+            <input className="input" value={note} maxLength={300} onChange={(e) => setNote(e.target.value)}
+              placeholder="Back Monday — reachable on phone for anything urgent" />
+          </Field>
+        )}
 
         <div className="callout is-quiet small">
           <Icon name="clock" size={14} />
@@ -247,15 +286,24 @@ export function MyAvailability({ entries, today, onChanged }) {
             {rangeLabel(entry.start_date, entry.end_date)}
             {entry.note && <span className="muted"> · {entry.note}</span>}
           </span>
-          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(entry)}>Change</button>
-          <ConfirmButton label="Cancel" confirmLabel="Cancel it?" className="btn btn-sm btn-ghost"
-            onConfirm={async () => {
-              try {
-                await api.cancelAvailability(entry.id);
-                toast.success('Cancelled');
-                onChanged();
-              } catch (err) { toast.error(err); }
-            }} />
+          {entry.source === 'LEAVE_REQUEST' ? (
+            // the calendar copy of an approved request: changed only through the request
+            <Link to="/attendance?tab=leave" className="btn btn-sm btn-ghost" title="Change or cancel it in your leave requests">Manage in Leave</Link>
+          ) : (
+            <>
+              {entry.source !== 'LEGACY_LEAVE' && (
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => setEditing(entry)}>Change</button>
+              )}
+              <ConfirmButton label="Cancel" confirmLabel="Cancel it?" className="btn btn-sm btn-ghost"
+                onConfirm={async () => {
+                  try {
+                    await api.cancelAvailability(entry.id);
+                    toast.success('Cancelled');
+                    onChanged();
+                  } catch (err) { toast.error(err); }
+                }} />
+            </>
+          )}
         </li>
       ))}
       {editing && (
@@ -354,10 +402,13 @@ export function TeamCalendar({ departmentId = '' }) {
     const dow = weekdayOf(today);
     return addDays(today, dow === 0 ? -6 : 1 - dow);
   });
-  const [data, setData] = useState(null);
   const [marking, setMarking] = useState(null);
   const scroller = useRef(null);
   const DAYS = 21;
+  // only the answer for the weeks on screen is shown; a slow earlier one is dropped (audit H)
+  const loaded = useLoad(() => api.availability({ from: start, to: addDays(start, DAYS - 1) }), [start], { accept: (d) => d?.from === start });
+  const data = loaded.status === 'ready' ? loaded.data : null;
+  const load = loaded.reload;
 
   // on a narrow screen the grid scrolls sideways; open it on today, not on Monday
   useEffect(() => {
@@ -371,16 +422,11 @@ export function TeamCalendar({ departmentId = '' }) {
     }
   }, [data]);
 
-  const load = () => {
-    api.availability({ from: start, to: addDays(start, DAYS - 1) })
-      .then(setData).catch((err) => toast.error(err));
-  };
-  useEffect(load, [start]);
 
   const days = useMemo(() => Array.from({ length: DAYS }, (_, i) => addDays(start, i)), [start]);
   const people = users.filter((u) => !departmentId || String(u.department_id) === String(departmentId));
 
-  if (!data) return <Spinner label="Loading the team calendar" />;
+  if (!data) return <LoadState load={loaded} label="Loading the team calendar" what="the team calendar" />;
 
   const entryFor = (userId, day) => data.entries.find(
     (e) => e.user_id === userId && e.start_date <= day && e.end_date >= day,

@@ -14,7 +14,7 @@ import { query, withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, HttpError, notFound } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { clock, creditableIntervals } from '../lib/attendanceCalc.js';
-import { currentPolicy, policyOn, policyTimeline } from './attendancePolicy.js';
+import { currentPolicy, policyAt, policyOn, policyTimeline } from './attendancePolicy.js';
 
 const DAY = 86_400_000;
 
@@ -200,33 +200,47 @@ export function shapeSession(row, { withLocation }) {
 }
 
 /**
- * Turns open sessions whose cutoff has passed into missing check-outs. Run
- * lazily before anything reads or writes sessions, so nobody depends on a
- * background job having run. Nothing is invented: the check-out stays empty.
+ * Turns open sessions whose cutoff has passed into missing check-outs.
+ *
+ * An explicit transition, run by the attendance sweep and by the actions that
+ * write sessions (check-in, check-out, corrections) — never by a report or a
+ * read. Each session is judged by the policy in force on its own work date, so
+ * a later policy cannot change an earlier day's cutoff. Idempotent: only a
+ * session still OPEN is changed, and only a change is written to the audit log.
+ * Nothing is invented: the check-out stays empty.
  */
 export async function settleMissingCheckouts(userId = null, now = new Date()) {
-  const policy = await currentPolicy();
+  const timeline = await policyTimeline();
   const { rows } = await query(
     `SELECT id, user_id, work_date FROM attendance_sessions WHERE status = 'OPEN' ${userId ? 'AND user_id = $1' : ''}`,
     userId ? [userId] : [],
   );
+  let settled = 0;
   for (const row of rows) {
-    if (cutoffFor(row.work_date, policy.config) <= now) {
+    const version = policyOn(timeline, row.work_date);
+    if (cutoffFor(row.work_date, version.config) <= now) {
       const { rowCount } = await query(
         `UPDATE attendance_sessions SET status = 'MISSING_CHECKOUT', updated_at = now()
           WHERE id = $1 AND status = 'OPEN'`,
         [row.id],
       );
       if (rowCount) {
+        settled += 1;
         await audit(null, {
           entityType: 'ATTENDANCE_SESSION', entityId: row.id, subjectUserId: row.user_id,
           action: 'MARKED_MISSING_CHECKOUT', source: 'SYSTEM',
           reason: 'No check-out before the cutoff; the time was not guessed',
+          before: { status: 'OPEN' },
+          after: { status: 'MISSING_CHECKOUT', policy_id: version.id, cutoff: cutoffFor(row.work_date, version.config).toISOString() },
         });
       }
     }
   }
+  return { settled };
 }
+
+/** Whether a stored session is past its cutoff without a check-out — worked out, not written. */
+export const isPastCutoff = (row, config, now = new Date()) => row?.status === 'OPEN' && cutoffFor(row.work_date, config) <= now;
 
 export async function openSession(userId) {
   const { rows } = await query(`SELECT ${SESSION_COLUMNS} FROM attendance_sessions s WHERE user_id = $1 AND status = 'OPEN'`, [userId]);
@@ -299,7 +313,7 @@ const requestIdOf = (value) => {
  */
 export async function checkIn(user, { requestId, location, userAgent }, now = new Date()) {
   const id = requestIdOf(requestId);
-  const { config } = await currentPolicy();
+  const { config } = await currentPolicy(now);
 
   const replay = await query(`SELECT ${SESSION_COLUMNS} FROM attendance_sessions s WHERE user_id = $1 AND check_in_request_id = $2`, [user.id, id]);
   if (replay.rows[0]) return { session: replay.rows[0], replayed: true };
@@ -347,7 +361,7 @@ export async function checkIn(user, { requestId, location, userAgent }, now = ne
 /** Check Out / End Work. Completes the open session, even after midnight. */
 export async function checkOut(user, { requestId, location, userAgent }, now = new Date()) {
   const id = requestIdOf(requestId);
-  const { config } = await currentPolicy();
+  const { config } = await currentPolicy(now);
 
   const replay = await query(`SELECT ${SESSION_COLUMNS} FROM attendance_sessions s WHERE user_id = $1 AND check_out_request_id = $2`, [user.id, id]);
   if (replay.rows[0]) return { session: replay.rows[0], replayed: true };
@@ -394,18 +408,19 @@ export async function checkOut(user, { requestId, location, userAgent }, now = n
 
 // ---------------------------------------------------------------- the gate
 
-let gateCache = { at: 0, policy: null };
-export const resetGateCache = () => { gateCache = { at: 0, policy: null }; };
+// the versions are cached briefly; which one is in force is worked out per call
+let gateCache = { at: 0, timeline: null };
+export const resetGateCache = () => { gateCache = { at: 0, timeline: null }; };
 
 /**
  * Whether this person must check in before doing normal work right now, and
  * why. Off entirely until an admin sets the date attendance starts.
  */
 export async function attendanceGate(user, now = new Date()) {
-  if (!gateCache.policy || Date.now() - gateCache.at > 15_000) {
-    gateCache = { at: Date.now(), policy: await currentPolicy() };
+  if (!gateCache.timeline || Date.now() - gateCache.at > 15_000) {
+    gateCache = { at: Date.now(), timeline: await policyTimeline() };
   }
-  const { config } = gateCache.policy;
+  const { config } = policyAt(gateCache.timeline, now);
   const today = dateIn(config.timezone, now);
   const open = { required: false, satisfied: true, today };
 

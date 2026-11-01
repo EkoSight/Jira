@@ -16,11 +16,12 @@ import { query, withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { effectivePermissions } from '../lib/permissions.js';
 import { notify } from './activity.js';
-import { currentPolicy, policyTimeline, policyOn } from './attendancePolicy.js';
+import { currentPolicy, getPolicyFor, policyTimeline, policyOn } from './attendancePolicy.js';
 import {
   addDays, audit, dateIn, getProfile, holidaysBetween, instantAt, scheduleOn, visibleUserIds,
 } from './attendance.js';
 import { APPROVED_LEAVE, PENDING_LEAVE, isLocked, leaveSpan, monthBounds } from './attendanceLedger.js';
+import { tasksDueDuring } from './availability.js';
 
 export const LEAVE_CATEGORIES = ['CASUAL', 'SICK', 'UNPAID', 'STATUTORY', 'OTHER'];
 export const CATEGORY_LABEL = { CASUAL: 'Casual', SICK: 'Sick', UNPAID: 'Unpaid', STATUTORY: 'Statutory', OTHER: 'Other' };
@@ -63,12 +64,40 @@ export function bucketOf(category, mode) {
   return 'POOL';
 }
 
-/** The paid days a bucket allows in a month — pooled or split, never both. */
+/**
+ * Whether the monthly allowance applies to this person in this month.
+ *
+ *   ELIGIBLE          it applies
+ *   NOT_YET_ELIGIBLE  the policy starts it after joining, and they joined after
+ *                     the month began
+ *   UNKNOWN           the policy depends on the joining date and none is
+ *                     recorded — never assumed either way
+ */
+export function eligibilityFor(month, config, profile) {
+  const leave = config.leave || {};
+  if (leave.eligibility !== 'JOINED_BEFORE_MONTH') return 'ELIGIBLE';
+  if (!profile?.joining_date) return 'UNKNOWN';
+  const { first } = monthBounds(month);
+  return profile.joining_date > first ? 'NOT_YET_ELIGIBLE' : 'ELIGIBLE';
+}
+
+export const ELIGIBILITY_LABEL = {
+  ELIGIBLE: 'Eligible',
+  NOT_YET_ELIGIBLE: 'Not yet eligible — the allowance starts in the first full month after joining',
+  UNKNOWN: 'Joining date not recorded — whether the allowance applies is not known yet',
+};
+
+/**
+ * The paid days a bucket allows in a month — pooled or split, never both.
+ * Null when eligibility is unknown: there is no definite allowance to show or
+ * to draw on until someone records the joining date.
+ */
 export function allowanceFor(bucket, month, config, profile) {
   if (!bucket) return 0;
+  const eligibility = eligibilityFor(month, config, profile);
+  if (eligibility === 'UNKNOWN') return null;
+  if (eligibility === 'NOT_YET_ELIGIBLE') return 0;
   const leave = config.leave || {};
-  const { first } = monthBounds(month);
-  if (leave.eligibility === 'JOINED_BEFORE_MONTH' && profile?.joining_date && profile.joining_date > first) return 0;
   const total = Number(leave.monthlyPaidDays ?? 2);
   return leave.allowanceMode === 'SPLIT' ? total / 2 : total;
 }
@@ -91,40 +120,73 @@ export async function usedInMonth(userId, month, bucket, mode, { excludeId = nul
   return used;
 }
 
-/** A month's allowance picture for one person: used, left and pending. */
+/**
+ * A month's allowance picture for one person: used and left. The month is
+ * judged by the policy in force on its first day. Where eligibility is not
+ * known the allowance and what is left are null, and the reason is given —
+ * never a definite number.
+ */
 export async function balance(userId, month) {
-  const { config } = await currentPolicy();
+  const { first } = monthBounds(month);
+  const { config } = await getPolicyFor(first);
   const profile = await getProfile(userId);
   const mode = config.leave?.allowanceMode || 'POOLED';
   const buckets = mode === 'SPLIT' ? ['CASUAL', 'SICK'] : ['POOL'];
+  const eligibility = eligibilityFor(first, config, profile);
   const out = [];
   for (const bucket of buckets) {
-    const allowance = allowanceFor(bucket, month, config, profile);
-    const used = await usedInMonth(userId, month, bucket, mode);
-    out.push({ bucket, label: bucket === 'POOL' ? 'Paid leave (casual, sick or other)' : `${CATEGORY_LABEL[bucket]} leave`, allowance, used, left: Math.max(0, allowance - used) });
+    const allowance = allowanceFor(bucket, first, config, profile);
+    const used = await usedInMonth(userId, first, bucket, mode);
+    out.push({
+      bucket,
+      label: bucket === 'POOL' ? 'Paid leave (casual, sick or other)' : `${CATEGORY_LABEL[bucket]} leave`,
+      allowance,
+      used,
+      left: allowance === null ? null : Math.max(0, allowance - used),
+    });
   }
-  return { month: monthBounds(month).first, mode, buckets: out };
+  return {
+    month: first,
+    mode,
+    eligibility,
+    eligibility_label: ELIGIBILITY_LABEL[eligibility],
+    provisional: eligibility === 'UNKNOWN',
+    buckets: out,
+  };
 }
 
 /**
  * The day-by-day split fixed at approval. Each day draws on its own month's
- * allowance, in date order, in half-day steps.
+ * allowance, under the policy in force on that day, in date order, in half-day
+ * steps. Paid leave that depends on an unknown joining date is refused, not
+ * guessed: the reviewer records the date first (or decides it as unpaid).
  */
 export async function allocate(request, approveAsPaid, { client } = {}) {
-  const { config } = await currentPolicy();
-  const mode = config.leave?.allowanceMode || 'POOLED';
+  const timeline = await policyTimeline();
   const profile = await getProfile(request.user_id);
   const { days } = await leaveDays(request.user_id, request.department_id, request.start_date, request.end_date, request.day_part);
   if (!approveAsPaid || request.category === 'UNPAID') return days.map((d) => ({ ...d, paid: 0 }));
   if (request.category === 'STATUTORY') return days.map((d) => ({ ...d, paid: d.portion }));
 
-  const bucket = bucketOf(request.category, mode);
   const left = new Map();
   const out = [];
   for (const day of days) {
+    const { config } = policyOn(timeline, day.date);
+    const mode = config.leave?.allowanceMode || 'POOLED';
+    const bucket = bucketOf(request.category, mode);
+    if (!bucket) { out.push({ ...day, paid: 0 }); continue; }
     const month = day.date.slice(0, 7);
     if (!left.has(month)) {
-      const allowance = allowanceFor(bucket, day.date, config, profile);
+      // the month's allowance follows the policy in force when the month began
+      const { config: monthConfig } = policyOn(timeline, `${month}-01`);
+      const allowance = allowanceFor(bucket, day.date, monthConfig, profile);
+      if (allowance === null) {
+        throw conflict(
+          'The joining date is not recorded, so TaskFlow cannot tell whether the monthly paid-leave allowance applies. '
+          + 'Record it on the person\'s work profile first — or approve this as unpaid, or reject it.',
+          { code: 'ELIGIBILITY_UNKNOWN', month },
+        );
+      }
       const used = await usedInMonth(request.user_id, day.date, bucket, mode, { excludeId: request.id, client });
       left.set(month, Math.max(0, allowance - used));
     }
@@ -226,7 +288,8 @@ async function assertNoOverlap(userId, start, end, dayPart, exceptId = null) {
 
 /** When the leave begins, as an instant — what notice is measured to. */
 async function leaveBeginsAt(start, dayPart) {
-  const { config } = await currentPolicy();
+  // the office hours in force on the day the leave starts
+  const { config } = await getPolicyFor(start);
   const span = leaveSpan(dayPart, { start: 0, end: 0, ...officeOf(config) }, config);
   return instantAt(start, span[0], config.timezone);
 }
@@ -237,7 +300,7 @@ const officeOf = (config) => {
 
 /** Submits (or saves as a draft) a request. Notice is fixed from server time now. */
 export async function createRequest(actor, subjectUserId, input, now = new Date()) {
-  const { config } = await currentPolicy();
+  const { config } = await currentPolicy(now);
   const today = dateIn(config.timezone, now);
   const data = { day_part: 'FULL', ...input };
   validate(data, today);
@@ -272,7 +335,7 @@ export async function submitRequest(actor, id, now = new Date()) {
   if (request.user_id !== actor.id && request.created_by !== actor.id) throw forbidden('This is not your request');
   if (request.status !== 'DRAFT') throw conflict('This request has already been submitted');
   await assertNoOverlap(request.user_id, request.start_date, request.end_date, request.day_part, request.id);
-  const { config } = await currentPolicy();
+  const { config } = await currentPolicy(now);
   const begins = await leaveBeginsAt(request.start_date, request.day_part);
   const notice = Math.floor((begins - now) / 1000);
   const compliant = notice >= (Number(config.leave?.noticeHours) || 48) * 3600;
@@ -357,7 +420,28 @@ export async function decideRequest(reviewer, id, { decision, note }) {
       title: `Your leave from ${request.start_date} ${words}`,
       body: note || null,
     });
-    return { id, status, paid_days: paidDays, unpaid_days: unpaidDays };
+    // approved leave is on the calendar now: whoever handed over work that
+    // falls due during it hears about it once, so it can be moved in time
+    let tasksDue = [];
+    if (status !== 'REJECTED') {
+      tasksDue = await tasksDueDuring(request.user_id, request.start_date, request.end_date);
+      const byReporter = new Map();
+      for (const task of tasksDue) {
+        const to = task.reporter_id || task.created_by;
+        if (!to || to === request.user_id) continue;
+        byReporter.set(to, [...(byReporter.get(to) || []), task]);
+      }
+      for (const [reporterId, tasks] of byReporter) {
+        await notify(client, {
+          userId: reporterId,
+          type: 'availability',
+          title: `${request.full_name} will be on leave when ${tasks.length === 1 ? 'a task you assigned is' : `${tasks.length} tasks you assigned are`} due`,
+          body: tasks.map((t) => `${t.ref} ${t.title}`).join(' · ').slice(0, 200),
+          taskId: tasks.length === 1 ? tasks[0].id : null,
+        });
+      }
+    }
+    return { id, status, paid_days: paidDays, unpaid_days: unpaidDays, availability_id: availabilityId, tasks_due_during: tasksDue };
   });
 }
 

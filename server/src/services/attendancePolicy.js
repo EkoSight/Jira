@@ -155,8 +155,36 @@ export async function getPolicyFor(date) {
   return policyOn(await policyTimeline(), date);
 }
 
-/** The latest version — what new actions are judged by. */
-export async function currentPolicy() {
+/** The calendar date (YYYY-MM-DD) of an instant in a timezone. */
+const businessDate = (timezone, now) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: timezone || 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(now);
+
+/**
+ * The version in force at an instant, judged by the business date in that
+ * version's own timezone. A version scheduled to start later (say, a December
+ * change saved in November) is never applied before its date.
+ */
+export function policyAt(timeline, now = new Date()) {
+  const newest = timeline[timeline.length - 1];
+  let version = policyOn(timeline, businessDate(newest?.config?.timezone, now));
+  // the timezone itself can change between versions: settle on the date as
+  // the version in force sees it
+  const settled = policyOn(timeline, businessDate(version?.config?.timezone, now));
+  if (settled) version = settled;
+  return version;
+}
+
+/** The version in force today — what new actions (check-in, leave, reminders) are judged by. */
+export async function currentPolicy(now = new Date()) {
+  return policyAt(await policyTimeline(), now);
+}
+
+/**
+ * The newest version by effective date, scheduled or not — the base a new
+ * version is built from in Settings. Never used to judge attendance or pay.
+ */
+export async function latestPolicy() {
   const versions = await listPolicies();
   return versions[0];
 }

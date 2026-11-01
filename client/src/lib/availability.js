@@ -11,8 +11,8 @@
  */
 
 export const AVAILABILITY_STATUSES = [
-  { value: 'ON_LEAVE', label: 'On leave', short: 'Leave', tone: 'warning', hint: 'Away for the whole day' },
-  { value: 'HALF_DAY', label: 'Half day', short: 'Half day', tone: 'brand', hint: 'Away for the morning or the afternoon' },
+  { value: 'ON_LEAVE', label: 'On leave', short: 'Leave', tone: 'warning', hint: 'Away for the whole day — requested and approved through Leave' },
+  { value: 'HALF_DAY', label: 'Half day', short: 'Half day', tone: 'brand', hint: 'Away for the morning or the afternoon — requested and approved through Leave' },
   { value: 'UNAVAILABLE', label: 'Unavailable', short: 'Unavailable', tone: 'critical', hint: 'Working, but not reachable for new work — travel, training, field visits' },
 ];
 

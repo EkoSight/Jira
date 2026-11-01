@@ -11,7 +11,8 @@ import { audit, dateIn } from '../services/attendance.js';
 import { currentPolicy } from '../services/attendancePolicy.js';
 import { isLocked, monthBounds } from '../services/attendanceLedger.js';
 import {
-  ACTIONS, BLOCKER_TEXT, PAYROLL_STATUS_LABEL, history, lockedResults, markExported, payrollPeople, payrollView, transition,
+  ACTIONS, BLOCKER_TEXT, PAYROLL_STATUS_LABEL, history, lockedResults, markExported, payrollExclusions, payrollPeople, payrollView,
+  readiness, transition,
 } from '../services/payroll.js';
 
 const router = Router();
@@ -86,6 +87,15 @@ router.post(
   }),
 );
 
+/** What stands between a month and a payroll anyone can rely on. Reads only. */
+router.get(
+  '/:month/readiness',
+  asyncHandler(async (req, res) => {
+    const month = await monthOf(req.params.month);
+    res.json(await readiness(month));
+  }),
+);
+
 /** Everyone's month: one row each, with what stands in the way. */
 router.get(
   '/:month',
@@ -115,7 +125,9 @@ router.get(
         } : null,
       });
     }
-    res.json({ month, people, statuses: PAYROLL_STATUS_LABEL });
+    // who is not in this month and why, so nobody drops out unseen
+    const excluded = (await payrollExclusions(month)).map((e) => ({ id: e.id, name: e.full_name, reason: e.reason }));
+    res.json({ month, people, excluded, statuses: PAYROLL_STATUS_LABEL });
   }),
 );
 
@@ -141,7 +153,12 @@ router.post(
     const month = await monthOf(req.params.month);
     if (!ACTIONS.includes(req.params.action)) throw notFound('Unknown action');
     assertMay(req.currentUser, req.params.action);
-    res.json(await transition(req.currentUser, month, Number(req.params.userId), req.params.action, { reason: req.body?.reason }));
+    // what the caller was looking at, so a stale screen cannot act on a newer state
+    const expected = req.body?.expected ? z.object({
+      status: z.enum(['DRAFT', 'IN_REVIEW', 'APPROVED', 'LOCKED']),
+      version: z.number().int().positive().nullable().optional(),
+    }).parse(req.body.expected) : undefined;
+    res.json(await transition(req.currentUser, month, Number(req.params.userId), req.params.action, { reason: req.body?.reason, expected }));
   }),
 );
 

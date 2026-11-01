@@ -28,7 +28,7 @@ async function remindOnce(userId, type, date, title, body) {
 
 export async function runAttendanceScan(now = new Date()) {
   await settleMissingCheckouts(null, now);
-  const { config } = await currentPolicy();
+  const { config } = await currentPolicy(now);
   const today = dateIn(config.timezone, now);
   if (!config.startDate || today < config.startDate) return { notified: [] };
 

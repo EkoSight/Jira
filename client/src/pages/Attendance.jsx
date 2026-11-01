@@ -9,9 +9,11 @@ import {
   MonthLedger, TodayAttendanceCard,
 } from '../components/Attendance.jsx';
 import {
-  BLOCKER_LABEL, clockIn, currentExtraWords, dayMeta, dayName, earlierDecisionWords, extraReviewFacts, hhmm, monthName,
+  blockerLabel, clockIn, currentExtraWords, dayMeta, dayName, earlierDecisionWords, extraReviewFacts, hhmm, money, monthName,
   outsideHoursWords, shiftMonth, todayIn, words,
 } from '../lib/attendance.js';
+import { useLoad } from '../lib/useLoad.js';
+import { LoadState, OfflineNote } from '../components/LoadState.jsx';
 
 /**
  * Attendance and leave. Everyone has Today, My month and My leave. Team and
@@ -94,11 +96,12 @@ function MyMonthTab() {
   const toast = useToast();
   const { reload } = useAttendance();
   const [month, setMonth] = useState(todayIn().slice(0, 7));
-  const [data, setData] = useState(null);
   const [correction, setCorrection] = useState(null);
   const [locationOf, setLocationOf] = useState(null);
-  const load = useCallback(() => { setData(null); api.myAttendance(month).then(setData).catch(toast.error); }, [month, toast]);
-  useEffect(load, [load]);
+  // only the answer for the month on screen is ever shown (audit H)
+  const loaded = useLoad(() => api.myAttendance(month), [month], { accept: (d) => d?.month?.slice(0, 7) === month });
+  const data = loaded.status === 'ready' ? loaded.data : null;
+  const load = loaded.reload;
 
   return (
     <div className="stack">
@@ -113,12 +116,16 @@ function MyMonthTab() {
           Download CSV
         </button>
       </div>
-      {!data ? <Spinner /> : (
+      {!data ? <LoadState load={loaded} label="Working out the month" what={`${monthName(month)}`} /> : (
         <>
+          <OfflineNote load={loaded} />
           {data.salary && (
             <div className="callout is-quiet small">
               <Icon name="alert" />
-              <span>Estimated attendance-adjusted earnings: <strong>{data.salary.attendance_adjusted_earnings}</strong> ({data.salary_status === 'READY' ? 'ready for payroll' : 'provisional'}). Payroll confirms the final figure.</span>
+              <span>
+                Estimated attendance-adjusted earnings: <strong>{data.salary.status === 'CALCULATED' ? money(data.salary.attendance_adjusted_earnings, data.salary.currency) : 'not calculated yet'}</strong>
+                {' '}({data.salary_status === 'READY' ? 'ready for payroll' : 'provisional'}). This is the attendance-sensitive part only — not net pay. Payroll confirms the final figure.
+              </span>
             </div>
           )}
           <MonthLedger
@@ -152,8 +159,14 @@ function MyLeaveTab() {
           {balance?.buckets.map((b) => (
             <div key={b.bucket} className="att-total">
               <span className="att-total-label">{b.label} · {monthName(balance.month)}</span>
-              <strong className="tnum">{b.left} of {b.allowance} left</strong>
-              <span className="small muted">Paid only once approved</span>
+              {b.allowance === null
+                ? <strong className="small">Not known yet</strong>
+                : <strong className="tnum">{b.left} of {b.allowance} left</strong>}
+              <span className="small muted">
+                {b.allowance === null
+                  ? `${balance.eligibility_label}. Ask HR to record your joining date; paid approval waits until then.`
+                  : 'Paid only once approved'}
+              </span>
             </div>
           ))}
         </div>
@@ -184,24 +197,25 @@ function TeamTab() {
   const { departments } = useRefData();
   const [date, setDate] = useState(todayIn());
   const [departmentId, setDepartmentId] = useState('');
-  const [data, setData] = useState(null);
   const [view, setView] = useState('day');
   const [month, setMonth] = useState(todayIn().slice(0, 7));
-  const [monthData, setMonthData] = useState(null);
   const [person, setPerson] = useState(null);
   const [locationOf, setLocationOf] = useState(null);
   const [withLocation, setWithLocation] = useState(false);
 
-  useEffect(() => {
-    if (view !== 'day') return;
-    setData(null);
-    api.teamToday({ date, department_id: departmentId || undefined }).then(setData).catch(toast.error);
-  }, [date, departmentId, view, toast]);
-  useEffect(() => {
-    if (view !== 'month') return;
-    setMonthData(null);
-    api.teamMonth({ month, department_id: departmentId || undefined }).then(setMonthData).catch(toast.error);
-  }, [month, departmentId, view, toast]);
+  // only the answer for the date or month on screen is shown; a slow earlier one is dropped (audit H)
+  const dayLoad = useLoad(
+    () => api.teamToday({ date, department_id: departmentId || undefined }),
+    [date, departmentId, view],
+    { enabled: view === 'day', accept: (d) => d?.date === date },
+  );
+  const monthLoad = useLoad(
+    () => api.teamMonth({ month, department_id: departmentId || undefined }),
+    [month, departmentId, view],
+    { enabled: view === 'month', accept: (d) => d?.month?.slice(0, 7) === month },
+  );
+  const data = dayLoad.status === 'ready' ? dayLoad.data : null;
+  const monthData = monthLoad.status === 'ready' ? monthLoad.data : null;
 
   const exportCsv = () => {
     const from = view === 'day' ? date : `${month}-01`;
@@ -234,7 +248,7 @@ function TeamTab() {
         </div>
       </div>
 
-      {view === 'day' && (!data ? <Spinner /> : (
+      {view === 'day' && (!data ? <LoadState load={dayLoad} label="Loading the team's day" what="the team's day" /> : (
         <>
           <div className="att-counts">
             <Count label="Checked in" value={c.checked_in} tone="brand" />
@@ -288,11 +302,18 @@ function TeamTab() {
         </>
       ))}
 
-      {view === 'month' && (!monthData ? <Spinner /> : (
+      {view === 'month' && (!monthData ? <LoadState load={monthLoad} label="Working out the month" what="the team month" /> : (
         <div className="card table-wrap">
+          <OfflineNote load={monthLoad} />
           <table className="data">
             <thead>
-              <tr><th>Person</th><th>Required so far</th><th>In office hours</th><th>Paid leave</th><th>Late days</th><th title="Days checked in before office hours, and the time">Early days</th><th>Extra (pending)</th><th>Unpaid</th><th>Open items</th></tr>
+              <tr>
+                <th>Person</th>
+                <th title="Scheduled hours on days that have started. Payroll shows the whole month's hours, so the two differ until the month ends.">Required so far</th>
+                <th>In office hours</th><th>Paid leave</th><th>Late days</th><th title="Days checked in before office hours, and the time">Early days</th>
+                <th title="All extra time recorded this month; the part still waiting for a reviewer is shown after it">Extra recorded · awaiting review</th>
+                <th>Unpaid</th><th>Open items</th>
+              </tr>
             </thead>
             <tbody>
               {monthData.people.map((p) => (
@@ -312,10 +333,11 @@ function TeamTab() {
                     className="tnum"
                     title={p.outside_hours?.extra_before ? `${hhmm(p.outside_hours.extra_before)} before office hours · ${hhmm(p.outside_hours.extra_after)} after` : undefined}
                   >
-                    {hhmm(p.totals.extra_recorded)}{p.totals.extra_pending ? ` (${hhmm(p.totals.extra_pending)})` : ''}
+                    {hhmm(p.totals.extra_recorded)}
+                    {p.totals.extra_pending ? <span className="muted"> · {hhmm(p.totals.extra_pending)} awaiting review</span> : ''}
                   </td>
                   <td className="tnum">{hhmm(p.totals.unpaid)}</td>
-                  <td className="small">{p.blockers.length ? p.blockers.map((b) => BLOCKER_LABEL[b] || b).join(', ') : <span className="muted">—</span>}</td>
+                  <td className="small">{p.blockers.length ? p.blockers.map(blockerLabel).join(', ') : <span className="muted">—</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -343,19 +365,19 @@ function PersonMonth({ user, initialMonth, onClose }) {
   const toast = useToast();
   const { can, user: me } = useAuth();
   const [month, setMonth] = useState(initialMonth);
-  const [data, setData] = useState(null);
   const [locationOf, setLocationOf] = useState(null);
   const [reviewDay, setReviewDay] = useState(null);
   const [reviewExtra, setReviewExtra] = useState(null);
-  const load = useCallback(() => { setData(null); api.personAttendance(user.id, month).then(setData).catch(toast.error); }, [user.id, month, toast]);
-  useEffect(load, [load]);
+  const loaded = useLoad(() => api.personAttendance(user.id, month), [user.id, month], { accept: (d) => d?.month?.slice(0, 7) === month });
+  const data = loaded.status === 'ready' ? loaded.data : null;
+  const load = loaded.reload;
   const reviewer = can('attendance.approve') && user.id !== me.id;
 
   return (
     <Modal title={user.full_name} onClose={onClose} size="lg">
       <div className="stack">
         <MonthPicker month={month} onChange={setMonth} />
-        {!data ? <Spinner /> : (
+        {!data ? <LoadState load={loaded} label="Working out the month" what={monthName(month)} /> : (
           <MonthLedger
             data={data}
             onLocation={setLocationOf}

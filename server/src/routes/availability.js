@@ -2,14 +2,16 @@ import { Router } from 'express';
 import { z } from 'zod';
 
 import { query, withTransaction } from '../db/pool.js';
-import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
+import { asyncHandler, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { notify } from '../services/activity.js';
 import {
-  AVAILABILITY_STATUSES, DAY_PARTS, STATUS_LABEL,
+  AVAILABILITY_STATUSES, DAY_PARTS, LEAVE_STATUSES, STATUS_LABEL,
   addDays, checkAssignment, dateIn, findOverlap, getEntry, listAvailability, orgCalendar,
   statusOn, tasksDueDuring,
 } from '../services/availability.js';
+import { audit } from '../services/attendance.js';
+import { isLocked } from '../services/attendanceLedger.js';
 
 const router = Router();
 
@@ -30,6 +32,21 @@ const MAX_BACK_DAYS = 31;
 const MAX_LENGTH_DAYS = 120;
 
 const canManageFor = (user, userId) => userId === user.id || hasPermission(user, 'user.edit');
+
+/**
+ * Leave has one lifecycle: a leave request, approved or not, checked against
+ * payroll locks, and copied onto this calendar when approved. The calendar
+ * cannot be used to record, change or remove leave behind that lifecycle.
+ */
+const USE_LEAVE_REQUEST = 'Leave and half days are requested in Attendance → Leave, so they are approved and counted the same way everywhere. '
+  + 'Use "unavailable" here for time away that is not leave.';
+const MANAGED_BY_REQUEST = 'This came from an approved leave request. Change or cancel the request in Attendance → Leave — that is where approval and payroll locks apply.';
+
+async function assertNotLocked(userId, start, end) {
+  for (let d = start; d <= end; d = addDays(d, 1)) {
+    if (await isLocked(userId, d)) throw conflict(`Payroll for ${d.slice(0, 7)} is approved or locked for this person — it cannot change from the calendar`, { code: 'PAYROLL_LOCKED' });
+  }
+}
 
 function validateRange({ start, end, status, dayPart }, today) {
   if (end < start) throw badRequest('The last day cannot be before the first');
@@ -133,6 +150,7 @@ router.post(
   '/',
   asyncHandler(async (req, res) => {
     const data = entryInput.parse(req.body);
+    if (LEAVE_STATUSES.includes(data.status)) throw conflict(USE_LEAVE_REQUEST, { code: 'USE_LEAVE_REQUEST' });
     const userId = data.user_id ?? req.currentUser.id;
     if (!canManageFor(req.currentUser, userId)) {
       throw forbidden('You can record your own leave; recording it for someone else needs a manager');
@@ -206,6 +224,10 @@ router.patch(
     const existing = await getEntry(Number(req.params.id));
     if (!existing || existing.cancelled_at) throw notFound('No such entry');
     if (!canManageFor(req.currentUser, existing.user_id)) throw forbidden('That is not yours to change');
+    if (existing.source === 'LEAVE_REQUEST') throw conflict(MANAGED_BY_REQUEST, { code: 'MANAGED_BY_LEAVE_REQUEST', leave_request_id: existing.leave_request_id });
+    if (existing.source === 'LEGACY_LEAVE' || LEAVE_STATUSES.includes(data.status)) {
+      throw conflict(`${USE_LEAVE_REQUEST} An entry marked as leave before can still be cancelled.`, { code: 'USE_LEAVE_REQUEST' });
+    }
 
     const { timezone } = await orgCalendar();
     const status = data.status ?? existing.status;
@@ -242,10 +264,23 @@ router.delete(
     const existing = await getEntry(Number(req.params.id));
     if (!existing || existing.cancelled_at) throw notFound('No such entry');
     if (!canManageFor(req.currentUser, existing.user_id)) throw forbidden('That is not yours to cancel');
-    await query(
-      'UPDATE user_availability SET cancelled_at = now(), cancelled_by = $1, updated_at = now() WHERE id = $2',
-      [req.currentUser.id, existing.id],
-    );
+    if (existing.source === 'LEAVE_REQUEST') throw conflict(MANAGED_BY_REQUEST, { code: 'MANAGED_BY_LEAVE_REQUEST', leave_request_id: existing.leave_request_id });
+    // old calendar leave never reached pay, but a closed month's record is not rewritten from here
+    if (existing.source === 'LEGACY_LEAVE') await assertNotLocked(existing.user_id, existing.start_date, existing.end_date);
+    await withTransaction(async (client) => {
+      const { rowCount } = await client.query(
+        'UPDATE user_availability SET cancelled_at = now(), cancelled_by = $1, updated_at = now() WHERE id = $2 AND cancelled_at IS NULL',
+        [req.currentUser.id, existing.id],
+      );
+      if (rowCount && existing.source === 'LEGACY_LEAVE') {
+        await audit(client, {
+          entityType: 'AVAILABILITY', entityId: existing.id, subjectUserId: existing.user_id, actorId: req.currentUser.id,
+          action: 'LEGACY_LEAVE_CANCELLED',
+          before: { status: existing.status, start: existing.start_date, end: existing.end_date },
+          after: { cancelled: true },
+        });
+      }
+    });
     res.json({ ok: true });
   }),
 );

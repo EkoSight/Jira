@@ -130,13 +130,30 @@ Both user routes now also return `away_today` — today's leave entry, or `null`
 | GET | `/availability/summary?days=14` | signed in — away today, upcoming, and your own |
 | GET | `/availability/on?date=YYYY-MM-DD` or `?at=<ISO instant>` | signed in — `{ away: { userId: entry } }` |
 | GET | `/availability/check?user_id=&due=<ISO instant>` | signed in — the warning before assigning |
-| POST | `/availability` | yourself; `user.edit` to record it for someone else |
-| PATCH | `/availability/:id` | the person, or `user.edit` |
-| DELETE | `/availability/:id` | the person, or `user.edit` (cancels; the row is kept) |
+| POST | `/availability` | yourself; `user.edit` to record it for someone else — `UNAVAILABLE` only |
+| PATCH | `/availability/:id` | the person, or `user.edit` — planning entries only |
+| DELETE | `/availability/:id` | the person, or `user.edit` (cancels; the row is kept) — not for a leave request's copy |
 
 Statuses are `ON_LEAVE`, `HALF_DAY` (one date, with `day_part` `MORNING` or
 `AFTERNOON`) and `UNAVAILABLE`. "Available" is never stored — it is any day with
-no entry. Dates are calendar days in `settings.organisation.timezone`
+no entry.
+
+**Leave has one lifecycle (November 2026).** `ON_LEAVE` and `HALF_DAY` entries
+are written only by approving a leave request (`POST /leave`, then
+`/leave/:id/decide`), which checks approval rights and payroll locks. Each entry
+says where it came from in `source`:
+
+- `LEAVE_REQUEST` — the calendar copy of an approved request (`leave_request_id`).
+  `PATCH`/`DELETE` answer 409 `MANAGED_BY_LEAVE_REQUEST`; change or cancel the request.
+- `LEGACY_LEAVE` — leave marked on the calendar before requests existed. It never
+  reached attendance or pay. It cannot be edited (409 `USE_LEAVE_REQUEST`); it can
+  be cancelled (audited as `LEGACY_LEAVE_CANCELLED`) unless that month's payroll is
+  approved or locked for the person (409 `PAYROLL_LOCKED`).
+- `PLANNING` — `UNAVAILABLE`: away but not on leave (travel, training, field work).
+
+`POST /availability` with `ON_LEAVE` or `HALF_DAY`, or a `PATCH` turning an entry
+into one, answers 409 `USE_LEAVE_REQUEST`. `npm run leave:reconcile` (server)
+prints a read-only dry run of `LEGACY_LEAVE` rows for review. Dates are calendar days in `settings.organisation.timezone`
 (default `Asia/Kolkata`), so a deadline is checked against the date it falls on in
 India, not on the server's clock. Entries for one person may not overlap.
 
@@ -145,7 +162,8 @@ is often private. `note` is what the person chooses to share.
 
 `POST /tasks` and `PATCH /tasks/:id` return `availability_warning` when the owner
 is away on the deadline or for part of the run-up to it. It never blocks the
-save. Creating leave returns `tasks_due_during`, and whoever assigned those tasks
+save. Creating an `UNAVAILABLE` entry, and approving a leave request
+(`/leave/:id/decide`), return `tasks_due_during`, and whoever assigned those tasks
 is notified once.
 
 ## Attendance
@@ -265,6 +283,14 @@ response says so. Approval adds an entry to the shared team calendar
 (`/availability`); cancelling removes it. TaskFlow sends no email
 (`email.sent: false`).
 
+Eligibility (November 2026): when the policy starts the allowance after joining
+(`leave.eligibility: JOINED_BEFORE_MONTH`) and no joining date is recorded,
+`/leave/balance` returns `eligibility: "UNKNOWN"`, `provisional: true` and
+`allowance`/`left` as `null` — never a definite number. Approving such leave as
+paid answers 409 `ELIGIBILITY_UNKNOWN` until the date is recorded; approving it
+as unpaid, rejecting it and statutory leave are unaffected. Each month's
+allowance follows the policy in force on that month's first day.
+
 ## Payroll estimate
 
 All routes need `payroll.view`. An estimate for payroll — TaskFlow pays nobody
@@ -272,12 +298,27 @@ and calculates no tax, PF or ESI.
 
 | Method | Route | Permission |
 |---|---|---|
-| GET | `/payroll/:month` | everyone's month: stage, setup gaps, blockers, totals, money |
+| GET | `/payroll/:month` | everyone's month: stage, setup gaps, blockers, totals, money; `excluded` lists who is not in the month and why |
+| GET | `/payroll/:month/readiness` | what stands between the month and a reliable payroll: each gap, its count, who, and where it is fixed. Reads only |
 | GET | `/payroll/:month/people/:userId` | one person: every day, allocations, segments, versions |
 | POST | `/payroll/:month/people/:userId/submit` · `/return` | `payroll.manage` |
 | POST | `/payroll/:month/people/:userId/approve` · `/lock` | `payroll.approve`, never one's own pay |
 | POST | `/payroll/:month/people/:userId/reopen` | `payroll.reopen`, with a reason; the locked version is kept as `SUPERSEDED` |
 | POST | `/payroll/:month/bulk` | as the action — `{ action, user_ids, reason }` |
+
+Who is in a month: everyone whose employment (work-profile joining and exit
+dates) overlaps it, plus anyone with a saved result for it — not "active today".
+A deactivated leaver stays in the months they worked; a future joiner is not in
+earlier months. Missing dates are setup exceptions, never guesses.
+
+Each transition body may carry `expected: { status, version }` — what the caller
+was looking at. If the month has moved on, the answer is 409 `STALE_STATE`;
+repeating a call that already took effect, by the same person, returns
+`replayed: true` instead of acting twice. Transitions for one person-month run one
+at a time. Approve and lock re-run every readiness check (setup, policy
+acceptance, blockers), not only the figures: 409 `NOT_READY` when anything is
+missing, 409 `CHANGED_SINCE_SUBMIT` when the figures or the applying policy
+version changed.
 | GET | `/payroll/:month/export.csv` | `payroll.manage` — locked snapshots only; no coordinates, no leave reasons |
 | GET / POST | `/payroll/salary/:userId` | read `payroll.view`; add `payroll.salary.edit` (effective-dated, never overwritten) |
 

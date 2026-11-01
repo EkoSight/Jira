@@ -8,11 +8,12 @@ import { requirePermission } from '../middleware/auth.js';
 import { computeMonth, decimalHours, hhmm } from '../lib/attendanceCalc.js';
 import { sendCsv } from '../lib/csv.js';
 import {
-  DEFAULT_POLICY, PROPOSED_KEYS, SETUP_ITEMS, currentPolicy, listPolicies, mergePolicy, setupStatus,
+  DEFAULT_POLICY, PROPOSED_KEYS, SETUP_ITEMS, currentPolicy, latestPolicy, listPolicies, mergePolicy,
+  policyOn, policyTimeline, setupStatus,
 } from '../services/attendancePolicy.js';
 import {
   addDays, assertDate, attendanceGate, audit, canSee, canSeeLocation, checkIn, checkOut, dateIn,
-  getProfile, holidaysBetween, resetGateCache, scheduleOn, sessionById, sessionOn, shapeSession,
+  getProfile, holidaysBetween, isPastCutoff, resetGateCache, scheduleOn, sessionById, sessionOn, shapeSession,
   visibleUserIds,
 } from '../services/attendance.js';
 import { buildLedgers, datesBetween, isLocked, monthBounds, monthLedger } from '../services/attendanceLedger.js';
@@ -80,16 +81,25 @@ router.get(
     const ledgers = await buildLedgers([me.id], today, today);
     const day = ledgers.get(me.id)?.days[0] || null;
     const session = await sessionOn(me.id, today);
-    // an overnight session still open from yesterday is the one to check out of
-    const { rows: openRows } = await query(
-      `SELECT * FROM attendance_sessions WHERE user_id = $1 AND status = 'OPEN' LIMIT 1`, [me.id],
+    // An overnight session still open from yesterday is the one to check out
+    // of. One past its cutoff is a missing check-out — worked out here from the
+    // policy of its own date, not written: reading this card changes nothing.
+    const timeline = await policyTimeline();
+    const pastCutoff = (row) => isPastCutoff(row, policyOn(timeline, row.work_date).config);
+    const { rows: openAll } = await query(
+      `SELECT * FROM attendance_sessions WHERE user_id = $1 AND status = 'OPEN'`, [me.id],
     );
-    const { rows: missing } = await query(
-      `SELECT id, work_date FROM attendance_sessions s WHERE user_id = $1 AND status = 'MISSING_CHECKOUT'
+    const openRows = openAll.filter((r) => !pastCutoff(r));
+    const { rows: missingAll } = await query(
+      `SELECT id, work_date, status FROM attendance_sessions s WHERE user_id = $1 AND status IN ('MISSING_CHECKOUT', 'OPEN')
           AND NOT EXISTS (SELECT 1 FROM attendance_corrections c WHERE c.user_id = s.user_id AND c.work_date = s.work_date AND c.status = 'PENDING')
-        ORDER BY work_date DESC LIMIT 5`,
+        ORDER BY work_date DESC LIMIT 10`,
       [me.id],
     );
+    const missing = missingAll
+      .filter((r) => r.status === 'MISSING_CHECKOUT' || pastCutoff(r))
+      .slice(0, 5)
+      .map((r) => ({ id: r.id, work_date: r.work_date }));
     const { rows: corrections } = await query(
       `SELECT id, work_date, kind, status, created_at FROM attendance_corrections
         WHERE user_id = $1 AND (status = 'PENDING' OR work_date = $2) ORDER BY created_at DESC LIMIT 10`,
@@ -616,7 +626,8 @@ router.post(
     if (closed && effectiveFrom <= monthBounds(closed).last) {
       throw conflict(`Payroll is closed up to ${closed.slice(0, 7)}. A new version must start after that month.`);
     }
-    const base = (await currentPolicy()).config;
+    // built on the newest version, including one already scheduled for later
+    const base = (await latestPolicy()).config;
     const config = mergePolicy(base, changes);
     checkConfig(config);
     const { rows } = await query(

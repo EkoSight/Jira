@@ -132,7 +132,30 @@ const zero = () => ({
   early_arrival: 0, late_seconds: 0, early_departure: 0,
   duration: 0, net_estimate: 0,
   ordinary_short: 0, same_day_offset: 0, remaining_short: 0, remaining_extra: 0,
+  // approved leave on a day that has not happened yet: shown, never accrued
+  planned_paid_leave: 0, planned_unpaid_leave: 0,
+  future: false,
 });
+
+/**
+ * The partition rule every computed day must keep: coverage, paid leave,
+ * grace, unpaid and unresolved time are disjoint slices of the scheduled time,
+ * so together they can never exceed it. Returns the overshoot in seconds (0
+ * when the day is sound).
+ */
+export function conservationExcess(day) {
+  return Math.max(0, (day.C + day.L + day.G + day.N + day.U) - day.R);
+}
+
+/** Splits a day's leave into approved paid, approved unpaid and pending intervals. */
+function leaveIntervals(leave) {
+  const list = leave || [];
+  return {
+    approvedPaid: list.filter((l) => l.status === 'APPROVED' && l.paid).map((l) => [l.start, l.end]),
+    approvedUnpaid: list.filter((l) => l.status === 'APPROVED' && !l.paid).map((l) => [l.start, l.end]),
+    pending: list.filter((l) => l.status === 'PENDING').map((l) => [l.start, l.end]),
+  };
+}
 
 /**
  * One scheduled day.
@@ -163,15 +186,19 @@ export function computeDay(input, policy) {
   }
 
   const hasCheckIn = session && session.checkIn !== null && session.checkIn !== undefined;
+  // ---- leave, in the order it is trusted. Read before any early return, so a
+  // day that has not finished (or not started) still shows the leave on it.
+  const { approvedPaid, approvedUnpaid, pending } = leaveIntervals(input.leave);
+  if (phase === 'FUTURE') out.future = true;
 
   // before attendance tracking starts, a working day nobody recorded is not
   // owed, not short and not waiting for review — it simply was not tracked.
   // A day someone did record is worked out in full below.
   if (schedule.beforeStart && !hasCheckIn) {
-    const leave = input.leave || [];
-    if (leave.some((l) => l.status === 'PENDING')) out.classification = 'PENDING_LEAVE';
-    else if (leave.some((l) => l.status === 'APPROVED' && l.paid)) out.classification = 'PAID_LEAVE';
-    else if (leave.some((l) => l.status === 'APPROVED')) out.classification = 'UNPAID_LEAVE';
+    const planned = phase === 'FUTURE' ? 'PLANNED_' : '';
+    if (pending.length) out.classification = 'PENDING_LEAVE';
+    else if (approvedPaid.length) out.classification = `${planned}PAID_LEAVE`;
+    else if (approvedUnpaid.length) out.classification = `${planned}UNPAID_LEAVE`;
     else out.classification = phase === 'FUTURE' ? 'UPCOMING' : phase === 'TODAY' ? 'NOT_CHECKED_IN' : DAY_STATES.BEFORE_START;
     return out;
   }
@@ -180,16 +207,37 @@ export function computeDay(input, policy) {
   out.R = length(S);
 
   if (phase === 'FUTURE') {
-    out.classification = 'UPCOMING';
+    // a day that has not happened: required for the whole-month figure, but
+    // nothing is earned, credited or deducted for it yet. Approved leave on it
+    // is shown as planned — never as accrued paid leave or unpaid time.
+    const paidPlanned = length(intersect(approvedPaid, S));
+    const unpaidPlanned = length(subtract(intersect(approvedUnpaid, S), approvedPaid));
+    out.planned_paid_leave = paidPlanned;
+    out.planned_unpaid_leave = unpaidPlanned;
+    if (out.R > 0 && paidPlanned >= out.R) out.classification = 'PLANNED_PAID_LEAVE';
+    else if (out.R > 0 && unpaidPlanned >= out.R) out.classification = 'PLANNED_UNPAID_LEAVE';
+    else if (paidPlanned + unpaidPlanned > 0) out.classification = 'PLANNED_PARTIAL_LEAVE';
+    else out.classification = 'UPCOMING';
+    // pending leave is shown as pending, and never as approved
+    if (length(intersect(pending, S)) > 0) out.flags.push('LEAVE_PENDING');
     return out;
   }
 
-  const hasSession = session && session.checkIn !== null && session.checkIn !== undefined;
+  const hasSession = hasCheckIn;
   const completed = hasSession && session.status === 'COMPLETED' && session.checkOut !== null;
 
-  if (phase === 'TODAY' && !completed) {
+  // Today, with nobody checked in, and leave (approved or pending) covering the
+  // whole scheduled day: there is nothing left to wait for, so the day is
+  // worked out now and shows as leave rather than "not checked in".
+  const leaveCoversToday = phase === 'TODAY' && !hasSession && out.R > 0
+    && length(intersect(union(approvedPaid, approvedUnpaid, pending), S)) >= out.R;
+
+  if (phase === 'TODAY' && !completed && !leaveCoversToday) {
     // the working day is not over: nothing is short, late or banked yet
     out.classification = hasSession ? 'IN_PROGRESS' : 'NOT_CHECKED_IN';
+    // part of today on leave (a half day): say so, without accruing anything yet
+    if (length(intersect(union(approvedPaid, approvedUnpaid), S)) > 0) out.flags.push('ON_LEAVE_PART_OF_DAY');
+    if (length(intersect(pending, S)) > 0) out.flags.push('LEAVE_PENDING');
     if (hasSession) {
       const grace = arrivalJudgement(session.checkIn, schedule, [], policy);
       out.late_seconds = grace.lateSeconds;
@@ -199,11 +247,6 @@ export function computeDay(input, policy) {
     }
     return out;
   }
-
-  // ---- leave, in the order it is trusted
-  const approvedPaid = (input.leave || []).filter((l) => l.status === 'APPROVED' && l.paid).map((l) => [l.start, l.end]);
-  const approvedUnpaid = (input.leave || []).filter((l) => l.status === 'APPROVED' && !l.paid).map((l) => [l.start, l.end]);
-  const pending = (input.leave || []).filter((l) => l.status === 'PENDING').map((l) => [l.start, l.end]);
 
   // ---- attendance coverage
   let A = [];
@@ -251,10 +294,12 @@ export function computeDay(input, policy) {
 
   let unresolved = pendingSet;
   if (hasSession && !completed) {
-    // a past day still open: nobody knows when they left
+    // a past day still open: nobody knows when they left. What is already
+    // accounted for (grace earned on arrival, leave) stays where it is; the
+    // rest of the day is unresolved. No check-out is guessed.
     out.blockers.push('MISSING_CHECKOUT');
     out.flags.push('MISSING_CHECKOUT');
-    unresolved = union(unresolved, subtract(S, union(Lset, Nset, pendingSet)));
+    unresolved = union(unresolved, subtract(S, union(Cset, Lset, Gset, Nset, pendingSet)));
   }
 
   if (!hasSession) {
@@ -345,6 +390,14 @@ export function computeDay(input, policy) {
   }
 
   out.classification = classify(out, { hasSession, completed, approvedPaid, approvedUnpaid, S, absence: input.absence });
+
+  // The partition rule. It holds by construction; if a future change ever
+  // breaks it, the day is held back from any final figure rather than paid on
+  // numbers that do not add up.
+  if (conservationExcess(out) > 0) {
+    out.flags.push('ACCOUNTING_CHECK_FAILED');
+    if (!out.blockers.includes('ACCOUNTING_CHECK')) out.blockers.push('ACCOUNTING_CHECK');
+  }
   return out;
 }
 
@@ -461,8 +514,11 @@ export function computeMonth(days) {
   return {
     totals: {
       required: required,
-      // the days that have started — what the month so far is measured against
-      required_to_date: sorted.filter((d) => d.classification !== 'UPCOMING').reduce((t, d) => t + (d.R || 0), 0),
+      // the days that have started — what the month so far is measured against.
+      // A future day stays out whatever is planned on it.
+      required_to_date: sorted.filter((d) => !d.future && d.classification !== 'UPCOMING').reduce((t, d) => t + (d.R || 0), 0),
+      // approved leave still to come: shown, not counted in paid leave or unpaid
+      planned_leave: sum('planned_paid_leave') + sum('planned_unpaid_leave'),
       recorded_duration: sum('duration'),
       net_estimate: sum('net_estimate'),
       in_schedule: sum('C'),
@@ -495,7 +551,8 @@ export function computeMonth(days) {
       needs_review: count((d) => d.classification === 'UNRECORDED_NEEDS_REVIEW'),
       weekly_off: count((d) => d.classification === DAY_STATES.WEEKLY_OFF),
       holiday: count((d) => d.classification === DAY_STATES.HOLIDAY),
-      upcoming: count((d) => d.classification === 'UPCOMING'),
+      upcoming: count((d) => d.future || d.classification === 'UPCOMING'),
+      planned_leave: count((d) => d.future && d.classification?.startsWith('PLANNED_')),
       // flags overlap other classifications; they are counts of days, not extra days
       late: count((d) => d.flags.includes('LATE')),
       early_departure: count((d) => d.flags.includes('EARLY_DEPARTURE')),

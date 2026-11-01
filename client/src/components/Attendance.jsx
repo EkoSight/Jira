@@ -5,7 +5,7 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { useAttendance } from '../state/attendance.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import {
-  BLOCKER_LABEL, CORRECTION_KINDS, CORRECTION_LABEL, CORRECTION_STATUS, DAY_PART, FLAG_LABEL, LEAVE_CATEGORIES,
+  CORRECTION_KINDS, CORRECTION_LABEL, CORRECTION_STATUS, DAY_PART, FLAG_LABEL, LEAVE_CATEGORIES, blockerLabel,
   dayExtraState, earlyArrivalNote, extraBreakdown,
   LEAVE_STATUS, LOCATION_PROBLEM, PRIVACY_NOTICE, clockIn, dayMeta, dayName, hhmm, mapsLink, newRequestId,
   accuracyWords, readLocation, todayIn, words,
@@ -412,15 +412,21 @@ export function LocationDialog({ sessionId, onClose }) {
 }
 
 /** Asking for leave. Paid only if approved, and only within the monthly allowance. */
-export function LeaveDialog({ onClose, onSaved }) {
+/**
+ * Requesting leave — the one way leave is recorded. `forUser` lets an approver
+ * record it for someone who rang in; it still needs a separate decision.
+ * `initial` pre-fills dates and the part of the day (from the team calendar).
+ */
+export function LeaveDialog({ onClose, onSaved, forUser = null, initial = {} }) {
   const toast = useToast();
   const { user } = useAuth();
   const { users } = useRefData();
   const today = todayIn();
+  const subject = forUser && forUser.id !== user.id ? forUser : null;
   const [category, setCategory] = useState('CASUAL');
-  const [start, setStart] = useState(today);
-  const [end, setEnd] = useState(today);
-  const [dayPart, setDayPart] = useState('FULL');
+  const [start, setStart] = useState(initial.start || today);
+  const [end, setEnd] = useState(initial.end || initial.start || today);
+  const [dayPart, setDayPart] = useState(initial.dayPart || 'FULL');
   const [reason, setReason] = useState('');
   const [emergency, setEmergency] = useState(false);
   const [explanation, setExplanation] = useState('');
@@ -435,8 +441,8 @@ export function LeaveDialog({ onClose, onSaved }) {
   useEffect(() => {
     if (!start || !end || end < start) { setPreview(null); return; }
     api.leavePreview({ start, end, day_part: dayPart }).then(setPreview).catch(() => setPreview(null));
-    api.leaveBalance({ month: start.slice(0, 7) }).then(setBalance).catch(() => setBalance(null));
-  }, [start, end, dayPart]);
+    api.leaveBalance({ month: start.slice(0, 7), user_id: subject?.id }).then(setBalance).catch(() => setBalance(null));
+  }, [start, end, dayPart, subject?.id]);
 
   const single = start === end;
   const noticeHours = meta?.notice_hours ?? 48;
@@ -448,6 +454,7 @@ export function LeaveDialog({ onClose, onSaved }) {
     setSaving(true);
     try {
       await api.requestLeave({
+        ...(subject ? { user_id: subject.id } : {}),
         category, start_date: start, end_date: single ? start : end, day_part: single ? dayPart : 'FULL', reason,
         is_emergency: emergency, emergency_explanation: emergency ? explanation : null,
         notified_user_id: notified ? Number(notified) : null, email_reference: emailRef || null, draft,
@@ -463,7 +470,7 @@ export function LeaveDialog({ onClose, onSaved }) {
 
   return (
     <Modal
-      title="Request leave"
+      title={subject ? `Request leave for ${subject.full_name}` : 'Request leave'}
       onClose={onClose}
       footer={(
         <>
@@ -501,12 +508,20 @@ export function LeaveDialog({ onClose, onSaved }) {
         {preview && (
           <div className="small muted">
             {preview.working_days ? `${preview.working_days} scheduled working day${preview.working_days === 1 ? '' : 's'}` : 'No scheduled working days in this range'}
-            {balance && ['CASUAL', 'SICK', 'OTHER'].includes(category) && balance.buckets.map((b) => (
-              <span key={b.bucket}> · {b.label}: {b.left} of {b.allowance} paid day{b.allowance === 1 ? '' : 's'} left in {start.slice(0, 7)}</span>
-            ))}
+            {balance && ['CASUAL', 'SICK', 'OTHER'].includes(category) && (balance.provisional
+              ? <span> · Paid-leave allowance not known yet: {balance.eligibility_label?.toLowerCase() || 'joining date not recorded'}. The request can still be sent; paid approval waits until HR records it.</span>
+              : balance.buckets.map((b) => (
+                <span key={b.bucket}> · {b.label}: {b.left} of {b.allowance} paid day{b.allowance === 1 ? '' : 's'} left in {start.slice(0, 7)}</span>
+              )))}
           </div>
         )}
-        <Field label="Reason" hint="Only you and your approvers see this.">
+        {subject && (
+          <div className="callout is-quiet small">
+            <Icon name="alert" />
+            <span>Recorded on {subject.full_name}’s behalf. It goes to their approvers like any request — recording it is not approving it.</span>
+          </div>
+        )}
+        <Field label="Reason" hint={subject ? 'Only they and their approvers see this.' : 'Only you and your approvers see this.'}>
           <textarea className="textarea" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={2000} />
         </Field>
         <label className="check">
@@ -653,13 +668,16 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
           </span>
         </div>
       )}
-      {data.days.some((d) => ['UPCOMING', 'IN_PROGRESS', 'NOT_CHECKED_IN'].includes(d.classification)) && (
-        <div className="small muted">This month is still running — these are the figures so far, not a final result.</div>
+      {data.days.some((d) => d.future || ['UPCOMING', 'IN_PROGRESS', 'NOT_CHECKED_IN'].includes(d.classification)) && (
+        <div className="small muted">
+          This month is still running — these are the figures so far, not a final result.
+          {t.planned_leave > 0 && ` ${hhmm(t.planned_leave)} of approved leave is still to come; it is shown on its days and counted once they pass.`}
+        </div>
       )}
       {data.blockers?.length > 0 && (
         <div className="callout is-quiet small">
           <Icon name="alert" />
-          <span>Provisional: {data.blockers.map((b) => BLOCKER_LABEL[b] || b).join(' · ')}.</span>
+          <span>Provisional: {data.blockers.map(blockerLabel).join(' · ')}.</span>
         </div>
       )}
       <div className="card table-wrap">
@@ -707,7 +725,7 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
                   <td className="tnum">{unpaidOn(d) ? hhmm(unpaidOn(d)) : ''}</td>
                   <td className="att-row-actions">
                     {s?.has_check_in_location && onLocation && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onLocation(s.id)}>Location</button>}
-                    {onCorrect && d.classification !== 'UPCOMING' && d.R + d.duration > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCorrect(d)}>Correct</button>}
+                    {onCorrect && !d.future && d.classification !== 'UPCOMING' && d.R + d.duration > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onCorrect(d)}>Correct</button>}
                     {onReviewExtra && d.E_pending > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => onReviewExtra(d)}>Review extra</button>}
                     {/* counted already (automatically or by a decision): a reviewer can still change it */}
                     {onReviewExtra && !d.E_pending && d.E_recorded > 0 && !d.E_untracked && (

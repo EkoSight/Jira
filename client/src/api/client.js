@@ -434,7 +434,8 @@ export const api = {
   // payroll — a monthly estimate, behind its own permission
   payrollMonth: (month) => request('GET', `/payroll/${month}`),
   payrollPerson: (month, userId) => request('GET', `/payroll/${month}/people/${userId}`),
-  payrollAction: (month, userId, action, reason) => request('POST', `/payroll/${month}/people/${userId}/${action}`, { reason }),
+  payrollAction: (month, userId, action, reason, expected) => request('POST', `/payroll/${month}/people/${userId}/${action}`, { reason, expected }),
+  payrollReadiness: (month) => request('GET', `/payroll/${month}/readiness`),
   payrollBulk: (month, body) => request('POST', `/payroll/${month}/bulk`, body),
   salaryBasis: (userId) => request('GET', `/payroll/salary/${userId}`),
   addSalaryBasis: (userId, body) => request('POST', `/payroll/salary/${userId}`, body),
