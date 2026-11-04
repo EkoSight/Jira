@@ -22,6 +22,7 @@ import {
 } from './attendance.js';
 import { APPROVED_LEAVE, PENDING_LEAVE, isLocked, leaveSpan, monthBounds } from './attendanceLedger.js';
 import { tasksDueDuring } from './availability.js';
+import { moveDeadlines, waiveMarksForMoves } from './dayProtection.js';
 
 export const LEAVE_CATEGORIES = ['CASUAL', 'SICK', 'UNPAID', 'STATUTORY', 'OTHER'];
 export const CATEGORY_LABEL = { CASUAL: 'Casual', SICK: 'Sick', UNPAID: 'Unpaid', STATUTORY: 'Statutory', OTHER: 'Other' };
@@ -314,11 +315,13 @@ export async function createRequest(actor, subjectUserId, input, now = new Date(
   const id = await withTransaction(async (client) => {
     const { rows } = await client.query(
       `INSERT INTO leave_requests (user_id, category, start_date, end_date, day_part, reason, is_emergency,
-          emergency_explanation, status, notified_user_id, email_reference, claimed_notified_at, unpaid_days, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'DRAFT', $9, $10, $11, 0, $12) RETURNING id`,
+          emergency_explanation, status, notified_user_id, email_reference, claimed_notified_at, unpaid_days, created_by, move_tasks)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'DRAFT', $9, $10, $11, 0, $12, $13) RETURNING id`,
       [subjectUserId, data.category, data.start_date, data.end_date, data.day_part, data.reason.trim(),
         Boolean(data.is_emergency), data.emergency_explanation?.trim() || null, data.notified_user_id || null,
-        data.email_reference?.trim() || null, data.claimed_notified_at || null, actor.id],
+        data.email_reference?.trim() || null, data.claimed_notified_at || null, actor.id,
+        // only whole days move deadlines: on a half day the other half is worked
+        Boolean(data.move_tasks) && data.day_part === 'FULL'],
     );
     await audit(client, {
       entityType: 'LEAVE_REQUEST', entityId: rows[0].id, subjectUserId, actorId: actor.id, action: 'CREATED',
@@ -341,7 +344,7 @@ export async function submitRequest(actor, id, now = new Date()) {
   const compliant = notice >= (Number(config.leave?.noticeHours) || 48) * 3600;
   const status = request.is_emergency ? 'EMERGENCY_REVIEW' : compliant ? 'SUBMITTED' : 'NOTICE_EXCEPTION';
 
-  await withTransaction(async (client) => {
+  const moves = await withTransaction(async (client) => {
     await client.query(
       `UPDATE leave_requests SET status = $2, submitted_at = $3, first_notified_at = $3, notice_seconds = $4,
               notice_compliant = $5, updated_at = now() WHERE id = $1`,
@@ -360,8 +363,19 @@ export async function submitRequest(actor, id, now = new Date()) {
         body: status === 'EMERGENCY_REVIEW' ? 'Emergency request — needs a decision' : status === 'NOTICE_EXCEPTION' ? 'Less than the required notice — needs a decision' : null,
       });
     }
+    // an emergency cannot wait for approval: the work due while away moves to
+    // the day they are back now, and whoever assigned it is told. Planned leave
+    // moves its deadlines when it is approved.
+    if (request.is_emergency && request.move_tasks) {
+      return moveDeadlines(client, {
+        user: { id: request.user_id, full_name: request.full_name, department_id: request.department_id },
+        from: request.start_date, to: request.end_date, reason: 'LEAVE', leaveRequestId: id, actorId: actor.id, now,
+        why: 'is on emergency leave',
+      });
+    }
+    return { moved: [], target: null };
   });
-  return getRequest(id);
+  return { ...(await getRequest(id)), moved_tasks: moves.moved, moved_to: moves.target };
 }
 
 /** Approve (paid or unpaid) or reject. Never one's own. */
@@ -420,6 +434,21 @@ export async function decideRequest(reviewer, id, { decision, note }) {
       title: `Your leave from ${request.start_date} ${words}`,
       body: note || null,
     });
+    // asked for: the deadlines during the leave move to the day they are back
+    // (for emergency leave most already moved when it was sent); marks already
+    // recorded for those deadlines are waived if this reviewer may waive them
+    let moves = { moved: [], target: null };
+    let marks = { waived: 0, waiting: 0 };
+    if (status !== 'REJECTED' && request.move_tasks) {
+      moves = await moveDeadlines(client, {
+        user: { id: request.user_id, full_name: request.full_name, department_id: request.department_id },
+        from: request.start_date, to: request.end_date, reason: 'LEAVE', leaveRequestId: id, actorId: reviewer.id,
+        why: 'is on approved leave',
+      });
+      marks = await waiveMarksForMoves(client, {
+        reviewer, leaveRequestId: id, reason: `Approved leave on the due date (leave request #${id})`,
+      });
+    }
     // approved leave is on the calendar now: whoever handed over work that
     // falls due during it hears about it once, so it can be moved in time
     let tasksDue = [];
@@ -441,7 +470,10 @@ export async function decideRequest(reviewer, id, { decision, note }) {
         });
       }
     }
-    return { id, status, paid_days: paidDays, unpaid_days: unpaidDays, availability_id: availabilityId, tasks_due_during: tasksDue };
+    return {
+      id, status, paid_days: paidDays, unpaid_days: unpaidDays, availability_id: availabilityId, tasks_due_during: tasksDue,
+      moved_tasks: moves.moved, moved_to: moves.target, marks_waived: marks.waived, marks_waiting: marks.waiting,
+    };
   });
 }
 

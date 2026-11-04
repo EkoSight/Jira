@@ -17,6 +17,7 @@ import {
   SESSION_COLUMNS, addDays, assertReviewer, audit, cutoffFor, dateIn, instantAt, settleMissingCheckouts,
 } from './attendance.js';
 import { buildLedgers, isLocked } from './attendanceLedger.js';
+import { moveDeadlines, waiveMarksForMoves } from './dayProtection.js';
 
 export const CORRECTION_KINDS = {
   MISSED_CHECK_IN: 'Missed check-in',
@@ -151,6 +152,8 @@ export async function decideCorrection(reviewer, id, { decision, note }, now = n
   return withTransaction(async (client) => {
     let before = null;
     let after = null;
+    let fieldMoves = null;
+    let fieldMarks = null;
     if (decision === 'APPROVED') {
       const { rows } = await client.query(
         `SELECT ${SESSION_COLUMNS} FROM attendance_sessions s WHERE user_id = $1 AND work_date = $2 FOR UPDATE`,
@@ -192,10 +195,32 @@ export async function decideCorrection(reviewer, id, { decision, note }, now = n
           );
         }
       }
-      const { rows: updated } = await client.query(
+      let { rows: updated } = await client.query(
         `SELECT ${SESSION_COLUMNS} FROM attendance_sessions s WHERE user_id = $1 AND work_date = $2`,
         [correction.user_id, correction.work_date],
       );
+      // field duty approved: the day was a field day, and its deadlines are
+      // protected as if it had been declared at the time
+      if (correction.kind === 'FIELD_DUTY' && updated[0]) {
+        await client.query(
+          `UPDATE attendance_sessions SET field_day = TRUE, field_note = COALESCE(field_note, $2),
+                  field_declared_at = COALESCE(field_declared_at, now()), updated_at = now() WHERE id = $1`,
+          [updated[0].id, correction.reason.slice(0, 300)],
+        );
+        const { rows: who } = await client.query('SELECT id, full_name, department_id FROM users WHERE id = $1', [correction.user_id]);
+        fieldMoves = await moveDeadlines(client, {
+          user: who[0], from: correction.work_date, to: correction.work_date, reason: 'FIELD_DAY', sessionId: updated[0].id,
+          actorId: reviewer.id, now, why: `was on field duty on ${correction.work_date}`,
+        });
+        fieldMarks = await waiveMarksForMoves(client, {
+          reviewer, taskIds: fieldMoves.moved.map((m) => m.task_id),
+          reason: `Field duty on the due date (${correction.work_date}), approved with correction #${id}`,
+        });
+        ({ rows: updated } = await client.query(
+          `SELECT ${SESSION_COLUMNS} FROM attendance_sessions s WHERE user_id = $1 AND work_date = $2`,
+          [correction.user_id, correction.work_date],
+        ));
+      }
       after = snapshot(updated[0]);
     }
 
@@ -213,7 +238,10 @@ export async function decideCorrection(reviewer, id, { decision, note }, now = n
       title: `Your attendance correction for ${correction.work_date} was ${decision === 'APPROVED' ? 'approved' : 'not approved'}`,
       body: note || null,
     });
-    return { id, status: decision, session: after };
+    return {
+      id, status: decision, session: after,
+      ...(fieldMoves ? { moved_tasks: fieldMoves.moved, moved_to: fieldMoves.target, marks_waived: fieldMarks.waived, marks_waiting: fieldMarks.waiting } : {}),
+    };
   }).catch((err) => {
     if (err?.code === '23505') throw conflict('This would leave two open attendance sessions — the person must check out of the other first');
     throw err;

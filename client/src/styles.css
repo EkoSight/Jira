@@ -3050,6 +3050,13 @@ th.cal-person {
   border-top: 1px solid var(--border);
   background: var(--surface-2);
 }
+/* checking in from the field: the option sits between the card and its foot */
+.att-card-field { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 12px; }
+.att-field { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.att-field .check span { line-height: 1.45; }
+.att-move { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); align-items: flex-start; }
+.att-move span { line-height: 1.45; }
+.att-emergency { align-self: flex-start; padding-left: 0; }
 .att-privacy { display: flex; align-items: flex-start; gap: 6px; color: var(--ink-muted); max-width: 62ch; }
 .att-privacy svg { flex: none; margin-top: 2px; }
 .att-problem { border-left-color: var(--warning); background: var(--warning-wash); }
@@ -3163,6 +3170,7 @@ th.cal-person {
   .att-card-actions { flex: 1 1 100%; }
   .att-action { width: 100%; }
   .att-card-foot { padding: 10px 14px 12px; }
+  .att-card-field { padding: 0 14px 10px; }
   .att-gate { margin: 8px auto; }
   .att-row-actions { white-space: normal; }
 }

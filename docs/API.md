@@ -177,7 +177,9 @@ the policy timezone (default `Asia/Kolkata`). Durations are integer seconds.
 |---|---|---|
 | GET | `/attendance/privacy` | signed in — the location notice text |
 | GET | `/attendance/today` | own — policy summary, gate, session, open/overnight session, today's computed day, missing check-outs |
-| POST | `/attendance/check-in` | own — `{ request_id, location: { latitude, longitude, accuracy, timestamp } }` |
+| POST | `/attendance/check-in` | own — `{ request_id, location: { latitude, longitude, accuracy, timestamp }, field?, field_note?, move_tasks? }`; `field: true` makes today a field day (see below) and the answer carries `field: { moved, moved_to }` |
+| POST | `/attendance/field-day` | own, today, after checking in — `{ note?, move_tasks? }` |
+| GET | `/attendance/field-day/preview` | own — today's open tasks a field day would move, and the next working day |
 | POST | `/attendance/check-out` | own — same body; completes the open session, even after midnight before the cutoff |
 | GET | `/attendance/me?month=YYYY-MM` | own — day-by-day ledger, totals, allocations, sessions with coordinates |
 | GET | `/attendance/people/:id?month=` | that person's authorised viewer |
@@ -198,6 +200,24 @@ the policy timezone (default `Asia/Kolkata`). Durations are integer seconds.
 | GET / PUT | `/attendance/profiles`, `/attendance/profiles/:userId` | `attendance.policy` (read also `attendance.all`, `payroll.view`) |
 | GET / PUT | `/attendance/team-access`, `/attendance/team-access/:managerId` | `attendance.policy` |
 | GET | `/attendance/audit?user_id=&entity_type=` | `attendance.all`, `payroll.view` or `attendance.policy` |
+
+**Field days.** Someone working in the field checks in as usual with
+`field: true` (or marks the day later with `/attendance/field-day`). The
+session gets `field_day` and `field_note`, and team views count `in_field`.
+
+Unless `move_tasks: false`, their open tasks due today move to the next working
+day, at the same time of day. Tasks are moved, never marked done. Each move:
+
+- is stored in `task_deadline_moves` and in the task's history;
+- is not counted in `due_date_changes`;
+- is told once to whoever assigned the work;
+- happens only once per deadline.
+
+The black-mark scan then judges the new deadline. For a day already gone, the
+person asks for a `FIELD_DUTY` correction. Approving it marks the field day,
+moves that day's open deadlines, and waives their deadline marks if the reviewer
+holds `blackmark.waive`. The response carries `moved_tasks`, `marks_waived` and
+`marks_waiting`.
 
 **Idempotency.** Every check-in/out carries a `request_id`. The same id returns
 the first result unchanged (`replayed: true`); another device finds the open
@@ -267,9 +287,9 @@ are never blocked.
 | GET | `/leave/meta` | signed in — categories, notice hours, allowance mode, email note |
 | GET | `/leave/mine` | own |
 | GET | `/leave/balance?month=&user_id=` | own, or authorised viewer |
-| GET | `/leave/preview?start=&end=&day_part=` | own — scheduled working days the range uses |
+| GET | `/leave/preview?start=&end=&day_part=&user_id=` | own, or an authorised viewer — scheduled working days the range uses, `tasks_due` in the range and `back_on` (the first working day after) |
 | GET | `/leave/team?status=pending` | `leave.approve`, `attendance.team` or `attendance.all`, scoped |
-| POST | `/leave` | own; `leave.approve` to record for a team member — `{ category, start_date, end_date, day_part, reason, is_emergency, emergency_explanation, notified_user_id, email_reference, claimed_notified_at, draft }` |
+| POST | `/leave` | own; `leave.approve` to record for a team member — `{ category, start_date, end_date, day_part, reason, is_emergency, emergency_explanation, notified_user_id, email_reference, claimed_notified_at, draft, move_tasks }` |
 | POST | `/leave/:id/submit` | the requester, from `DRAFT` |
 | POST | `/leave/:id/decide` | `leave.approve`, authorised, never one's own — `{ decision: APPROVED_PAID|APPROVED_UNPAID|REJECTED, note }` |
 | POST | `/leave/:id/cancel` | the requester before it starts; an approver with a reason |
@@ -282,6 +302,18 @@ allowance day by day (half-day steps); anything beyond it is unpaid and the
 response says so. Approval adds an entry to the shared team calendar
 (`/availability`); cancelling removes it. TaskFlow sends no email
 (`email.sent: false`).
+
+Emergency leave and moving work: `is_emergency` needs no notice and may be dated
+up to 31 days back. With `move_tasks` (whole days only), the person's open tasks
+due during the leave move to the first working day after it:
+
+- **emergency leave:** when it is sent;
+- **planned leave:** when it is approved.
+
+The response carries `moved_tasks` and `moved_to`. Approving such leave waives
+the black marks recorded for those moved deadlines, if the reviewer holds
+`blackmark.waive`. Otherwise `marks_waiting` counts them for someone who does.
+Rejecting emergency leave does not move the deadlines back.
 
 Eligibility (November 2026): when the policy starts the allowance after joining
 (`leave.eligibility: JOINED_BEFORE_MONTH`) and no joining date is recorded,

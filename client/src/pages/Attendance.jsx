@@ -170,7 +170,10 @@ function MyLeaveTab() {
             </div>
           ))}
         </div>
-        <button type="button" className="btn btn-primary" onClick={() => setAsking(true)}><Icon name="plus" /> Request leave</button>
+        <div className="row wrap" style={{ gap: 6 }}>
+          <button type="button" className="btn" onClick={() => setAsking({ emergency: true })}><Icon name="alert" /> Emergency leave</button>
+          <button type="button" className="btn btn-primary" onClick={() => setAsking({})}><Icon name="plus" /> Request leave</button>
+        </div>
       </div>
       <section className="card">
         <div className="card-head"><h2>My requests</h2></div>
@@ -184,7 +187,7 @@ function MyLeaveTab() {
           )}
         </div>
       </section>
-      {asking && <LeaveDialog onClose={() => setAsking(false)} onSaved={() => { setAsking(false); load(); }} />}
+      {asking && <LeaveDialog initial={asking} onClose={() => setAsking(false)} onSaved={() => { setAsking(false); load(); }} />}
     </div>
   );
 }
@@ -255,6 +258,7 @@ function TeamTab() {
             <Count label="Checked out" value={c.checked_out} tone="good" />
             <Count label="Not checked in" value={c.not_checked_in} tone={c.not_checked_in ? 'warning' : null} />
             <Count label="On leave" value={c.on_leave} />
+            <Count label="In the field" value={c.in_field ?? 0} tone={c.in_field ? 'brand' : null} hint="Checked in as a field day" />
             <Count label="Late" value={c.late} tone={c.late ? 'warning' : null} />
             <Count label="Arrived early" value={c.early ?? 0} tone={c.early ? 'good' : null} hint="Checked in before office hours" />
             <Count label="Missing check-out" value={c.missing_checkout} tone={c.missing_checkout ? 'critical' : null} />
@@ -282,7 +286,11 @@ function TeamTab() {
                             </div>
                           </div>
                         </td>
-                        <td><Badge tone={meta.tone}>{meta.label}</Badge> <FlagBadges flags={p.day.flags} reviewFlags={s?.review_flags} /></td>
+                        <td>
+                          <Badge tone={meta.tone}>{meta.label}</Badge>
+                          {s?.field_day && <> <Badge tone="brand" title={s.field_note || undefined}>Field day</Badge></>}
+                          {' '}<FlagBadges flags={p.day.flags} reviewFlags={s?.review_flags} />
+                        </td>
                         <td className="tnum">{s ? clockIn(s.check_in_at) : ''}</td>
                         <td className="tnum">{s?.check_out_at ? clockIn(s.check_out_at) : ''}</td>
                         <td className="tnum">{p.day.duration ? hhmm(p.day.duration) : ''}</td>

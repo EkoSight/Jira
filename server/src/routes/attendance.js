@@ -17,6 +17,7 @@ import {
   visibleUserIds,
 } from '../services/attendance.js';
 import { buildLedgers, datesBetween, isLocked, monthBounds, monthLedger } from '../services/attendanceLedger.js';
+import { declareFieldDay, nextWorkingDay, tasksDueBetween } from '../services/dayProtection.js';
 import {
   CORRECTION_KINDS, cancelCorrection, createCorrection, decideCorrection, getCorrection, reviewDay, reviewExtra,
 } from '../services/attendanceCorrections.js';
@@ -129,11 +130,49 @@ router.post(
       userAgent: req.headers['user-agent'],
     });
     resetGateCache();
+    // checking in from the field: today becomes a field day, and today's
+    // deadlines move to the next working day (unless asked not to)
+    let field = null;
+    if (req.body?.field === true && result.session) {
+      field = await declareFieldDay(req.currentUser, { note: req.body?.field_note, moveTasks: req.body?.move_tasks !== false });
+    }
+    const session = field ? await sessionById(result.session.id) : result.session;
     res.status(result.created ? 201 : 200).json({
       ...result,
-      session: shapeSession(result.session, { withLocation: true }),
-      message: result.created ? 'Checked in. Have a good day.' : result.already ? 'You are already checked in.' : 'Already recorded.',
+      session: shapeSession(session, { withLocation: true }),
+      field,
+      message: result.created ? (field ? 'Checked in from the field. Have a good day.' : 'Checked in. Have a good day.')
+        : result.already ? 'You are already checked in.' : 'Already recorded.',
     });
+  }),
+);
+
+/**
+ * "I am in the field today" — after checking in, or if plans changed during
+ * the day. Today's open deadlines move to the next working day; they are
+ * never marked done.
+ */
+router.post(
+  '/field-day',
+  asyncHandler(async (req, res) => {
+    const body = z.object({
+      note: z.string().max(300).optional().nullable(),
+      move_tasks: z.boolean().optional(),
+    }).parse(req.body || {});
+    const result = await declareFieldDay(req.currentUser, { note: body.note, moveTasks: body.move_tasks !== false });
+    res.json(result);
+  }),
+);
+
+/** Open work due on a day, so the person can see what a field day would move. */
+router.get(
+  '/field-day/preview',
+  asyncHandler(async (req, res) => {
+    const { config } = await currentPolicy();
+    const today = dateIn(config.timezone);
+    const tasks = await tasksDueBetween(req.currentUser.id, today, today);
+    const next = await nextWorkingDay(req.currentUser.id, req.currentUser.department_id, today);
+    res.json({ date: today, next_working_day: next, tasks: tasks.map((t) => ({ id: t.id, ref: t.ref, title: t.title, due_date: t.due_date, priority: t.priority })) });
   }),
 );
 
@@ -283,6 +322,7 @@ router.get(
         late: count((p) => p.day.flags.includes('LATE')),
         early: count((p) => p.day.flags.includes('EARLY_ARRIVAL')),
         missing_checkout: count((p) => p.day.session?.status === 'MISSING_CHECKOUT'),
+        in_field: count((p) => p.day.session?.field_day === true),
         needs_review: count((p) => (p.day.session?.review_flags || []).length > 0),
         regularized: count((p) => p.day.flags.includes('MANUALLY_REGULARIZED')),
         off: count((p) => ['WEEKLY_OFF', 'HOLIDAY', 'NOT_EMPLOYED'].includes(p.day.schedule_state)),

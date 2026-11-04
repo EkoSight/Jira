@@ -392,8 +392,11 @@ export const api = {
 
   // attendance — Check In / Start Work, Check Out / End Work
   attendanceToday: () => request('GET', '/attendance/today'),
-  checkIn: (body) => request('POST', '/attendance/check-in', body),
-  checkOut: (body) => request('POST', '/attendance/check-out', body),
+  // named apart from the key-result checkIn above: one object key, one meaning
+  attendanceCheckIn: (body) => request('POST', '/attendance/check-in', body),
+  attendanceCheckOut: (body) => request('POST', '/attendance/check-out', body),
+  fieldDay: (body) => request('POST', '/attendance/field-day', body),
+  fieldDayPreview: () => request('GET', '/attendance/field-day/preview'),
   myAttendance: (month) => request('GET', `/attendance/me${qs({ month })}`),
   personAttendance: (userId, month) => request('GET', `/attendance/people/${userId}${qs({ month })}`),
   sessionLocation: (id) => request('GET', `/attendance/sessions/${id}/location`),

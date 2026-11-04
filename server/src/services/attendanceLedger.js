@@ -146,6 +146,8 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
           check_in_source: row.check_in_source, check_out_source: row.check_out_source,
           review_flags: row.review_flags, regularized: row.regularized,
           has_location: row.check_in_lat !== null || row.check_out_lat !== null,
+          field_day: row.field_day === true,
+          field_note: row.field_note || null,
         } : null,
         leave_request_ids: [...new Set(leave.map((l) => l.request_id))],
         day_review: review ? { decision: review.decision, note: review.note } : null,

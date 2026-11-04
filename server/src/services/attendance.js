@@ -181,7 +181,8 @@ const SESSION_COLUMNS = `
   s.id, s.user_id, s.work_date, s.status, s.regularized, s.review_flags,
   s.check_in_at, s.check_in_source, s.check_in_accuracy_m, s.check_in_location_at,
   s.check_out_at, s.check_out_source, s.check_out_accuracy_m, s.check_out_location_at,
-  s.check_in_lat, s.check_in_lng, s.check_out_lat, s.check_out_lng, s.created_at, s.updated_at
+  s.check_in_lat, s.check_in_lng, s.check_out_lat, s.check_out_lng, s.created_at, s.updated_at,
+  s.field_day, s.field_note
 `;
 
 /** A session for the wire. Coordinates only when the viewer may see them. */

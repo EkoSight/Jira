@@ -11,6 +11,8 @@ import {
   decideRequest, getRequest, leaveDays, listRequests, shapeRequest, submitRequest,
 } from '../services/leave.js';
 import { PENDING_LEAVE } from '../services/attendanceLedger.js';
+import { nextWorkingDay, tasksDueBetween } from '../services/dayProtection.js';
+import { query } from '../db/pool.js';
 
 const router = Router();
 
@@ -69,8 +71,24 @@ router.get(
     const start = isoDate.parse(req.query.start);
     const end = isoDate.parse(req.query.end || req.query.start);
     const dayPart = ['FIRST_HALF', 'SECOND_HALF'].includes(req.query.day_part) ? req.query.day_part : 'FULL';
-    const { days } = await leaveDays(req.currentUser.id, req.currentUser.department_id, start, end, dayPart);
-    res.json({ days, working_days: days.reduce((s, d) => s + d.portion, 0) });
+    // an approver recording leave for someone sees that person's days and work
+    let subject = { id: req.currentUser.id, department_id: req.currentUser.department_id };
+    if (req.query.user_id && Number(req.query.user_id) !== req.currentUser.id) {
+      const id = Number(req.query.user_id);
+      if (!(await canSee(req.currentUser, id))) throw forbidden('This person is not in a team you can see');
+      const { rows } = await query('SELECT id, department_id FROM users WHERE id = $1', [id]);
+      if (rows[0]) subject = rows[0];
+    }
+    const { days } = await leaveDays(subject.id, subject.department_id, start, end, dayPart);
+    // open work due in the range: what "move my tasks" would move
+    const tasks = end >= start ? await tasksDueBetween(subject.id, start, end) : [];
+    const backOn = end >= start ? await nextWorkingDay(subject.id, subject.department_id, end) : null;
+    res.json({
+      days,
+      working_days: days.reduce((s, d) => s + d.portion, 0),
+      tasks_due: tasks.map((t) => ({ id: t.id, ref: t.ref, title: t.title, due_date: t.due_date, priority: t.priority })),
+      back_on: backOn,
+    });
   }),
 );
 
@@ -107,6 +125,8 @@ router.post(
       email_reference: z.string().max(300).optional().nullable(),
       claimed_notified_at: z.string().datetime({ offset: true }).optional().nullable(),
       draft: z.boolean().optional(),
+      // move the deadlines that fall during the leave to the day they are back
+      move_tasks: z.boolean().optional(),
     }).parse(req.body);
     const subject = body.user_id ?? req.currentUser.id;
     // someone rings in sick: an approver may record it for them; it still needs a separate decision

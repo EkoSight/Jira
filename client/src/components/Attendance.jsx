@@ -43,7 +43,7 @@ export function FlagBadges({ flags = [], reviewFlags = [] }) {
 }
 
 /** The location step and the server call, shared by check in and check out. */
-function useAttendanceAction(kind, { onDone }) {
+function useAttendanceAction(kind, { onDone, extra }) {
   const toast = useToast();
   const { today, reload } = useAttendance();
   const [phase, setPhase] = useState('idle'); // idle | locating | sending | problem
@@ -68,10 +68,10 @@ function useAttendanceAction(kind, { onDone }) {
     }
     setPhase('sending');
     try {
-      const body = { request_id: requestId.current, location };
-      const result = kind === 'in' ? await api.checkIn(body) : await api.checkOut(body);
+      const body = { request_id: requestId.current, location, ...(extra?.() || {}) };
+      const result = kind === 'in' ? await api.attendanceCheckIn(body) : await api.attendanceCheckOut(body);
       requestId.current = null;
-      toast.success(result.message || (kind === 'in' ? 'Checked in' : 'Checked out'));
+      toast.success(`${result.message || (kind === 'in' ? 'Checked in' : 'Checked out')}${movedWords(result.field)}`);
       setPhase('idle');
       await reload();
       onDone?.(result);
@@ -117,13 +117,94 @@ function ActionProblem({ problem, onRetry, onCorrection }) {
   );
 }
 
+/** " 3 tasks due today moved to Thu 5 Nov." — or nothing. */
+function movedWords(result) {
+  const n = result?.moved?.length || 0;
+  if (!n) return '';
+  return ` ${n === 1 ? '1 task due today moved' : `${n} tasks due today moved`} to ${dayName(result.moved_to)} — still open, not marked done.`;
+}
+
+/**
+ * Working in the field today: what it does, what it would move, and a way to
+ * keep the deadlines as they are. Used before checking in (as options) and
+ * after (to mark the day).
+ */
+function FieldDayOptions({ value, onChange }) {
+  const [preview, setPreview] = useState(null);
+  useEffect(() => { api.fieldDayPreview().then(setPreview).catch(() => setPreview(null)); }, []);
+  const tasks = preview?.tasks || [];
+  return (
+    <div className="stack-sm att-field">
+      <Field label="Where (optional)" hint="Shown to your manager with today’s attendance">
+        <input className="input" value={value.note} maxLength={300} placeholder="Dealer visits, Kanpur"
+          onChange={(e) => onChange({ ...value, note: e.target.value })} />
+      </Field>
+      {tasks.length > 0 ? (
+        <label className="check small">
+          <input type="checkbox" checked={value.moveTasks} onChange={(e) => onChange({ ...value, moveTasks: e.target.checked })} />
+          <span>
+            Move my {tasks.length === 1 ? 'task' : `${tasks.length} tasks`} due today to <strong>{dayName(preview.next_working_day)}</strong> so a
+            field day costs no black mark. {tasks.length === 1 ? 'It stays' : 'They stay'} open — nothing is marked done — and whoever assigned
+            {tasks.length === 1 ? ' it' : ' them'} is told.
+            <span className="muted"> {tasks.map((t) => t.ref).join(', ')}</span>
+          </span>
+        </label>
+      ) : preview && <div className="small muted">Nothing of yours is due today.</div>}
+    </div>
+  );
+}
+
+function FieldDayDialog({ onClose, onDone }) {
+  const toast = useToast();
+  const [value, setValue] = useState({ note: '', moveTasks: true });
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const result = await api.fieldDay({ note: value.note.trim() || null, move_tasks: value.moveTasks });
+      toast.success(`Today is marked as a field day.${movedWords(result)}`);
+      onDone?.(result);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Modal
+      title="Working in the field today"
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Mark today as a field day'}</button>
+        </>
+      )}
+    >
+      <FieldDayOptions value={value} onChange={setValue} />
+    </Modal>
+  );
+}
+
 /** The card at the top of the dashboard, and the heart of the check-in screen. */
 export function TodayAttendanceCard({ variant = 'card' }) {
   const { today, reload } = useAttendance();
   const [correction, setCorrection] = useState(null);
   const [locationOf, setLocationOf] = useState(null);
   const [tick, setTick] = useState(Date.now());
-  const checkInAction = useAttendanceAction('in', {});
+  // checking in from the field: today becomes a field day as it is recorded
+  const [inField, setInField] = useState(false);
+  const [field, setField] = useState({ note: '', moveTasks: true });
+  const [markingField, setMarkingField] = useState(false);
+  const [emergencyLeave, setEmergencyLeave] = useState(false);
+  const fieldRef = useRef({ inField, field });
+  fieldRef.current = { inField, field };
+  const checkInAction = useAttendanceAction('in', {
+    extra: () => (fieldRef.current.inField
+      ? { field: true, field_note: fieldRef.current.field.note.trim() || null, move_tasks: fieldRef.current.field.moveTasks }
+      : {}),
+    onDone: () => setInField(false),
+  });
   const checkOutAction = useAttendanceAction('out', {});
 
   useEffect(() => {
@@ -174,6 +255,12 @@ export function TodayAttendanceCard({ variant = 'card' }) {
             )}
             {!today.policy.start_date && !open && !done && <>Attendance tracking has not started yet for the company — recording is optional for now.</>}
           </div>
+          {(open || done)?.field_day && (
+            <div className="row wrap small" style={{ gap: 6 }}>
+              <Badge tone="brand">Field day</Badge>
+              {(open || done).field_note && <span className="muted">{(open || done).field_note}</span>}
+            </div>
+          )}
           <FlagBadges flags={day?.flags} reviewFlags={(open || done)?.review_flags} />
           {earlyNote && <div className="small att-early-note">{earlyNote}</div>}
         </div>
@@ -197,8 +284,27 @@ export function TodayAttendanceCard({ variant = 'card' }) {
               View location
             </button>
           )}
+          {open && !overnight && !open.field_day && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMarkingField(true)}>
+              I’m in the field today
+            </button>
+          )}
         </div>
       </div>
+      {!open && !done && (
+        <div className="att-card-field">
+          <label className="check small">
+            <input type="checkbox" checked={inField} onChange={(e) => setInField(e.target.checked)} disabled={action.busy} />
+            <span>I’m working in the field today</span>
+          </label>
+          {inField && <FieldDayOptions value={field} onChange={setField} />}
+          {!offDay && day?.classification !== 'PAID_LEAVE' && day?.classification !== 'UNPAID_LEAVE' && (
+            <button type="button" className="btn btn-ghost btn-sm att-emergency" onClick={() => setEmergencyLeave(true)}>
+              Can’t work today? Emergency leave
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="att-card-foot">
         <ActionProblem problem={action.problem} onRetry={action.run} onCorrection={() => setCorrection({ work_date: open?.work_date || today.today, kind: open ? 'MISSED_CHECK_OUT' : 'TECHNICAL' })} />
@@ -232,6 +338,8 @@ export function TodayAttendanceCard({ variant = 'card' }) {
 
       {correction && <CorrectionDialog {...correction} onClose={() => setCorrection(null)} onSaved={() => { setCorrection(null); reload(); }} />}
       {locationOf && <LocationDialog sessionId={locationOf} onClose={() => setLocationOf(null)} />}
+      {markingField && <FieldDayDialog onClose={() => setMarkingField(false)} onDone={() => { setMarkingField(false); reload(); }} />}
+      {emergencyLeave && <LeaveDialog initial={{ emergency: true }} onClose={() => setEmergencyLeave(false)} onSaved={() => { setEmergencyLeave(false); reload(); }} />}
     </section>
   );
 }
@@ -428,8 +536,10 @@ export function LeaveDialog({ onClose, onSaved, forUser = null, initial = {} }) 
   const [end, setEnd] = useState(initial.end || initial.start || today);
   const [dayPart, setDayPart] = useState(initial.dayPart || 'FULL');
   const [reason, setReason] = useState('');
-  const [emergency, setEmergency] = useState(false);
+  const [emergency, setEmergency] = useState(Boolean(initial.emergency));
   const [explanation, setExplanation] = useState('');
+  // the work due while away moves to the day they are back (whole days only)
+  const [moveTasks, setMoveTasks] = useState(true);
   const [notified, setNotified] = useState('');
   const [emailRef, setEmailRef] = useState('');
   const [meta, setMeta] = useState(null);
@@ -440,7 +550,7 @@ export function LeaveDialog({ onClose, onSaved, forUser = null, initial = {} }) 
   useEffect(() => { api.leaveMeta().then(setMeta).catch(() => {}); }, []);
   useEffect(() => {
     if (!start || !end || end < start) { setPreview(null); return; }
-    api.leavePreview({ start, end, day_part: dayPart }).then(setPreview).catch(() => setPreview(null));
+    api.leavePreview({ start, end, day_part: dayPart, user_id: subject?.id }).then(setPreview).catch(() => setPreview(null));
     api.leaveBalance({ month: start.slice(0, 7), user_id: subject?.id }).then(setBalance).catch(() => setBalance(null));
   }, [start, end, dayPart, subject?.id]);
 
@@ -448,19 +558,27 @@ export function LeaveDialog({ onClose, onSaved, forUser = null, initial = {} }) 
   const noticeHours = meta?.notice_hours ?? 48;
   const hoursAhead = (Date.parse(`${start}T${dayPart === 'SECOND_HALF' ? meta?.half_day_split || '13:30' : '09:00'}:00+05:30`) - Date.now()) / 3_600_000;
   const shortNotice = !emergency && hoursAhead < noticeHours;
+  const dueTasks = preview?.tasks_due || [];
+  // only whole days move deadlines: on a half day the other half is worked
+  const canMove = (single ? dayPart : 'FULL') === 'FULL' && dueTasks.length > 0;
+  const who = subject ? 'their' : 'my';
   const others = useMemo(() => (users || []).filter((u) => u.id !== user.id && u.is_active !== false), [users, user.id]);
 
   const submit = async (draft) => {
     setSaving(true);
     try {
-      await api.requestLeave({
+      const res = await api.requestLeave({
         ...(subject ? { user_id: subject.id } : {}),
         category, start_date: start, end_date: single ? start : end, day_part: single ? dayPart : 'FULL', reason,
         is_emergency: emergency, emergency_explanation: emergency ? explanation : null,
         notified_user_id: notified ? Number(notified) : null, email_reference: emailRef || null, draft,
+        move_tasks: canMove && moveTasks,
       });
-      toast.success(draft ? 'Saved as a draft' : 'Leave request sent for approval');
-      onSaved?.();
+      const moved = res.request?.moved_tasks || [];
+      toast.success(draft ? 'Saved as a draft'
+        : `${emergency ? 'Emergency leave sent' : 'Leave request sent for approval'}${moved.length
+          ? ` · ${moved.length === 1 ? '1 task' : `${moved.length} tasks`} moved to ${dayName(res.request.moved_to)}` : ''}`);
+      onSaved?.(res);
     } catch (err) {
       toast.error(err);
     } finally {
@@ -470,19 +588,29 @@ export function LeaveDialog({ onClose, onSaved, forUser = null, initial = {} }) 
 
   return (
     <Modal
-      title={subject ? `Request leave for ${subject.full_name}` : 'Request leave'}
+      title={`${emergency ? 'Emergency leave' : 'Request leave'}${subject ? ` for ${subject.full_name}` : ''}`}
       onClose={onClose}
       footer={(
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button type="button" className="btn" onClick={() => submit(true)} disabled={saving}>Save draft</button>
           <button type="button" className="btn btn-primary" onClick={() => submit(false)} disabled={saving || !reason.trim()}>
-            {saving ? 'Sending…' : 'Send for approval'}
+            {saving ? 'Sending…' : emergency ? 'Send emergency leave' : 'Send for approval'}
           </button>
         </>
       )}
     >
       <div className="stack">
+        <div className="seg" role="radiogroup" aria-label="Kind of leave">
+          <button type="button" role="radio" aria-checked={!emergency} className={!emergency ? 'is-on' : ''} onClick={() => setEmergency(false)}>Planned leave</button>
+          <button type="button" role="radio" aria-checked={emergency} className={emergency ? 'is-on' : ''} onClick={() => setEmergency(true)}>Emergency leave</button>
+        </div>
+        {emergency && (
+          <div className="small muted">
+            For when it could not be asked for in advance — today, or a day already gone (up to 31 days back). No notice is needed;
+            your approver decides it as an emergency.
+          </div>
+        )}
         <div className="grid-2">
           <Field label="Type">
             <select className="select" value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -524,18 +652,26 @@ export function LeaveDialog({ onClose, onSaved, forUser = null, initial = {} }) 
         <Field label="Reason" hint={subject ? 'Only they and their approvers see this.' : 'Only you and your approvers see this.'}>
           <textarea className="textarea" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={2000} />
         </Field>
-        <label className="check">
-          <input type="checkbox" checked={emergency} onChange={(e) => setEmergency(e.target.checked)} /> This is an emergency
-        </label>
         {emergency && (
           <Field label="What is the emergency?" hint="So your approver can decide without chasing you.">
             <textarea className="textarea" value={explanation} onChange={(e) => setExplanation(e.target.value)} maxLength={2000} />
           </Field>
         )}
+        {canMove && (
+          <label className="check small att-move">
+            <input type="checkbox" checked={moveTasks} onChange={(e) => setMoveTasks(e.target.checked)} />
+            <span>
+              Move {who} {dueTasks.length === 1 ? 'task' : `${dueTasks.length} tasks`} due on these days to <strong>{dayName(preview.back_on)}</strong>
+              {emergency ? ' — now, so nothing waits on you while you are away' : ' — once the leave is approved'}.
+              {' '}{dueTasks.length === 1 ? 'It stays' : 'They stay'} open, nothing is marked done, and whoever assigned the work is told.
+              <span className="muted"> {dueTasks.map((t) => t.ref).join(', ')}</span>
+            </span>
+          </label>
+        )}
         {shortNotice && (
           <div className="callout small" style={{ borderLeftColor: 'var(--warning)', background: 'var(--warning-wash)' }}>
             <Icon name="alert" />
-            <span>Planned leave needs at least {noticeHours} hours’ notice. This request will be marked “short notice” for your approver to decide. If it is an emergency, tick the box above.</span>
+            <span>Planned leave needs at least {noticeHours} hours’ notice. This request will be marked “short notice” for your approver to decide. If it is an emergency, choose “Emergency leave” above.</span>
           </div>
         )}
         <details className="att-details">
@@ -699,6 +835,7 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
                   <td className="nowrap">{dayName(d.date)}</td>
                   <td>
                     <Badge tone={meta.tone}>{meta.label}</Badge>
+                    {s?.field_day && <> <Badge tone="brand" title={s.field_note || undefined}>Field day</Badge></>}
                     <FlagBadges flags={d.flags.filter((f) => f !== 'MISSING_CHECKOUT')} reviewFlags={s?.review_flags} />
                   </td>
                   <td className="tnum">{s ? clockIn(s.check_in_at, tz) : ''}{s?.check_in_source === 'MANUALLY_REGULARIZED' ? '*' : ''}</td>

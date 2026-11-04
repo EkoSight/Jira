@@ -286,7 +286,8 @@ test('a session left open past the cutoff becomes a missing check-out; the time 
   assert.ok(me.body.missing_checkouts.some((m) => m.work_date === day));
   assert.notEqual(me.body.open_session?.work_date, day, 'a session past its cutoff is not offered for check-out');
   const month = await call('GET', `/attendance/me?month=${day.slice(0, 7)}`, { token: tokens.nina });
-  assert.equal(month.body.days.find((d) => d.date === day).classification, 'MISSING_CHECKOUT');
+  // shown as a missing check-out whatever weekday it fell on (a Sunday reads as a weekly off)
+  assert.equal(month.body.days.find((d) => d.date === day).session.status, 'MISSING_CHECKOUT');
   const read = await query('SELECT status FROM attendance_sessions WHERE user_id = $1 AND work_date = $2', [ids.nina, day]);
   assert.equal(read.rows[0].status, 'OPEN', 'a read never changes the record');
   const none = await query(`SELECT 1 FROM attendance_audit WHERE subject_user_id = $1 AND action = 'MARKED_MISSING_CHECKOUT'`, [ids.nina]);
