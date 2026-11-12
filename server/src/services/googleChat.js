@@ -23,6 +23,7 @@ import { ChatError, chatConfig, chatLink, chatText, sendChatMessage } from '../l
 import { getSettings } from './settings.js';
 import { currentPolicy } from './attendancePolicy.js';
 import { dateIn, visibleUserIds } from './attendance.js';
+import { runStandup, submitFromChat } from './standup.js';
 
 const RETRY_MINUTES = [1, 5, 30, 120];
 const MAX_ATTEMPTS = RETRY_MINUTES.length + 1;
@@ -156,7 +157,17 @@ export async function handleChatEvent(event) {
         const { rows: me } = await query('SELECT full_name FROM users WHERE id = $1', [user.id]);
         return { text: `Hi ${chatText(me[0]?.full_name?.split(' ')[0] || 'there')}. You’re connected.\n\n${HELP}` };
       }
-      return replyToCommand(user.id, event.message?.argumentText ?? event.message?.text ?? '');
+      const said = event.message?.argumentText ?? event.message?.text ?? '';
+      // a standup sent privately: recorded, then posted in the standup space
+      if (/^\s*\/?standup\b/i.test(said)) {
+        const result = await submitFromChat({
+          source: 'CHAT_DM', text: said,
+          sender: { name: event.user?.name || null, email: event.user?.email || null },
+          message: { name: event.message?.name || null, thread: event.message?.thread?.name || null },
+        });
+        return { text: result.text };
+      }
+      return replyToCommand(user.id, said);
     }
     return {};
   }
@@ -175,6 +186,16 @@ export async function handleChatEvent(event) {
     };
   }
   if (type === 'MESSAGE') {
+    // the standup space: a message that mentions TaskFlow is a standup (or a correction)
+    const standup = (await getSettings()).standup || {};
+    if (standup.spaceName && space.name === standup.spaceName) {
+      const result = await submitFromChat({
+        source: 'CHAT_SPACE', text: event.message?.argumentText ?? event.message?.text ?? '',
+        sender: { name: event.user?.name || null, email: event.user?.email || null },
+        message: { name: event.message?.name || null, thread: event.message?.thread?.name || null },
+      });
+      return { text: result.text };
+    }
     return { text: 'In a space I only post the daily team summary. Message me directly for your own tasks and alerts.' };
   }
   return {};
@@ -521,8 +542,8 @@ export async function deliverOutbox({ limit = 50 } = {}) {
     try {
       const result = await sendChatMessage(row.space_name, row.payload);
       await query(
-        `UPDATE chat_outbox SET status = 'SENT', sent_at = now(), attempts = attempts + 1, message_name = $2, last_error = NULL WHERE id = $1`,
-        [row.id, result?.name || null],
+        `UPDATE chat_outbox SET status = 'SENT', sent_at = now(), attempts = attempts + 1, message_name = $2, thread_name = $3, last_error = NULL WHERE id = $1`,
+        [row.id, result?.name || null, result?.thread || null],
       );
       sent += 1;
     } catch (err) {
@@ -561,6 +582,9 @@ export async function sendTest(userId) {
 export async function runChatWork(now = new Date()) {
   const dispatched = await dispatchNotifications();
   const summaries = await queueSummaries(now);
+  // the daily standup has its own space and schedule; a fault there never stops the rest
+  let standup = null;
+  try { standup = await runStandup(now); } catch (err) { standup = { error: err.message }; }
   const delivered = await deliverOutbox();
-  return { dispatched, summaries, delivered };
+  return { dispatched, summaries, standup, delivered };
 }

@@ -253,7 +253,13 @@ export class ChatError extends Error {
 
 async function googleTransport(spaceName, message) {
   const token = await accessToken();
-  const response = await googleFetch(`${CHAT_API}/${spaceName}/messages`, {
+  // a message for a thread names it (thread.name) or keys it (thread.threadKey);
+  // if the thread is gone, Google starts a new one rather than refusing
+  const params = new URLSearchParams();
+  if (message?.thread?.name || message?.thread?.threadKey) params.set('messageReplyOption', 'REPLY_MESSAGE_FALLBACK_TO_NEW_THREAD');
+  if (message?.thread?.threadKey) params.set('threadKey', message.thread.threadKey);
+  const query = params.toString() ? `?${params}` : '';
+  const response = await googleFetch(`${CHAT_API}/${spaceName}/messages${query}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
     body: JSON.stringify(message),
@@ -267,7 +273,42 @@ async function googleTransport(spaceName, message) {
     if (response.status === 401) tokenCache.delete(`${SCOPE}|`);
     throw new ChatError(`Google Chat: ${reason}`, { status: response.status, permanent: permanent && response.status !== 401, spaceGone });
   }
-  return { name: data.name };
+  return { name: data.name, thread: data.thread?.name || null };
+}
+
+/**
+ * A space's settings, as the app sees them — to check a standup space is a
+ * private company space before anything is posted there.
+ */
+export async function getSpace(spaceName) {
+  return googleApi(`${CHAT_API}/${spaceName}`);
+}
+
+const MESSAGES_READ_SCOPE = 'https://www.googleapis.com/auth/chat.messages.readonly';
+
+/**
+ * Messages posted in a space since an instant, read as a member of the space
+ * (domain-wide delegation, read-only). Optional: it lets people post their
+ * standup in the space without mentioning TaskFlow. Needs an admin to grant
+ * the chat.messages.readonly scope to the service account.
+ */
+export async function listSpaceMessages(spaceName, { since, readAs }) {
+  if (!readAs) throw new ChatError('No account is set to read the standup space as', { permanent: true });
+  const out = [];
+  let pageToken = '';
+  for (let page = 0; page < 10; page += 1) {
+    const params = new URLSearchParams({
+      pageSize: '200',
+      filter: `createTime > "${new Date(since).toISOString()}"`,
+      orderBy: 'createTime asc',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    const data = await googleApi(`${CHAT_API}/${spaceName}/messages?${params}`, { scope: MESSAGES_READ_SCOPE, subject: readAs });
+    out.push(...(data.messages || []));
+    pageToken = data.nextPageToken;
+    if (!pageToken) break;
+  }
+  return out;
 }
 
 /** Signs in to Google once, to prove the credentials work. Sends no message. */

@@ -4091,3 +4091,19 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .call-bar { grid-template-columns: 1fr 40px; }
   .call-bar-track { grid-column: 1 / -1; grid-row: 2; }
 }
+
+/* the daily standup form: one row per item, stacking on a phone */
+.standup-item { display: grid; grid-template-columns: 22px minmax(110px, 0.8fr) 1.3fr 1.3fr 104px 32px; gap: 6px; align-items: center; }
+.standup-blocker { display: grid; grid-template-columns: 1.6fr 1fr 104px 32px; gap: 6px; align-items: center; }
+.standup-num { color: var(--ink-muted); font-weight: 650; text-align: right; }
+.standup-version { padding: 6px 0; border-top: 1px solid var(--border); }
+.standup-raw { white-space: pre-wrap; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; max-height: 220px; overflow: auto; }
+@media (max-width: 760px) {
+  .standup-item { grid-template-columns: 22px 1fr 32px; }
+  .standup-item .input { grid-column: 2 / 3; }
+  .standup-item .standup-num { grid-row: 1; }
+  .standup-item .btn-icon { grid-column: 3; grid-row: 1; }
+  .standup-blocker { grid-template-columns: 1fr 32px; }
+  .standup-blocker .input { grid-column: 1 / 2; }
+  .standup-blocker .btn-icon { grid-column: 2; grid-row: 1; }
+}

@@ -818,3 +818,24 @@ Generated on assignment, being made a follower, being tagged, new comments,
 approaching deadlines, black marks, kudos, awards and feature request updates.
 The client polls every 30 seconds and plays a chime plus a desktop notification
 for anything new.
+
+
+## Daily standup
+
+Everyone posts their own plan here or in Google Chat (see `DAILY_STANDUP.md`).
+Nothing here changes attendance, leave, pay or black marks.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/standup/me` | signed in — today, who this login can post for, what is in |
+| POST | `/standup/check` | signed in — the reviewer's checks on a draft, as guidance |
+| POST | `/standup/me` | signed in — `{ member_id?, role?, items: [{ task, action, target, done_by }], blockers: [{ text, owner, needed_by }] }`. A shared login must send `member_id` (400 `CHOOSE_PERSON` otherwise). A second post the same day is a new version; the first time is kept. |
+| GET | `/standup/days`, `/standup/days/:date` | `standup.review` — the day's evidence: reminder delivery, deadline in force, every Chat message's outbox status, reviews, versions, held messages, people not included |
+| POST | `/standup/reviews/:id/resolve` | `standup.review` — `{ resolution: EXCUSED/FOLLOWED_UP/NO_ACTION/IDENTITY_FIXED, note }` |
+| POST | `/standup/unmatched/:id/resolve` | `standup.manage` — `{ member_id }` to count a held message for someone, or `null` to dismiss it |
+| GET / POST / PATCH | `/standup/members`, `/standup/members/:id` | read `standup.review`; change `standup.manage`. Changing a Chat identity makes it unverified again. Adding a person on a shared login takes the shared login itself off the list. |
+| POST | `/standup/members/enrol-active` | `standup.manage` — every active user with their own login. Company-domain logins are verified; shared logins are skipped. |
+| POST | `/standup/members/:id/verify` | `standup.manage` — `{ decision: VERIFIED/REJECTED, note }` |
+| GET / PUT | `/standup/settings` | `standup.manage` — a new space switches the standup off; `enabled: true` needs a passing space check (409 `SPACE_NOT_CHECKED`) |
+| POST | `/standup/settings/check-space` | `standup.manage` — asks Google whether the app is in the space and whether outsiders can join |
+| POST | `/standup/run` | `standup.manage` — one pass of the schedule now; safe to repeat |

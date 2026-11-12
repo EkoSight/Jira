@@ -20,6 +20,7 @@ import Pipeline from './pages/Pipeline.jsx';
 import AccountDetail from './pages/AccountDetail.jsx';
 import Attendance from './pages/Attendance.jsx';
 import Payroll from './pages/Payroll.jsx';
+import Standup from './pages/Standup.jsx';
 // email marketing loads only for the people who open it
 const Marketing = lazy(() => import('./pages/Marketing.jsx'));
 const MarketingCampaign = lazy(() => import('./pages/MarketingCampaign.jsx'));
@@ -117,6 +118,7 @@ function Shell() {
           }
         />
         <Route path="/attendance" element={<Attendance />} />
+        <Route path="/standup" element={<Standup />} />
         <Route
           path="/payroll"
           element={

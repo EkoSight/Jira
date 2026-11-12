@@ -26,6 +26,7 @@ import availabilityRoutes from './routes/availability.js';
 import attendanceRoutes from './routes/attendance.js';
 import leaveRoutes from './routes/leave.js';
 import payrollRoutes from './routes/payroll.js';
+import standupRoutes from './routes/standup.js';
 import { requireAttendance } from './services/attendance.js';
 import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
 import marketingRoutes from './routes/marketing.js';
@@ -84,6 +85,8 @@ export function createTaskFlowRouter() {
   router.use('/attendance', attendanceRoutes);
   router.use('/leave', leaveRoutes);
   router.use('/payroll', payrollRoutes);
+  // the daily standup: a plan can be posted before checking in
+  router.use('/standup', standupRoutes);
   // your own Google Chat link and alerts; the admin's view of the set-up
   router.use('/chat', chatRoutes);
 

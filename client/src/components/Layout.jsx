@@ -21,6 +21,7 @@ const NAV = [
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
   { to: '/attendance', label: 'Attendance', icon: 'clock' },
+  { to: '/standup', label: 'Daily standup', icon: 'list' },
   { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },
   { to: '/sales', label: 'Sales CRM', icon: 'target', permission: 'crm.view', module: 'crm' },
   { to: '/pipeline', label: 'Pipeline', icon: 'pipeline', permission: 'crm.view', module: 'crm' },
@@ -43,6 +44,7 @@ const ATTENDANCE_TYPES = {
   attendance_review: '/attendance?tab=month',
   attendance_reminder: '/attendance',
   attendance_checkout_reminder: '/attendance',
+  standup_review: '/standup?tab=review',
 };
 
 // email marketing's notices (approvals waiting, a contact reaching a step)

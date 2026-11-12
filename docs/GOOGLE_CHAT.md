@@ -7,6 +7,7 @@ TaskFlow sends three kinds of message to Google Chat:
 | **Instant alerts**: assignments, deadlines, mentions, comments, black marks, leave and attendance | A direct message to each person who has added the app | Within about a minute of the TaskFlow notification |
 | **Morning summary**: overdue, due today, decisions waiting for you, a check-in reminder | The same direct message | Working days, default 08:45 India time; skipped when there is nothing to say |
 | **Team summary**: who is away today, due today, overdue | A Chat space an admin points at a department | Working days, default 09:15 |
+| **Daily standup**: one reminder, threaded feedback, a private follow-up | The company standup space (see `DAILY_STANDUP.md`) | Working days, 09:30 reminder, 09:40 deadline |
 
 Everything still appears in TaskFlow's bell, too. Leave reasons, attendance
 locations and pay are never sent to Chat.

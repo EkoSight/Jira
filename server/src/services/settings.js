@@ -308,6 +308,32 @@ export const DEFAULT_SETTINGS = {
     sto: { defaultHour: 10 },
     timezone: 'Asia/Kolkata',
   },
+  // The daily standup in a company Chat space. Separate from the individual
+  // and department summaries, which carry on unchanged.
+  standup: {
+    enabled: false,
+    // Google's name for the space, e.g. "spaces/AAAA…" — chosen by an admin
+    spaceName: null,
+    // India time, on the company's working days
+    reminderTime: '09:30',
+    deadline: '09:40',
+    escalationTime: '11:00',
+    // if the reminder never went out, the review still runs by this time
+    reviewCutoff: '12:00',
+    minItems: 3,
+    maxItems: 5,
+    // TaskFlow users told privately about what is still unresolved
+    escalateTo: [],
+    // Chat accounts on these domains are the company's own; any other account
+    // must be mapped and verified by an admin before it counts
+    companyDomains: ['ekosight.com'],
+    // optional: read standups posted in the space without a mention, as this
+    // member (needs the chat.messages.readonly grant)
+    readSpaceAs: null,
+    // the last privacy check of the space
+    spaceCheck: null,
+  },
+
   googleChat: {
     // off until an admin has sent a test message and switched it on
     enabled: false,

@@ -80,6 +80,9 @@ export const PERMISSIONS = {
   'attendance.extra.review': 'Decide whether time after office hours may offset a shortfall',
   'attendance.policy': 'Set working hours, holidays, employee schedules and attendance policy',
   'leave.approve': 'Approve or reject leave requests',
+  // The daily standup: a plan for the day, never a penalty
+  'standup.review': 'See the daily standup review and follow it up',
+  'standup.manage': 'Set up the daily standup: its space, times and who takes part',
   // Money is separate from attendance oversight
   'payroll.view': 'See monthly salary estimates',
   'payroll.manage': 'Prepare payroll months: submit, send back and export',
@@ -146,6 +149,7 @@ export const ROLE_PERMISSIONS = {
     'attendance.approve',
     'attendance.extra.review',
     'leave.approve',
+    'standup.review',
     'marketing.view',
     'marketing.manage',
     'marketing.send',

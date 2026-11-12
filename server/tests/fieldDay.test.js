@@ -266,12 +266,18 @@ test('emergency leave moves the work at once; approval waives marks only for som
   }
   assert.equal((await query('SELECT status FROM black_marks WHERE task_id = $1', [overdue])).rows[0].status, 'active', 'the person cannot clear their own mark');
 
-  // a reviewer without the right to waive approves: the mark waits for someone who has it
+  // a reviewer without the right to waive approves: the marks wait for someone who has it.
+  // How many depends on the time of day the test runs (a task due at 18:00 today may
+  // already be marked), so count the marks on the moved tasks rather than assume one.
+  const { rows: [{ n: marked }] } = await query(
+    `SELECT COUNT(*)::int AS n FROM black_marks WHERE status = 'active' AND task_id = ANY($1::int[])`, [movedIds],
+  );
+  assert.ok(marked >= 1);
   const decided = await call('POST', `/leave/${asked.body.request.id}/decide`, { token: tokens.lead, body: { decision: 'APPROVED_UNPAID', note: 'ok' } });
   assert.equal(decided.status, 200, JSON.stringify(decided.body));
   assert.equal(decided.body.moved_tasks.length, 0, 'nothing moves twice');
   assert.equal(decided.body.marks_waived, 0);
-  assert.equal(decided.body.marks_waiting, 1);
+  assert.equal(decided.body.marks_waiting, marked);
   assert.equal((await query('SELECT status FROM black_marks WHERE task_id = $1', [overdue])).rows[0].status, 'active');
   assert.equal((await query('SELECT COUNT(*)::int AS n FROM task_deadline_moves WHERE leave_request_id = $1', [asked.body.request.id])).rows[0].n, movedIds.length);
 });
