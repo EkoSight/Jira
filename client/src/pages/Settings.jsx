@@ -5,6 +5,7 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import { PRIORITIES } from '../lib/format.js';
 import AttendanceSettings from '../components/AttendanceSettings.jsx';
+import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
 import ReminderSettings from '../components/ReminderSettings.jsx';
@@ -702,9 +703,10 @@ function AccountTab() {
 
   return (
     <div className="stack">
+      <SuperAdminClaim />
       <div className="card card-pad stack-sm">
         <h3>{user.full_name}</h3>
-        <div className="small muted">{user.email} · {user.role}</div>
+        <div className="small muted">{user.email} · {{ super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' }[user.role] || user.role}</div>
         <div className="row wrap" style={{ gap: 5, marginTop: 6 }}>
           {user.permissions.map((permission) => (
             <Badge key={permission}>{permission}</Badge>

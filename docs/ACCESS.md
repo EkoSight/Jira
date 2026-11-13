@@ -67,8 +67,23 @@ and settings.
 
 ## Making the founders super admins
 
-This is done once, on the server, by whoever runs it, using the founders'
-sign-in emails. No person is named in the code.
+There are two ways. No person is named in the code either way.
+
+**In the app (no server access needed).** While there is no super admin at
+all, every admin sees a card on the Dashboard and under **Settings → My
+account**: "There is no super admin yet". A founder enters their own password
+and clicks **Make me a super admin**.
+
+- It takes effect at once, in the same session.
+- Every other admin is notified, and the change goes to the audit trail.
+- It works only once: as soon as anyone is a super admin, the card is gone.
+- That first founder then makes the other founder a super admin on the
+  **Team** page: Edit → Role → Super admin.
+- Before super admins existed, every admin already had every power, so the
+  card gives an admin nothing they could not already do. Founders should claim
+  it straight after the update.
+
+**On the server.** Use the founders' sign-in emails:
 
 ```
 npm run access:super-admin                                   # list admins and super admins
@@ -86,6 +101,6 @@ npm run access:super-admin -- --revoke <email>               # back to admin
 
 After that, a super admin can make or unmake super admins on the Team page.
 
-**Until someone runs it, nobody can approve payroll.** Every admin loses the
-kept powers when this release is deployed. `npm run doctor` warns while no
+**Until one of these is done, nobody can approve payroll.** Every admin loses
+the kept powers when this release is deployed. `npm run doctor` warns while no
 super admin exists.

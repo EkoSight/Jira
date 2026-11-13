@@ -112,6 +112,8 @@ deadline is visible at review time.
 | POST | `/users/:id/reset-password` | `user.edit`, and the person is below the actor (a super admin: anyone) |
 | DELETE | `/users/:id` | `user.delete`, and the person is below the actor (deactivates, never deletes) |
 | GET | `/users/permissions/catalogue` | signed in — also the roles and permissions this person may hand out (`assignableRoles`, `grantable`) and `superAdminOnly` |
+| GET | `/users/access/status` | signed in — `{ super_admins, can_claim }` |
+| POST | `/users/access/claim-super-admin` | an active admin, only while no active super admin exists — `{ password }`; audited, other admins notified |
 
 Roles, highest first: `super_admin`, `admin`, `manager`, `member`, `viewer`. A
 super admin has every permission, which cannot be revoked, and is outside

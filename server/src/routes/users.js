@@ -10,6 +10,7 @@ import {
 import { requirePermission } from '../middleware/auth.js';
 import { dateIn, orgCalendar, statusOn } from '../services/availability.js';
 import { audit } from '../services/attendance.js';
+import { accessStatus, claimFirstSuperAdmin } from '../services/access.js';
 
 /**
  * Who may change whose access. Roles, permissions, passwords, sign-in emails
@@ -95,6 +96,24 @@ router.get('/permissions/catalogue', (req, res) => {
     grantable: PERMISSION_KEYS.filter((p) => canGrantPermission(actor, p)),
   });
 });
+
+/** Whether a super admin exists yet, and whether this person may become the first. */
+router.get(
+  '/access/status',
+  asyncHandler(async (req, res) => {
+    res.json(await accessStatus(req.currentUser));
+  }),
+);
+
+router.post(
+  '/access/claim-super-admin',
+  asyncHandler(async (req, res) => {
+    const { password } = z.object({ password: z.string().min(1) }).parse(req.body || {});
+    await claimFirstSuperAdmin(req.currentUser, password);
+    const { rows } = await query(`${SELECT_USER} WHERE u.id = $1`, [req.currentUser.id]);
+    res.json({ user: withPermissions(rows[0]) });
+  }),
+);
 
 router.get(
   '/',

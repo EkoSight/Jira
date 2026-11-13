@@ -7,6 +7,7 @@ import { BarList, LoadMeter, Ring, TrendChart, STATUS_COLOR } from '../component
 import TaskDialog from '../components/TaskDialog.jsx';
 import { AwayBadge, AwayCard } from '../components/Availability.jsx';
 import { TodayAttendanceCard } from '../components/Attendance.jsx';
+import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
 import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -97,6 +98,7 @@ export default function Dashboard() {
         </div>
       </div>
 
+      <SuperAdminClaim />
       <TodayAttendanceCard hideWhenUntracked />
 
       <div className="stat-grid">

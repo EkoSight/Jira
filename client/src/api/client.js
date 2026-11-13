@@ -510,6 +510,8 @@ export const api = {
   resetPassword: (id) => request('POST', `/users/${id}/reset-password`),
   deactivateUser: (id) => request('DELETE', `/users/${id}`),
   permissionCatalogue: () => request('GET', '/users/permissions/catalogue'),
+  accessStatus: () => request('GET', '/users/access/status'),
+  claimSuperAdmin: (password) => request('POST', '/users/access/claim-super-admin', { password }),
 
   departments: (params) => request('GET', `/departments${qs(params)}`),
   createDepartment: (data) => request('POST', '/departments', data),

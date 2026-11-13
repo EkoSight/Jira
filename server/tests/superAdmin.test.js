@@ -216,3 +216,42 @@ test('no reminders, no team attendance row, no payroll month, no standup expecta
   assert.ok(who.excluded.some((e) => e.member.user_id === ids.founder1 && e.reason === 'NOT_TRACKED'));
   assert.ok(who.expected.some((m) => m.user_id === ids.member));
 });
+
+// ---------------------------------------------------------------- the first one, from inside the app
+
+test('with no super admin at all, an admin can take the first place by confirming their password, once', async (t) => {
+  if (skip(t)) return;
+  // the state just after the release: the founders are still admins
+  await query(`UPDATE users SET role = 'admin' WHERE role = 'super_admin'`);
+  // (the member's password was reset by an earlier test; the manager stands in)
+  for (const key of ['founder1', 'founder2', 'admin', 'manager']) tokens[key] = await login(key);
+
+  const status = await call('GET', '/users/access/status', { token: tokens.founder1 });
+  assert.deepEqual(status.body, { super_admins: 0, can_claim: true });
+  assert.equal((await call('GET', '/users/access/status', { token: tokens.manager })).body.can_claim, false, 'only admins are offered it');
+
+  assert.equal((await call('POST', '/users/access/claim-super-admin', { token: tokens.manager, body: { password: 'Password123!' } })).status, 403);
+  assert.equal((await call('POST', '/users/access/claim-super-admin', { token: tokens.founder1, body: { password: 'wrong-password' } })).status, 403);
+  assert.equal((await query('SELECT role FROM users WHERE id = $1', [ids.founder1])).rows[0].role, 'admin', 'a wrong password changes nothing');
+
+  const claimed = await call('POST', '/users/access/claim-super-admin', { token: tokens.founder1, body: { password: 'Password123!' } });
+  assert.equal(claimed.status, 200, JSON.stringify(claimed.body));
+  assert.equal(claimed.body.user.role, 'super_admin');
+  // the same session carries on, with the new powers
+  const me = await call('GET', '/auth/me', { token: tokens.founder1 });
+  assert.ok(me.body.user.permissions.includes('payroll.approve'));
+
+  // closed now: the second founder is made one by the first, not by claiming
+  const second = await call('POST', '/users/access/claim-super-admin', { token: tokens.founder2, body: { password: 'Password123!' } });
+  assert.equal(second.status, 409);
+  const made = await call('PATCH', `/users/${ids.founder2}`, { token: tokens.founder1, body: { role: 'super_admin' } });
+  assert.equal(made.status, 200);
+
+  const { rows: [entry] } = await query(
+    `SELECT source, actor_id, after FROM attendance_audit WHERE entity_type = 'USER_ACCESS' AND source = 'in_app_first_claim'`,
+  );
+  assert.equal(entry.actor_id, ids.founder1);
+  assert.equal(entry.after.role, 'super_admin');
+  const { rows: told } = await query(`SELECT user_id FROM notifications WHERE type = 'access_change'`);
+  assert.ok(told.some((n) => n.user_id === ids.admin), 'the other admins are told');
+});
