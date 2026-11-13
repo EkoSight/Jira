@@ -26,6 +26,7 @@ import {
 } from '../services/sales/followups.js';
 import { createCaptureKey } from '../services/sales/capture.js';
 import { mergeRecords, previewMerge } from '../services/sales/merge.js';
+import { cleanLocation } from '../services/sales/location.js';
 import { sendTable } from '../services/sales/files.js';
 
 /**
@@ -107,6 +108,11 @@ const leadInput = z.object({
   website: z.string().max(300).nullable().optional(),
   city: z.string().max(120).nullable().optional(),
   state: z.string().max(80).nullable().optional(),
+  district: z.string().max(120).nullable().optional(),
+  block: z.string().max(120).nullable().optional(),
+  address_line1: z.string().max(300).nullable().optional(),
+  address_line2: z.string().max(300).nullable().optional(),
+  pincode: z.string().max(12).nullable().optional(),
   country: z.string().max(80).nullable().optional(),
   enquiry: z.string().max(20000).nullable().optional(),
   requirement: z.string().max(20000).nullable().optional(),
@@ -176,6 +182,8 @@ router.post('/leads/duplicates', asyncHandler(async (req, res) => {
 
 router.post('/leads', requirePermission('crm.create'), asyncHandler(async (req, res) => {
   const data = await withLeadFields(leadInput.parse(req.body));
+  // a state from the list (or blank), a PIN in the right shape
+  Object.assign(data, cleanLocation(data));
   if (data.owner_user_id && data.owner_user_id !== req.currentUser.id && !hasPermission(req.currentUser, 'crm.assign')) {
     throw forbidden('Assigning a lead to someone else needs the assign permission');
   }
@@ -221,6 +229,7 @@ router.patch('/leads/:id', asyncHandler(async (req, res) => {
     score_override: z.number().int().min(0).max(100).nullable().optional(),
     score_override_reason: z.string().max(1000).nullable().optional(),
   }).parse(req.body), lead);
+  Object.assign(data, cleanLocation(data));
   if (data.owner_user_id !== undefined && data.owner_user_id !== lead.owner_user_id && !hasPermission(req.currentUser, 'crm.assign')) {
     throw forbidden('Reassigning a lead needs the assign permission');
   }
@@ -384,6 +393,9 @@ const followUpInput = z.object({
   notes: z.string().max(5000).nullable().optional(),
   recurrence: z.enum(['none', 'daily', 'weekdays', 'weekly', 'monthly']).default('none'),
   reminder_minutes: z.number().int().min(0).max(10080).default(15),
+  // this follow-up's own reminders; left out, the person's defaults apply
+  reminder_offsets: z.array(z.number().int()).max(4).nullable().optional(),
+  reminder_channels: z.array(z.enum(['APP', 'CHAT'])).max(2).nullable().optional(),
 });
 
 router.post('/followups', requirePermission('crm.activity.log'), asyncHandler(async (req, res) => {
@@ -401,6 +413,7 @@ router.post('/followups', requirePermission('crm.activity.log'), asyncHandler(as
     leadId: data.lead_id, accountId: data.account_id, opportunityId: data.opportunity_id, kind: data.kind, title: data.title,
     dueAt: data.due_at, assigneeId: data.assignee_id, priority: data.priority, notes: data.notes, actor: req.currentUser,
     recurrence: data.recurrence, reminderMinutes: data.reminder_minutes,
+    reminderOffsets: data.reminder_offsets ?? null, reminderChannels: data.reminder_channels ?? null,
   }));
   res.status(201).json({ task });
 }));
@@ -416,8 +429,13 @@ router.post('/followups/:id/complete', asyncHandler(async (req, res) => {
   res.json(await completeFollowUp(id(req.params.id), { outcome: data.outcome, notes: data.notes, next: data.next, noNextReason: data.no_next_reason }, req.currentUser));
 }));
 router.post('/followups/:id/reschedule', asyncHandler(async (req, res) => {
-  const data = z.object({ due_at: z.string().min(10), reason: z.string().max(1000).nullable().optional() }).parse(req.body || {});
-  res.json({ task: await rescheduleFollowUp(id(req.params.id), { dueAt: data.due_at, reason: data.reason }, req.currentUser) });
+  const data = z.object({
+    due_at: z.string().min(10), reason: z.string().max(1000).nullable().optional(),
+    reminder_offsets: z.array(z.number().int()).max(4).nullable().optional(), reminder_channels: z.array(z.enum(['APP', 'CHAT'])).max(2).nullable().optional(),
+  }).parse(req.body || {});
+  res.json({ task: await rescheduleFollowUp(id(req.params.id), {
+    dueAt: data.due_at, reason: data.reason, reminderOffsets: data.reminder_offsets, reminderChannels: data.reminder_channels,
+  }, req.currentUser) });
 }));
 router.post('/followups/:id/snooze', asyncHandler(async (req, res) => {
   const data = z.object({ until: z.string().min(10) }).parse(req.body || {});

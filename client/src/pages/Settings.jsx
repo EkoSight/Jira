@@ -9,6 +9,7 @@ import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
 import ReminderSettings from '../components/ReminderSettings.jsx';
+import { FollowUpReminderDefaults } from '../components/sales/FollowUpSettings.jsx';
 
 const STAGES = [
   ['backlog', 'Backlog — captured, not started'],
@@ -717,6 +718,8 @@ function AccountTab() {
       <ChatPreferencesCard />
 
       {can('crm.view') && <ReminderSettings />}
+
+      {can('crm.view') && <FollowUpReminderDefaults />}
 
       <div className="card">
         <div className="card-head"><h2>Change password</h2></div>

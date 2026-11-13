@@ -21,6 +21,7 @@ import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { logActivity } from '../crm.js';
 import { createFollowUp } from './followups.js';
 import { createLead, logLeadActivity } from './leads.js';
+import { claimSubmission, settleSubmission } from './callRecords.js';
 import { emitEvent, normalizePhone, salesSettings } from './core.js';
 
 // ---------------------------------------------------------------- shared
@@ -135,7 +136,14 @@ async function callOnTimeline(client, call, actorId) {
  * link). Can schedule the next follow-up in the same step.
  */
 export async function logCall(input, actor) {
-  return withTransaction((client) => recordManualCall(client, input, actor));
+  return withTransaction(async (client) => {
+    // the same submission twice (a double tap, a retry after a dropped answer) is one call
+    const claim = await claimSubmission(client, actor.id, input.request_id, 'LOG_CALL', input.lead_id ?? null);
+    if (claim?.previous) return { ...(claim.previous.response || {}), duplicate: true };
+    const result = await recordManualCall(client, { ...input, recorded_via: input.recorded_via || 'LOG_CALL' }, actor);
+    await settleSubmission(client, actor.id, input.request_id, { callId: result.call.id, response: { call: result.call, next: result.next } });
+    return result;
+  });
 }
 
 /** A call a person logs by hand, inside the caller's transaction. */
@@ -157,15 +165,24 @@ export async function recordManualCall(client, input, actor) {
     const status = input.outcome === 'NO_ANSWER' ? 'NO_ANSWER' : input.outcome === 'BUSY' ? 'BUSY' : 'COMPLETED';
     const { rows } = await client.query(
       `INSERT INTO crm_calls (provider, direction, status, from_number, to_number, counterpart_normalized, agent_user_id, lead_id, account_id,
-                              contact_id, opportunity_id, started_at, ended_at, duration_sec, outcome, notes, logged_manually, created_by)
-       VALUES ('manual',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,TRUE,$6) RETURNING *`,
+                              contact_id, opportunity_id, started_at, ended_at, duration_sec, outcome, notes, logged_manually, created_by,
+                              request_id, recorded_via)
+       VALUES ('manual',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,TRUE,$6,$16,$17) RETURNING *`,
       [input.direction || 'OUTBOUND', status, input.direction === 'INBOUND' ? phone : null, input.direction === 'INBOUND' ? null : phone,
         normalizePhone(phone), actor.id, leadId, accountId, input.contact_id ?? match.contactId ?? null, opportunityId,
         started, input.duration_sec ? new Date(started.getTime() + input.duration_sec * 1000) : null, input.duration_sec ?? null,
-        input.outcome || null, input.notes || null],
+        input.outcome || null, input.notes || null, input.request_id || null, input.recorded_via || 'LOG_CALL'],
     );
     const call = rows[0];
     await callOnTimeline(client, call, actor.id);
+    // a call logged on a lead counts there, as one logged with an outcome does
+    // (the outcome form counts its own attempt, so it asks not to)
+    if (leadId && input.count_on_lead !== false && call.direction === 'OUTBOUND') {
+      await client.query(
+        `UPDATE crm_leads SET call_attempts = call_attempts + 1, last_called_at = GREATEST(COALESCE(last_called_at, $2), $2), updated_at = now() WHERE id = $1`,
+        [leadId, call.started_at],
+      );
+    }
     let next = null;
     if (input.next?.due_at) {
       next = await createFollowUp(client, {

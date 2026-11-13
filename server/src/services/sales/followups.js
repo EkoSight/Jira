@@ -15,6 +15,8 @@ import { nextTaskRef } from '../../lib/taskRef.js';
 import { logActivity as logTaskActivity, notify } from '../activity.js';
 import { logActivity as logAccountActivity } from '../crm.js';
 import { logLeadActivity } from './leads.js';
+import { recordManualCall } from './comms.js';
+import { cancelReminders, planReminders } from './followupReminders.js';
 import { FOLLOWUP_KINDS, cleanText, emitEvent, salesSettings, scopeCondition, workCalendar } from './core.js';
 
 const PRIORITY = { LOW: 'low', MEDIUM: 'medium', HIGH: 'high', URGENT: 'critical' };
@@ -24,6 +26,7 @@ export const FOLLOWUP_SELECT = `
   SELECT t.id, t.ref, t.title, t.description, t.due_date, t.priority, t.assignee_id, t.completed_at, t.followup_kind,
          t.followup_outcome, t.snoozed_until, t.reminder_at, t.escalated_at, t.crm_lead_id, t.account_id, t.opportunity_id,
          t.due_date_changes, t.original_due_date, t.crm_cancel_reason, t.completion_note, t.recurrence,
+         t.completion_call_id, t.reminder_offsets, t.reminder_channels,
          u.full_name AS assignee_name, l.ref AS lead_ref, COALESCE(l.organization_name, l.contact_name) AS lead_name,
          a.name AS account_name, o.name AS opportunity_name, ws.stage AS status_stage,
          COALESCE(l.phone, (SELECT c.phone FROM account_contacts c WHERE c.account_id = t.account_id AND c.is_active = TRUE
@@ -63,6 +66,7 @@ export async function refreshLeadNextFollowUp(client, leadId) {
 export async function createFollowUp(client, {
   leadId = null, accountId = null, opportunityId = null, kind = 'CALL', title = null, dueAt, assigneeId = null, priority = 'MEDIUM',
   notes = null, actor, recurrence = 'none', reminderMinutes = 15, origin = 'USER', depth = 0, automationRunId = null, causeRuleId = null,
+  reminderOffsets = null, reminderChannels = null,
 }) {
   if (!FOLLOWUP_KINDS.includes(kind)) throw badRequest('Unknown kind of follow-up');
   const due = new Date(dueAt);
@@ -95,14 +99,18 @@ export async function createFollowUp(client, {
   const verb = { CALL: 'Call', CALLBACK: 'Call back', MEETING: 'Meet', EMAIL: 'Email', WHATSAPP: 'WhatsApp', DEMO: 'Demo for', DOCUMENT: 'Get documents from', VISIT: 'Visit', OTHER: 'Follow up with' }[kind];
   const { rows } = await client.query(
     `INSERT INTO tasks (ref, title, description, department_id, status_id, priority, assignee_id, reporter_id, created_by, due_date,
-                        original_due_date, account_id, opportunity_id, crm_lead_id, followup_kind, reminder_at, recurrence, automation_run_id, position)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$9,$10,$11,$12,$13,$14,$15,$16,(SELECT COALESCE(MAX(position),0)+100 FROM tasks WHERE status_id = $5))
+                        original_due_date, account_id, opportunity_id, crm_lead_id, followup_kind, reminder_at, recurrence, automation_run_id, position,
+                        reminder_offsets, reminder_channels)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$9,$10,$11,$12,$13,$14,$15,$16,(SELECT COALESCE(MAX(position),0)+100 FROM tasks WHERE status_id = $5),$17,$18)
      RETURNING *`,
     [ref, cleanText(title, 300) || `${verb} ${name || ''}`.trim(), cleanText(notes, 5000), departmentId, status[0].id,
       PRIORITY[priority] || 'medium', ownerId, actor?.id ?? null, due, accountId, opportunityId, leadId, kind,
-      reminderMinutes ? new Date(due.getTime() - reminderMinutes * 60_000) : null, recurrence || 'none', automationRunId],
+      reminderMinutes ? new Date(due.getTime() - reminderMinutes * 60_000) : null, recurrence || 'none', automationRunId,
+      reminderOffsets, reminderChannels],
   );
   const task = rows[0];
+  // the reminders this follow-up should get: its own choice, or the person's defaults
+  await planReminders(client, task.id);
   await logTaskActivity(client, { taskId: task.id, actorId: actor?.id ?? null, action: 'created', meta: { followup: kind, origin } });
   if (leadId) {
     await refreshLeadNextFollowUp(client, leadId);
@@ -127,6 +135,9 @@ async function loadFollowUp(client, taskId, actor, { forUpdate = true } = {}) {
   if (!mayAct) throw forbidden('Only the person who owes this follow-up, or someone who can assign work, can change it');
   return task;
 }
+
+// outcomes that say a call was made (and how it went)
+const CALL_OUTCOMES_DONE = ['CONNECTED', 'NO_ANSWER', 'BUSY', 'WRONG_NUMBER', 'LEFT_MESSAGE'];
 
 const KIND_ACTIVITY = { CALL: 'CALL', CALLBACK: 'CALL', MEETING: 'MEETING', DEMO: 'DEMO', VISIT: 'IN_PERSON', EMAIL: 'EMAIL', WHATSAPP: 'WHATSAPP', DOCUMENT: 'NOTE', OTHER: 'NOTE' };
 
@@ -157,15 +168,30 @@ export async function completeFollowUp(taskId, { outcome = 'DONE', notes = null,
       [taskId, done[0].id, outcome, cleanText(notes, 5000), reached ? 'ACHIEVED' : 'NOT_ACHIEVED'],
     );
     await logTaskActivity(client, { taskId, actorId: actor.id, action: 'completed', meta: { outcome } });
-    const actType = KIND_ACTIVITY[task.followup_kind] || 'NOTE';
+    await cancelReminders(client, [taskId], 'Follow-up done');
+    let actType = KIND_ACTIVITY[task.followup_kind] || 'NOTE';
     const outcomeWord = reached ? 'COMPLETED' : 'ATTEMPTED';
-    if (task.crm_lead_id) {
+    // A Call follow-up finished with a call outcome is a call: it is recorded
+    // as one (with an id, counted on the lead) rather than as a timeline line
+    // that looks like a call but is not in the Calls list. "Done" without a
+    // call outcome is not claimed as a call.
+    let call = null;
+    const isCall = ['CALL', 'CALLBACK'].includes(task.followup_kind);
+    if (isCall && CALL_OUTCOMES_DONE.includes(outcome) && (task.crm_lead_id || task.account_id)) {
+      const { rows: lead } = task.crm_lead_id ? await client.query('SELECT phone FROM crm_leads WHERE id = $1', [task.crm_lead_id]) : { rows: [] };
+      ({ call } = await recordManualCall(client, {
+        lead_id: task.crm_lead_id, account_id: task.crm_lead_id ? null : task.account_id, opportunity_id: task.crm_lead_id ? null : task.opportunity_id,
+        phone: lead[0]?.phone || null, direction: 'OUTBOUND', outcome, notes: cleanText(notes, 5000), recorded_via: 'FOLLOWUP',
+      }, actor));
+      await client.query('UPDATE tasks SET completion_call_id = $2 WHERE id = $1', [taskId, call.id]);
+    } else if (isCall) actType = 'FOLLOWUP';
+    if (task.crm_lead_id && !call) {
       await logLeadActivity(client, task.crm_lead_id, {
-        type: actType, direction: 'OUTBOUND', outcome: outcomeWord, subject: `${task.title}: ${outcome.toLowerCase().replace('_', ' ')}`,
+        type: actType, direction: actType === 'FOLLOWUP' ? 'INTERNAL' : 'OUTBOUND', outcome: outcomeWord, subject: `${task.title}: ${outcome.toLowerCase().replace('_', ' ')}`,
         body: cleanText(notes, 5000), actorId: actor.id, taskId,
       });
     }
-    if (task.account_id) {
+    if (task.account_id && !call) {
       await logAccountActivity(client, {
         accountId: task.account_id, opportunityId: task.opportunity_id, type: actType, leadId: task.crm_lead_id,
         actorId: actor.id, subject: `${task.title}: ${outcome.toLowerCase().replace('_', ' ')}`, body: cleanText(notes, 5000),
@@ -197,18 +223,22 @@ export async function completeFollowUp(taskId, { outcome = 'DONE', notes = null,
 }
 
 /** Moves a follow-up to a new time; the change is counted and its reason kept. */
-export async function rescheduleFollowUp(taskId, { dueAt, reason = null }, actor) {
+export async function rescheduleFollowUp(taskId, { dueAt, reason = null, reminderOffsets, reminderChannels }, actor) {
   return withTransaction(async (client) => {
     const task = await loadFollowUp(client, taskId, actor);
     if (task.completed_at || task.crm_cancel_reason) throw badRequest('Only an open follow-up can be rescheduled');
     const due = new Date(dueAt);
     if (Number.isNaN(due.getTime()) || due.getTime() < Date.now() - 60_000) throw badRequest('Choose a time from now on');
     await client.query(
-      `UPDATE tasks SET due_date = $2, due_date_changes = due_date_changes + 1, reminder_at = $2::timestamptz - interval '15 minutes',
-              reminder_sent_at = NULL, escalated_at = NULL, snoozed_until = NULL, breach_evaluated_at = NULL, updated_at = now()
+      `UPDATE tasks SET due_date = $2, due_date_changes = due_date_changes + 1, reminder_at = NULL,
+              reminder_sent_at = NULL, escalated_at = NULL, snoozed_until = NULL, breach_evaluated_at = NULL, updated_at = now(),
+              reminder_offsets = CASE WHEN $3::boolean THEN $4::int[] ELSE reminder_offsets END,
+              reminder_channels = CASE WHEN $5::boolean THEN $6::text[] ELSE reminder_channels END
         WHERE id = $1`,
-      [taskId, due],
+      [taskId, due, reminderOffsets !== undefined, reminderOffsets ?? null, reminderChannels !== undefined, reminderChannels ?? null],
     );
+    // the reminders follow the new time; the old ones are cancelled, never sent
+    await planReminders(client, taskId);
     await logTaskActivity(client, { taskId, actorId: actor.id, action: 'rescheduled', field: 'due_date', from: task.due_date?.toISOString?.() ?? null, to: due.toISOString(), meta: { reason } });
     if (task.crm_lead_id) {
       await refreshLeadNextFollowUp(client, task.crm_lead_id);
@@ -237,6 +267,8 @@ export async function handOffFollowUp(taskId, { toUserId, reason = null }, actor
     const { rows } = await client.query('SELECT id, full_name, is_active FROM users WHERE id = $1', [toUserId]);
     if (!rows[0]?.is_active) throw badRequest('Choose an active person');
     await client.query('UPDATE tasks SET assignee_id = $2, updated_at = now(), escalated_at = NULL WHERE id = $1', [taskId, toUserId]);
+    // reminders go to whoever owes it now
+    await planReminders(client, taskId);
     await logTaskActivity(client, { taskId, actorId: actor.id, action: 'assigned', field: 'assignee_id', from: task.assignee_id, to: toUserId, meta: { reason } });
     await notify(client, { userId: toUserId, type: 'crm_followup', title: `Follow-up handed to you: ${task.title}`, body: reason, taskId, leadId: task.crm_lead_id, accountId: task.account_id });
     if (task.crm_lead_id) await logLeadActivity(client, task.crm_lead_id, { type: 'FOLLOWUP', subject: `Handed to ${rows[0].full_name}: ${task.title}`, body: reason, actorId: actor.id, taskId });

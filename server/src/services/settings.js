@@ -334,6 +334,27 @@ export const DEFAULT_SETTINGS = {
     spaceCheck: null,
   },
 
+  // Sales CRM follow-ups in Google Chat: reminders and the daily summary.
+  // Both off until an administrator has previewed, tested and switched them on.
+  crmFollowUps: {
+    // follow-up reminders may also go to a person's Chat direct message
+    chatReminders: false,
+    digest: {
+      enabled: false,
+      // while on, nothing goes to employees: who would get what is recorded, and
+      // an administrator can send any summary to themselves
+      testMode: true,
+      // India time
+      time: '09:00',
+      // Monday 1 … Sunday 7; empty means the organization's working days
+      days: [],
+      // company, department and personal holidays from the attendance calendar
+      skipHolidays: true,
+      // a summary not sent by then (the server was down) is skipped, not sent late
+      lastSendTime: '13:00',
+    },
+  },
+
   googleChat: {
     // off until an admin has sent a test message and switched it on
     enabled: false,

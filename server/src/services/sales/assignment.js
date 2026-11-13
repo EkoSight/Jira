@@ -17,6 +17,7 @@ import { query } from '../../db/pool.js';
 import { badRequest } from '../../lib/errors.js';
 import { notify } from '../activity.js';
 import { statusOn } from '../availability.js';
+import { planReminders } from './followupReminders.js';
 import { OPEN_LEAD_STATUSES, emitEvent, localDate, salesSettings } from './core.js';
 
 export const STRATEGIES = ['ROUND_ROBIN', 'LEAST_LOADED', 'SPECIFIC_USER', 'ACCOUNT_OWNER', 'SPECIALIZATION'];
@@ -268,12 +269,15 @@ export async function reassignLead(client, leadId, { toUserId, reason = null, ac
     [leadId, `Reassigned to ${users[0].full_name}`, reason, actor?.id ?? null],
   );
   // pending follow-ups move with the lead: whoever owns it owes them
-  await client.query(
+  const { rows: moved } = await client.query(
     `UPDATE tasks SET assignee_id = $2, updated_at = now()
       WHERE crm_lead_id = $1 AND followup_kind IS NOT NULL AND completed_at IS NULL AND is_archived = FALSE
-        AND assignee_id IS NOT DISTINCT FROM $3`,
+        AND assignee_id IS NOT DISTINCT FROM $3
+      RETURNING id`,
     [leadId, toUserId, lead.owner_user_id],
   );
+  // their reminders go to the new owner, by the new owner's choices
+  for (const t of moved) await planReminders(client, t.id);
   await emitEvent(client, { type: 'lead.reassigned', entityType: 'LEAD', entityId: leadId, origin, depth, ruleId: causeRuleId, actorId: actor?.id ?? null, payload: { from: lead.owner_user_id, to: toUserId } });
   return { ...lead, owner_user_id: toUserId };
 }

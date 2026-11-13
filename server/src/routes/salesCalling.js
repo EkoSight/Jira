@@ -74,10 +74,12 @@ router.post('/leads/:id/call-status', asyncHandler(async (req, res) => {
     status_id: z.number().int().positive(), note: z.string().max(5000).nullable().optional(), lost_reason: z.string().max(500).nullable().optional(),
     callback_at: z.string().max(40).nullable().optional(), callback_kind: z.enum(['CALL', 'CALLBACK', 'WHATSAPP', 'VISIT', 'MEETING']).optional(),
     rating: z.number().int().min(1).max(5).nullable().optional(), log_call: z.boolean().optional(), duration_sec: z.number().int().min(0).max(36000).nullable().optional(),
+    // one per submission: the same id again returns the first result instead of a second call
+    request_id: z.string().min(8).max(80).nullable().optional(),
   }).parse(req.body);
   res.json(await setCallStatus(lead.id, {
     statusId: d.status_id, note: d.note ?? null, lostReason: d.lost_reason ?? null, callbackAt: d.callback_at || null, callbackKind: d.callback_kind || 'CALLBACK',
-    rating: d.rating ?? undefined, logCall: d.log_call !== false, durationSec: d.duration_sec ?? null,
+    rating: d.rating ?? undefined, logCall: d.log_call !== false, durationSec: d.duration_sec ?? null, requestId: d.request_id ?? null,
   }, { actor: req.currentUser }));
 }));
 

@@ -10,6 +10,8 @@
 import { config } from '../config.js';
 import { getSettings } from '../services/settings.js';
 import { processEvents, runDue, scanTimers } from '../services/sales/automation.js';
+import { sendDueReminders } from '../services/sales/followupReminders.js';
+import { runFollowUpDigests } from '../services/sales/followupDigest.js';
 import { processImports } from '../services/sales/imports.js';
 
 const TIMERS_EVERY_MS = 5 * 60 * 1000;
@@ -35,6 +37,9 @@ export async function runSalesTick({ force = false, now = new Date() } = {}) {
   await step('events', () => processEvents(), out);
   await step('runs', () => runDue(), out);
   await step('imports', () => processImports(), out);
+  // follow-up reminders every tick: a 5-minute reminder cannot wait for the slower clock
+  await step('reminders', () => sendDueReminders(now), out);
+  await step('digests', () => runFollowUpDigests(now), out);
   if (force || Date.now() - lastTimers > TIMERS_EVERY_MS) {
     lastTimers = Date.now();
     await step('timers', () => scanTimers(now), out);

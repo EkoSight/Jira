@@ -135,7 +135,9 @@ test('T1: a TeleCRM export is read with its preset, keeps every record and statu
   assert.equal(t1.destination, 'TASKFLOW');
   assert.equal(t1.status, 'QUALIFYING');
   assert.equal(t1.state, 'Maharashtra');
-  assert.equal(t1.city, 'Nagpur');
+  // TeleCRM's District column fills District (it used to be put in City)
+  assert.equal(t1.district, 'Nagpur');
+  assert.equal(t1.city, null);
   assert.equal(t1.rating, 5);
   assert.equal(t1.owner_user_id, ids.isha);
   assert.deepEqual(t1.custom_fields, { agri_role: 'agri_retailer', service_needed: ['clinic_setup'], shop_duration: '1 year', telecrm_link: 'https://next.telecrm.in/x/l/T-1' });

@@ -277,6 +277,15 @@ export async function createLead(input, {
         idempotencyKey, importJobId, input.next_follow_up_at ?? null, input.captured_at ?? null, actor?.id ?? null],
     );
     const lead = rows[0];
+    // the rest of where they are: district, block or tehsil, address, PIN
+    if (['district', 'block', 'address_line1', 'address_line2', 'pincode'].some((k) => input[k])) {
+      const { rows: placed } = await client.query(
+        `UPDATE crm_leads SET district = $2, block = $3, address_line1 = $4, address_line2 = $5, pincode = $6 WHERE id = $1 RETURNING *`,
+        [lead.id, cleanText(input.district, 120), cleanText(input.block, 120), cleanText(input.address_line1, 300),
+          cleanText(input.address_line2, 300), cleanText(input.pincode, 10)],
+      );
+      Object.assign(lead, placed[0]);
+    }
     await client.query(
       `INSERT INTO crm_routing_events (lead_id, to_category, to_destination, routing_status, entry_channel, reason, actor_id)
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
@@ -352,8 +361,14 @@ export async function getLead(id, { client = null } = {}) {
   return decorateLead(rows[0], await salesSettings());
 }
 
-export const LEAD_VIEWS = ['open', 'mine', 'team', 'unassigned', 'new', 'overdue', 'stale', 'retry', 'nurture', 'won', 'converted', 'disqualified',
-  'needs_classification', 'telecrm', 'archived', 'all'];
+export const LEAD_VIEWS = ['open', 'mine', 'team', 'unassigned', 'new', 'overdue', 'stale', 'retry', 'retry_later', 'nurture', 'won', 'converted', 'disqualified',
+  'needs_classification', 'telecrm', 'archived', 'all',
+  // the work queue's groups (My Day), each one exactly this list
+  'fu_overdue', 'fu_today', 'new_uncalled', 'no_next_action', 'location_missing'];
+
+/** An open follow-up on the lead (any owner unless one is named). */
+const openFollowUp = (extra = '') => `EXISTS (SELECT 1 FROM tasks t WHERE t.crm_lead_id = l.id AND t.followup_kind IS NOT NULL AND t.completed_at IS NULL
+  AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL ${extra})`;
 
 /**
  * A page of leads for one view, inside what the person may see. Views of the
@@ -380,7 +395,20 @@ export async function listLeads(filters = {}, scope = { all: true }) {
     case 'overdue': where.push(openSql, `(l.next_follow_up_at < now() OR EXISTS (SELECT 1 FROM tasks t WHERE t.crm_lead_id = l.id AND t.followup_kind IS NOT NULL
                        AND t.completed_at IS NULL AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL AND t.due_date < now()))`); break;
     case 'stale': where.push(openSql, `COALESCE(l.last_contacted_at, l.captured_at) < now() - (${push(staleDays)} || ' days')::interval`); break;
-    case 'retry': where.push(openSql, 'l.retry_at IS NOT NULL'); break;
+    // "Retry due" means due now; ones scheduled for later are their own view
+    case 'retry': where.push(openSql, 'l.retry_at IS NOT NULL', 'l.retry_at <= now()'); break;
+    case 'retry_later': where.push(openSql, 'l.retry_at > now()'); break;
+    case 'fu_overdue': where.push(openSql, openFollowUp(`AND t.due_date < now()${filters.for_user ? ` AND t.assignee_id = ${push(Number(filters.for_user))}` : ''}`)); break;
+    case 'fu_today': {
+      const tz = push(settings.calendar?.timezone || 'Asia/Kolkata');
+      where.push(openSql, openFollowUp(`AND t.due_date >= now() AND t.due_date < (date_trunc('day', now() AT TIME ZONE ${tz}) + interval '1 day') AT TIME ZONE ${tz}`
+        + `${filters.for_user ? ` AND t.assignee_id = ${push(Number(filters.for_user))}` : ''}`));
+      break;
+    }
+    case 'new_uncalled': where.push(`l.status = 'NEW'`, 'l.call_attempts = 0', 'l.last_called_at IS NULL', 'l.last_contacted_at IS NULL'); break;
+    // open, already worked, with nothing planned: no follow-up and no retry
+    case 'no_next_action': where.push(openSql, `NOT (l.status = 'NEW' AND l.call_attempts = 0)`, `NOT ${openFollowUp()}`, 'l.retry_at IS NULL'); break;
+    case 'location_missing': where.push(openSql, 'l.state IS NULL', 'l.district IS NULL', 'l.city IS NULL', 'l.pincode IS NULL'); break;
     case 'nurture': where.push(`l.status = 'NURTURE'`); break;
     case 'won': where.push(`l.status = 'WON'`); break;
     case 'converted': where.push(`l.status = 'CONVERTED'`); break;
@@ -392,7 +420,8 @@ export async function listLeads(filters = {}, scope = { all: true }) {
   }
   if (filters.q) {
     const t = push(`%${String(filters.q).trim()}%`);
-    where.push(`(l.organization_name ILIKE ${t} OR l.contact_name ILIKE ${t} OR l.email ILIKE ${t} OR l.phone ILIKE ${t} OR l.ref ILIKE ${t} OR l.enquiry ILIKE ${t})`);
+    where.push(`(l.organization_name ILIKE ${t} OR l.contact_name ILIKE ${t} OR l.email ILIKE ${t} OR l.phone ILIKE ${t} OR l.ref ILIKE ${t} OR l.enquiry ILIKE ${t}
+      OR l.city ILIKE ${t} OR l.district ILIKE ${t} OR l.block ILIKE ${t} OR l.pincode ILIKE ${t})`);
   }
   if (filters.category) where.push(`l.category = ${push(filters.category)}`);
   if (filters.status) where.push(`l.status = ${push(filters.status)}`);
@@ -402,7 +431,8 @@ export async function listLeads(filters = {}, scope = { all: true }) {
   if (filters.department_id) where.push(`l.department_id = ${push(Number(filters.department_id))}`);
   if (filters.source_id) where.push(`(l.source_id = ${push(Number(filters.source_id))} OR l.original_source_id = $${params.length})`);
   if (filters.campaign_id) where.push(`(l.campaign_id = ${push(Number(filters.campaign_id))} OR l.original_campaign_id = $${params.length})`);
-  if (filters.state) where.push(`lower(l.state) = lower(${push(filters.state)})`);
+  if (filters.state === 'none') where.push('l.state IS NULL');
+  else if (filters.state) where.push(`lower(l.state) = lower(${push(filters.state)})`);
   if (filters.tag) where.push(`${push(filters.tag)} = ANY(l.tags)`);
   if (filters.from) where.push(`l.captured_at >= ${push(filters.from)}::date`);
   if (filters.to) where.push(`l.captured_at < (${push(filters.to)}::date + 1)`);
@@ -412,6 +442,10 @@ export async function listLeads(filters = {}, scope = { all: true }) {
   else if (filters.call_status_id) where.push(`l.call_status_id = ${push(Number(filters.call_status_id))}`);
   if (filters.rating) where.push(`l.rating >= ${push(Number(filters.rating))}`);
   if (filters.city) where.push(`l.city ILIKE ${push(`%${String(filters.city).trim()}%`)}`);
+  if (filters.district === 'none') where.push('l.district IS NULL');
+  else if (filters.district) where.push(`lower(l.district) = lower(${push(String(filters.district).trim())})`);
+  if (filters.block) where.push(`l.block ILIKE ${push(`%${String(filters.block).trim()}%`)}`);
+  if (filters.pincode) where.push(`l.pincode LIKE ${push(`${String(filters.pincode).replace(/\D/g, '')}%`)}`);
   // custom fields: cf_<key>=<value>; a multi-choice field matches any lead holding that choice
   for (const [k, v] of Object.entries(filters)) {
     const m = /^cf_([a-z][a-z0-9_]{1,40})$/.exec(k);
@@ -457,7 +491,8 @@ export async function leadCounts(scope, userId) {
        COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND (l.next_follow_up_at < now() OR EXISTS (
           SELECT 1 FROM tasks t WHERE t.crm_lead_id = l.id AND t.followup_kind IS NOT NULL AND t.completed_at IS NULL AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL AND t.due_date < now())))::int AS overdue,
        COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND COALESCE(l.last_contacted_at, l.captured_at) < now() - (${stale} || ' days')::interval)::int AS stale,
-       COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND l.retry_at IS NOT NULL)::int AS retry,
+       COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND l.retry_at <= now())::int AS retry,
+       COUNT(*) FILTER (WHERE l.destination = 'TASKFLOW' AND l.status = ANY(${open}::text[]) AND l.retry_at > now())::int AS retry_later,
        COUNT(*) FILTER (WHERE l.status = 'WON')::int AS won,
        COUNT(*) FILTER (WHERE l.routing_status = 'NEEDS_CLASSIFICATION')::int AS needs_classification,
        COUNT(*) FILTER (WHERE l.destination = 'TELECRM' AND l.routing_status IN ('HANDOFF_PENDING', 'HANDOFF_FAILED'))::int AS telecrm_pending,
@@ -471,6 +506,7 @@ export async function leadCounts(scope, userId) {
 // ---------------------------------------------------------------- update
 
 const EDITABLE = ['organization_name', 'contact_name', 'designation', 'email', 'phone', 'website', 'city', 'state', 'country',
+  'district', 'block', 'address_line1', 'address_line2', 'pincode',
   'enquiry', 'requirement', 'budget_amount', 'currency', 'budget_confirmed', 'timeline', 'decision_maker_engaged', 'need_clarity',
   'fit', 'priority', 'tags', 'referral', 'next_follow_up_at', 'custom_fields', 'department_id', 'source_id', 'campaign_id', 'rating'];
 
@@ -560,7 +596,10 @@ export async function cancelLeadFollowUps(client, leadId, reason, actor) {
       RETURNING id`,
     [leadId, reason, status[0]?.id ?? null],
   );
-  if (rows.length) await logLeadActivity(client, leadId, { type: 'FOLLOWUP', subject: `${rows.length} follow-up(s) cancelled`, body: reason, actorId: actor?.id ?? null });
+  if (rows.length) {
+    await logLeadActivity(client, leadId, { type: 'FOLLOWUP', subject: `${rows.length} follow-up(s) cancelled`, body: reason, actorId: actor?.id ?? null });
+    await client.query(`UPDATE crm_followup_reminders SET status = 'CANCELLED', cancel_reason = 'Follow-up cancelled' WHERE task_id = ANY($1::int[]) AND status = 'PENDING'`, [rows.map((r) => r.id)]);
+  }
   return rows.length;
 }
 

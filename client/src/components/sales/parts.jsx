@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
 import { Badge, Field, Icon, Modal, Spinner } from '../ui.jsx';
 import {
   CALL_OUTCOME, CATEGORY, COMPLETE_OUTCOME, DESTINATION, FOLLOWUP_KIND, LEAD_STATUS, PRIORITY, WA_STATUS, inHours, toIso, when,
 } from '../../lib/sales.js';
+import { newRequestId } from '../../lib/attendance.js';
+import {
+  CHANNEL_LABEL, REMINDER_OFFSETS, REMINDER_STATUS, dueState, exactTime, reminderWords,
+} from '../../lib/crmWork.js';
 
 export function CategoryBadge({ category }) {
   const c = CATEGORY[category] || CATEGORY.UNCLASSIFIED;
@@ -156,21 +160,29 @@ export function LogCallDialog({ target, phone, users, onClose, onSaved }) {
   const [form, setForm] = useState({ outcome: 'CONNECTED', notes: '', minutes: '', direction: 'OUTBOUND' });
   const [next, setNext] = useState(nextDraft());
   const [saving, setSaving] = useState(false);
+  // one id per call being logged: pressing Save twice, or again after a slow
+  // or lost answer, is recognised by the server as the same call
+  const requestId = useRef(newRequestId());
+  const busy = useRef(false);
   const reached = ['CONNECTED', 'INTERESTED', 'NOT_INTERESTED', 'CALLBACK_REQUESTED'].includes(form.outcome);
   const save = async () => {
+    if (busy.current) return undefined;
     if (reached && !form.notes.trim()) return toast.error('Note what was said, so the next person can follow up');
+    busy.current = true;
     setSaving(true);
     try {
-      await api.sales.post('/calls', {
+      const r = await api.sales.post('/calls', {
         ...target, phone: phone || null, direction: form.direction, outcome: form.outcome, notes: form.notes.trim() || null,
-        duration_sec: form.minutes ? Math.round(Number(form.minutes) * 60) : null, next: nextBody(next),
+        duration_sec: form.minutes ? Math.round(Number(form.minutes) * 60) : null, next: nextBody(next), request_id: requestId.current,
       });
-      toast.success(next.on ? 'Call logged and next step scheduled' : 'Call logged');
-      onSaved?.();
+      const ref = r.call?.id ? `Call #${r.call.id}` : 'Call';
+      toast.success(r.duplicate ? `${ref} was already saved; nothing was added twice` : next.on ? `${ref} logged and the next step scheduled` : `${ref} logged`);
+      onSaved?.(r);
       onClose();
     } catch (err) {
       toast.error(err);
     } finally {
+      busy.current = false;
       setSaving(false);
     }
     return undefined;
@@ -206,18 +218,83 @@ export function LogCallDialog({ target, phone, users, onClose, onSaved }) {
   );
 }
 
+const localZone = () => {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'your time zone'; } catch { return 'your time zone'; }
+};
+/** "Asia/Kolkata (IST)" style label for the person's own clock. */
+export const zoneLabel = () => { const z = localZone(); return z === 'Asia/Kolkata' ? 'India time (IST)' : z; };
+
+/** The reminder defaults and what this server allows, loaded once per dialog. */
+export function useReminderPrefs() {
+  const [prefs, setPrefs] = useState(null);
+  useEffect(() => { api.sales.get('/reminder-prefs').then(setPrefs).catch(() => setPrefs({ prefs: { offsets: [15], channels: ['APP'] }, chat_allowed: false })); }, []);
+  return prefs;
+}
+
+/**
+ * When to be reminded before a follow-up: the person's defaults, or a choice
+ * for this one (any of 30, 15, 10 and 5 minutes before; in TaskFlow, and in
+ * Google Chat where an administrator has turned that on).
+ */
+export function ReminderChoice({ value, onChange, prefs }) {
+  const own = value.custom;
+  const defaults = prefs?.prefs || { offsets: [15], channels: ['APP'] };
+  const offsets = own ? value.offsets : defaults.offsets;
+  const channels = own ? value.channels : defaults.channels;
+  const toggle = (list, v) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+  return (
+    <fieldset className="reminder-choice stack-xs">
+      <legend className="small">Remind {value.who || 'the person doing it'}</legend>
+      <label className="row small" style={{ gap: 6 }}>
+        <input type="checkbox" checked={!own} onChange={(e) => onChange(e.target.checked ? { ...value, custom: false } : { ...value, custom: true, offsets: defaults.offsets, channels: defaults.channels })} />
+        Use their usual reminders <span className="muted">({reminderWords(defaults.offsets, defaults.channels)})</span>
+      </label>
+      {own && (
+        <div className="stack-xs">
+          <div className="row wrap" style={{ gap: 6 }} role="group" aria-label="Minutes before">
+            {REMINDER_OFFSETS.map((m) => (
+              <button key={m} type="button" aria-pressed={offsets.includes(m)} className={`kind-chip${offsets.includes(m) ? ' is-active' : ''}`}
+                onClick={() => onChange({ ...value, offsets: toggle(offsets, m) })}>{m} min before</button>
+            ))}
+          </div>
+          <div className="row wrap" style={{ gap: 10 }} role="group" aria-label="Where">
+            {Object.entries(CHANNEL_LABEL).map(([k, l]) => {
+              const blocked = k === 'CHAT' && !prefs?.chat_allowed;
+              return (
+                <label key={k} className={`row small${blocked ? ' muted' : ''}`} style={{ gap: 6 }} title={blocked ? 'An administrator has not turned on Google Chat reminders' : undefined}>
+                  <input type="checkbox" disabled={blocked} checked={channels.includes(k) && !blocked} onChange={() => onChange({ ...value, channels: toggle(channels, k) })} />{l}
+                  {blocked && ' (not turned on)'}
+                </label>
+              );
+            })}
+          </div>
+          <span className="small muted">{offsets.length ? reminderWords(offsets, channels.filter((c) => c !== 'CHAT' || prefs?.chat_allowed)) : 'No reminders for this one'}</span>
+        </div>
+      )}
+    </fieldset>
+  );
+}
+const reminderDraft = () => ({ custom: false, offsets: [], channels: [] });
+/** What to send: nothing (their defaults) or this follow-up's own choice. */
+const reminderBody = (r) => (r.custom ? { reminder_offsets: r.offsets, reminder_channels: r.channels } : {});
+
 /** Scheduling a follow-up on a lead, organization or deal. */
 export function FollowUpDialog({ target, users, onClose, onSaved }) {
   const toast = useToast();
   const { can } = useAuth();
   const [form, setForm] = useState({ kind: 'CALL', due: inHours(24), title: '', priority: 'MEDIUM', assignee_id: '', notes: '', recurrence: 'none' });
+  const [reminders, setReminders] = useState(reminderDraft());
+  const prefs = useReminderPrefs();
   const [saving, setSaving] = useState(false);
+  const late = form.due && new Date(form.due) < new Date();
   const save = async () => {
+    if (saving) return;
     setSaving(true);
     try {
       await api.sales.post('/followups', {
         ...target, kind: form.kind, due_at: toIso(form.due), title: form.title || null, priority: form.priority,
         assignee_id: form.assignee_id ? Number(form.assignee_id) : null, notes: form.notes || null, recurrence: form.recurrence,
+        ...reminderBody(reminders),
       });
       toast.success('Follow-up scheduled');
       onSaved?.();
@@ -238,7 +315,7 @@ export function FollowUpDialog({ target, users, onClose, onSaved }) {
               {Object.entries(FOLLOWUP_KIND).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </Field>
-          <Field label="When" hint="Your local time">
+          <Field label="When" hint={late ? 'That time has already passed: it will show as overdue' : `In ${zoneLabel()}`}>
             <input className="input" type="datetime-local" value={form.due} onChange={(e) => setForm({ ...form, due: e.target.value })} />
           </Field>
         </div>
@@ -264,9 +341,42 @@ export function FollowUpDialog({ target, users, onClose, onSaved }) {
           </Field>
         )}
         <Field label="Notes"><textarea className="textarea" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} /></Field>
+        <ReminderChoice value={reminders} onChange={setReminders} prefs={prefs} />
       </div>
     </Modal>
   );
+}
+
+/** The reminders planned or sent for one follow-up, with what became of each. */
+export function ReminderStatus({ taskId }) {
+  const [list, setList] = useState(null);
+  useEffect(() => { api.sales.get(`/followups/${taskId}/reminders`).then((r) => setList(r.reminders)).catch(() => setList([])); }, [taskId]);
+  if (!list) return null;
+  if (!list.length) return <div className="small muted">No reminders planned for this one.</div>;
+  return (
+    <ul className="reminder-list small" aria-label="Reminders">
+      {list.map((r) => {
+        const [label, tone] = REMINDER_STATUS[r.status] || [r.status, 'neutral'];
+        return (
+          <li key={r.id} className="row wrap" style={{ gap: 6 }}>
+            <Badge tone={tone}>{label}</Badge>
+            <span>{r.offset_minutes} min before, {CHANNEL_LABEL[r.channel] || r.channel}</span>
+            <span className="muted tnum">{r.sent_at ? `sent ${exactTime(r.sent_at)}` : `at ${exactTime(r.remind_at)}`}</span>
+            {r.channel === 'CHAT' && r.chat_status && <span className="muted">Chat delivery: {String(r.chat_status).toLowerCase()}</span>}
+            {(r.last_error || r.chat_error) && <span className="critical-text">{r.last_error || r.chat_error}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** "Due now" or "Overdue" beside a follow-up's time; nothing when it is ahead. */
+export function DueBadge({ dueAt }) {
+  const state = dueState(dueAt);
+  if (state === 'OVERDUE') return <Badge tone="critical">Overdue</Badge>;
+  if (state === 'DUE_NOW') return <Badge tone="warning">Due now</Badge>;
+  return null;
 }
 
 /** Completing, rescheduling, snoozing or handing off one follow-up. */
@@ -282,16 +392,22 @@ export function FollowUpActions({ task, users, onClose, onDone, initial = 'compl
   const [reason, setReason] = useState('');
   const [toUser, setToUser] = useState('');
   const [busy, setBusy] = useState(false);
+  const [reminders, setReminders] = useState(reminderDraft());
+  const prefs = useReminderPrefs();
+  const running = useRef(false);
   const run = async (fn, message) => {
+    if (running.current) return;
+    running.current = true;
     setBusy(true);
-    try { await fn(); toast.success(message); onDone?.(); onClose(); } catch (err) { toast.error(err); } finally { setBusy(false); }
+    try { await fn(); toast.success(message); onDone?.(); onClose(); } catch (err) { toast.error(err); } finally { running.current = false; setBusy(false); }
   };
   const quiet = ['NO_ANSWER', 'BUSY', 'WRONG_NUMBER', 'LEFT_MESSAGE'].includes(outcome);
   const actions = {
     complete: () => run(() => api.sales.post(`/followups/${task.id}/complete`, {
       outcome, notes: notes || null, next: nextBody(next), no_next_reason: next.on ? null : noNext || null,
     }), next.on ? 'Done, and the next step is scheduled' : 'Marked done'),
-    reschedule: () => run(() => api.sales.post(`/followups/${task.id}/reschedule`, { due_at: toIso(due), reason: reason || null }), 'Rescheduled'),
+    reschedule: () => run(() => api.sales.post(`/followups/${task.id}/reschedule`, { due_at: toIso(due), reason: reason || null, ...reminderBody(reminders) }),
+      'Rescheduled; its reminders moved with it'),
     snooze: () => run(() => api.sales.post(`/followups/${task.id}/snooze`, { until: toIso(due) }), 'Snoozed'),
     handoff: () => run(() => api.sales.post(`/followups/${task.id}/handoff`, { user_id: Number(toUser), reason }), 'Handed over'),
   };
@@ -307,7 +423,10 @@ export function FollowUpActions({ task, users, onClose, onDone, initial = 'compl
             <button key={k} type="button" role="tab" aria-selected={mode === k} className={`kind-chip${mode === k ? ' is-active' : ''}`} onClick={() => setMode(k)}>{l}</button>
           ))}
         </div>
-        <div className="small muted">Due {when(task.due_date)}{task.about ? ` · ${task.about}` : ''}</div>
+        <div className="row wrap small" style={{ gap: 6 }}>
+          <span className="muted">Due <span className="tnum">{exactTime(task.due_date)}</span>{task.about ? ` · ${task.about}` : ''}</span>
+          <DueBadge dueAt={task.due_date} />
+        </div>
         {mode === 'complete' && (
           <>
             <Field label="Outcome">
@@ -330,8 +449,17 @@ export function FollowUpActions({ task, users, onClose, onDone, initial = 'compl
           <>
             <Field label={mode === 'snooze' ? 'Remind me again at' : 'New time'}><input className="input" type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} /></Field>
             {mode === 'reschedule' && <Field label="Why (kept on its history)"><input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="They asked for Monday" /></Field>}
+            {mode === 'reschedule' && <ReminderChoice value={reminders} onChange={setReminders} prefs={prefs} />}
+            <div className="small muted">Reminders not yet sent are replaced: nobody is reminded about the old time.</div>
           </>
         )}
+        {mode === 'complete' && ['CALL', 'CALLBACK'].includes(task.followup_kind) && (
+          <div className="small muted">Choosing how the call went records the call itself (it counts once). Choose “Done” for anything that was not a call.</div>
+        )}
+        <details className="small">
+          <summary>Reminders for this follow-up</summary>
+          <ReminderStatus taskId={task.id} />
+        </details>
         {mode === 'handoff' && (
           <>
             <Field label="To">
@@ -420,13 +548,17 @@ export function WhatsAppPanel({ target, phone }) {
   );
 }
 
-/** A tel: link, labelled honestly; with Exotel connected, a real click-to-call as well. */
-export function CallButtons({ phone, target, onLog, exotel }) {
+/**
+ * A tel: link, labelled honestly; with Exotel connected, a real click-to-call
+ * as well. Dialling is not a call record: what happened is saved afterwards,
+ * through onLog (a lead's "How did the call go?", or Log call elsewhere).
+ */
+export function CallButtons({ phone, target, onLog, logLabel = 'Log call', exotel }) {
   const toast = useToast();
   if (!phone) return null;
   return (
     <span className="row" style={{ gap: 4 }}>
-      <a className="btn btn-sm" href={`tel:${phone}`} title="Opens your phone's dialler. It does not record the call: log it afterwards.">
+      <a className="btn btn-sm" href={`tel:${phone}`} title="Opens your phone's dialler. It does not record the call: say how it went afterwards.">
         <Icon name="sound" size={13} /> Call
       </a>
       {exotel && (
@@ -435,7 +567,7 @@ export function CallButtons({ phone, target, onLog, exotel }) {
           Ring via Exotel
         </button>
       )}
-      <button type="button" className="btn btn-sm" onClick={onLog}>Log call</button>
+      {onLog && <button type="button" className="btn btn-sm" onClick={onLog}>{logLabel}</button>}
     </span>
   );
 }

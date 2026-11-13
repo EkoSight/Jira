@@ -48,7 +48,13 @@ export const IMPORT_FIELDS = {
     email: ['email', 'email address', 'e-mail'],
     phone: ['phone', 'mobile', 'phone number', 'mobile number', 'contact number', 'whatsapp'],
     website: ['website', 'url', 'web'],
-    city: ['city', 'district', 'town'],
+    // a District column fills District, not City (it used to fill City)
+    city: ['city', 'town', 'village', 'city/town/village', 'city / town / village'],
+    district: ['district'],
+    block: ['block', 'tehsil', 'taluka', 'block/tehsil', 'block / tehsil', 'mandal'],
+    address_line1: ['address', 'address line 1', 'address 1', 'street address'],
+    address_line2: ['address line 2', 'address 2'],
+    pincode: ['pincode', 'pin code', 'pin', 'postal code', 'zip'],
     state: ['state', 'region'],
     country: ['country'],
     requirement: ['requirement', 'requirements', 'need', 'product interest'],
@@ -95,7 +101,7 @@ const TELECRM_COLUMNS = {
   'status': 'call_status', 'lost reason': 'lost_reason', 'rating': 'rating', 'assignee emailid': 'owner_email', 'full name': 'contact_name',
   'mobile number': 'phone', 'first call descripton': 'notes', 'first call description': 'notes',
   'you are associated with agriculture as': 'cf:agri_role', 'service needed': 'cf:service_needed', 'state lead belongs to': 'state',
-  'company name or shop name': 'organization_name', 'shop duration': 'cf:shop_duration', 'event name': 'cf:event_name', 'district': 'city',
+  'company name or shop name': 'organization_name', 'shop duration': 'cf:shop_duration', 'event name': 'cf:event_name', 'district': 'district',
   'designation': 'designation', 'e-mail address': 'email', 'campaign name': 'campaign', 'how did you hear about us': 'source',
   'created on': 'captured_at', 'modified on': 'modified_at', 'lead link': 'cf:telecrm_link', 'lead id': 'external_id',
   'batch names': 'tags', 'date': 'cf:telecrm_date',
@@ -234,6 +240,7 @@ function leadRow(raw, mapping, options, look) {
   const data = {
     organization_name: g('organization_name'), contact_name: g('contact_name'), designation: g('designation'),
     email: g('email'), phone: g('phone'), website: g('website'), city: tidyPlace(g('city')), country: g('country'),
+    district: tidyPlace(g('district')), block: tidyPlace(g('block')), address_line1: g('address_line1'), address_line2: g('address_line2'),
     requirement: g('requirement'), enquiry: g('enquiry'), currency: g('currency')?.toUpperCase(),
     priority: g('priority')?.toUpperCase(), external_id: g('external_id'), source_system: g('source_system') || options.source_system || null,
     tags: g('tags') ? g('tags').split(/[,;]/).map((t) => t.trim()).filter(Boolean).slice(0, 10) : undefined,
@@ -241,6 +248,12 @@ function leadRow(raw, mapping, options, look) {
   };
   // an address or a state as people type them
   if (data.email && !normalizeEmail(data.email)) { warnings.push(`Email "${data.email}" is not an email address; left out`); delete data.email; }
+  // a PIN code is checked for shape only; a wrong one is left out with a warning
+  const pin = g('pincode') ? String(g('pincode')).replace(/\s+/g, '') : null;
+  if (pin) {
+    if (/^[1-9][0-9]{5}$/.test(pin)) data.pincode = pin;
+    else warnings.push(`PIN code "${g('pincode')}" is not six digits; left out`);
+  }
   const state = g('state');
   if (state) {
     data.state = normalizeState(state) || state;
@@ -462,7 +475,8 @@ export async function startImport(jobId, actor) {
   return rows[0];
 }
 
-const FILLABLE_LEAD = ['organization_name', 'contact_name', 'designation', 'email', 'phone', 'website', 'city', 'state', 'country', 'requirement', 'enquiry'];
+const FILLABLE_LEAD = ['organization_name', 'contact_name', 'designation', 'email', 'phone', 'website', 'city', 'state', 'country', 'requirement', 'enquiry',
+  'district', 'block', 'address_line1', 'address_line2', 'pincode'];
 
 /**
  * Applies pending rows of running imports, a batch at a time. Called by the

@@ -7,8 +7,11 @@ import {
   CATEGORY, CHOOSABLE, ELIGIBLE, FOLLOWUP_KIND, PRIORITY, dayOf, editableFields, fieldValueLabel, handedOut, money, when,
 } from '../../lib/sales.js';
 import {
-  CallStatusBadge, CategoryBadge, DestinationBadge, FollowUpActions, LeadFieldInputs, LeadStatusBadge, LogCallDialog, Stars,
+  CallStatusBadge, CategoryBadge, DestinationBadge, DueBadge, FollowUpActions, LeadFieldInputs, LeadStatusBadge, Stars,
 } from './parts.jsx';
+import { WorkQueue } from './WorkQueue.jsx';
+import { LocationFields, emptyLocation } from './LeadWork.jsx';
+import { INDIAN_STATES, NOT_PROVIDED, exactTime, pinProblem } from '../../lib/crmWork.js';
 
 // ---------------------------------------------------------------- my day
 
@@ -32,7 +35,8 @@ function FollowUpRow({ task, onOpen, onCall }) {
           <span className="truncate" style={{ fontWeight: 600 }}>{task.title}</span>
         </div>
         <div className="small muted row wrap" style={{ gap: 6 }}>
-          <span>{task.completed_at ? `done ${when(task.completed_at)}` : when(task.due_date)}</span>
+          <span className="tnum">{task.completed_at ? `done ${when(task.completed_at)}` : exactTime(task.due_date)}</span>
+          {!task.completed_at && <DueBadge dueAt={task.due_date} />}
           {to && <Link to={to} className="btn-link truncate">{about}</Link>}
           {task.assignee_name && <span>· {task.assignee_name}</span>}
           {task.due_date_changes > 0 && <span title="Times its date was moved">· moved {task.due_date_changes}×</span>}
@@ -50,30 +54,28 @@ function FollowUpRow({ task, onOpen, onCall }) {
 }
 
 export function MyDay({ meta }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [params] = useSearchParams();
   const [team, setTeam] = useState(params.get('team') === '1');
   const [person, setPerson] = useState('');
   const [day, setDay] = useState(null);
   const [acting, setActing] = useState(null);
-  const [logging, setLogging] = useState(null);
   const canTeam = can('crm.view.team') || can('crm.view.all');
   const load = useCallback(() => {
     setDay(null);
     api.sales.get('/my-day', { team: team ? 'true' : undefined, user_id: person || undefined }).then(setDay).catch((err) => setDay({ error: err.message }));
   }, [team, person]);
   useEffect(load, [load]);
-  if (!day) return <Spinner label="Loading your day" />;
-  if (day.error) return <EmptyState title="Could not load the day">{day.error}</EmptyState>;
-  const open = ['missed', 'overdue', 'today'].reduce((n, k) => n + day[k].length, 0);
+  // the lead queue covers leads; this list keeps follow-ups on organizations and deals (or, for a team, everything)
+  const keep = (t) => team || !t.crm_lead_id;
   return (
     <div className="stack">
       <div className="row-between wrap">
-        <div className="small muted">{open ? `${open} to do now` : 'Nothing due now'} · times in {day.timezone}</div>
+        <div className="small muted">{team ? 'Every follow-up of your team, by when it is due' : 'Work from the top: overdue first, then today, then the rest.'}</div>
         {canTeam && (
           <div className="row" style={{ gap: 6 }}>
             <button type="button" className={`kind-chip${!team && !person ? ' is-active' : ''}`} onClick={() => { setTeam(false); setPerson(''); }}>My day</button>
-            <button type="button" className={`kind-chip${team ? ' is-active' : ''}`} onClick={() => { setTeam(true); setPerson(''); }}>Team</button>
+            <button type="button" className={`kind-chip${team ? ' is-active' : ''}`} onClick={() => { setTeam(true); setPerson(''); }}>Team follow-ups</button>
             <select className="select" style={{ width: 'auto' }} value={person} aria-label="Someone's day" onChange={(e) => { setPerson(e.target.value); setTeam(false); }}>
               <option value="">Someone’s day…</option>
               {meta.users.filter((u) => u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
@@ -81,41 +83,31 @@ export function MyDay({ meta }) {
           </div>
         )}
       </div>
-      {day.awaiting_first_response.length > 0 && (
-        <div className="card">
-          <div className="card-head"><h3>New leads waiting for a first contact</h3><span className="small muted">{day.awaiting_first_response.length}</span></div>
-          <div className="card-pad stack-sm">
-            {day.awaiting_first_response.map((l) => (
-              <div key={l.id} className="sales-row">
-                <CategoryBadge category={l.category} />
-                <div className="grow stack-xs" style={{ minWidth: 140 }}>
-                  <Link to={`/sales/leads/${l.id}`} className="truncate" style={{ fontWeight: 600 }}>{l.name}</Link>
-                  <span className="small muted">arrived {when(l.captured_at)}</span>
+      {!team && <WorkQueue meta={meta} userId={person ? Number(person) : user.id} />}
+      {!day ? <Spinner label="Loading follow-ups" /> : day.error ? <EmptyState title="Could not load the follow-ups">{day.error}</EmptyState> : (
+        <>
+          {day.meetings_today.length > 0 && (
+            <div className="card card-pad stack-sm">
+              <h3>Meetings today</h3>
+              {day.meetings_today.map((m) => <Link key={m.id} to={`/accounts/${m.account_id}`} className="sales-row"><Badge tone="brand">{when(m.scheduled_at)}</Badge><span className="grow truncate">{m.title}</span><span className="small muted">{m.account_name}</span></Link>)}
+            </div>
+          )}
+          {BUCKETS.some(([key]) => day[key].some(keep)) && <h2 className="h3-like">{team ? 'Team follow-ups' : 'Organizations and deals'}</h2>}
+          {BUCKETS.map(([key, label, tone, note]) => {
+            const list = day[key].filter(keep);
+            if (!list.length) return null;
+            return (
+              <div key={key} className="card">
+                <div className="card-head"><h3>{tone && <span className="badge-dot" style={{ background: `var(--${tone})`, marginRight: 6 }} />}{label}</h3><span className="small muted">{list.length}{note ? ` · ${note}` : ''}</span></div>
+                <div className="card-pad stack-sm">
+                  {list.map((t) => <FollowUpRow key={t.id} task={t} onOpen={(task, mode) => setActing({ task, mode })} />)}
                 </div>
-                {l.phone && <a className="btn btn-sm" href={`tel:${l.phone}`}><Icon name="sound" size={13} /> Call</a>}
-                <button type="button" className="btn btn-sm" onClick={() => setLogging({ lead_id: l.id, phone: l.phone })}>Log call</button>
               </div>
-            ))}
-          </div>
-        </div>
+            );
+          })}
+        </>
       )}
-      {day.meetings_today.length > 0 && (
-        <div className="card card-pad stack-sm">
-          <h3>Meetings today</h3>
-          {day.meetings_today.map((m) => <Link key={m.id} to={`/accounts/${m.account_id}`} className="sales-row"><Badge tone="brand">{when(m.scheduled_at)}</Badge><span className="grow truncate">{m.title}</span><span className="small muted">{m.account_name}</span></Link>)}
-        </div>
-      )}
-      {BUCKETS.map(([key, label, tone, note]) => (day[key].length > 0 || key === 'today') && (
-        <div key={key} className="card">
-          <div className="card-head"><h3>{tone && <span className="badge-dot" style={{ background: `var(--${tone})`, marginRight: 6 }} />}{label}</h3><span className="small muted">{day[key].length}{note ? ` · ${note}` : ''}</span></div>
-          <div className="card-pad stack-sm">
-            {day[key].length === 0 ? <div className="empty small">Nothing scheduled for today. New follow-ups appear here.</div>
-              : day[key].map((t) => <FollowUpRow key={t.id} task={t} onOpen={(task, mode) => setActing({ task, mode })} />)}
-          </div>
-        </div>
-      ))}
       {acting && <FollowUpActions task={acting.task} initial={acting.mode} users={meta.users} onClose={() => setActing(null)} onDone={load} />}
-      {logging && <LogCallDialog target={{ lead_id: logging.lead_id }} phone={logging.phone} users={meta.users} onClose={() => setLogging(null)} onSaved={load} />}
     </div>
   );
 }
@@ -126,13 +118,14 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
   const { user, can } = useAuth();
   const toast = useToast();
   const [form, setForm] = useState({
-    category: 'B2B_CORPORATE', organization_name: '', contact_name: '', designation: '', email: '', phone: '', website: '', city: '', state: '',
+    category: 'B2B_CORPORATE', organization_name: '', contact_name: '', designation: '', email: '', phone: '', website: '',
     requirement: '', source_id: '', campaign_id: '', priority: 'MEDIUM', owner_user_id: '', budget_amount: '',
   });
   const [more, setMore] = useState(false);
   const [dupes, setDupes] = useState(null);
   const [saving, setSaving] = useState(false);
   const [custom, setCustom] = useState({});
+  const [loc, setLoc] = useState(() => emptyLocation());
   const set = (patch) => setForm((c) => ({ ...c, ...patch }));
   const excluded = handedOut(meta, form.category);
   const business = ELIGIBLE.includes(form.category);
@@ -147,9 +140,11 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
   }, [form.email, form.phone, form.website, form.organization_name]);
 
   const save = async () => {
+    if (saving) return;
+    if (pinProblem(loc.pincode)) { toast.error(pinProblem(loc.pincode)); return; }
     setSaving(true);
     try {
-      const body = Object.fromEntries(Object.entries(form).filter(([, v]) => v !== '' && v !== null));
+      const body = Object.fromEntries([...Object.entries(form), ...Object.entries(loc).map(([k, v]) => [k, String(v).trim()])].filter(([, v]) => v !== '' && v !== null));
       for (const k of ['source_id', 'campaign_id', 'owner_user_id']) if (body[k]) body[k] = Number(body[k]);
       const answers = Object.fromEntries(Object.entries(custom).filter(([, v]) => v !== '' && v !== null && !(Array.isArray(v) && !v.length)));
       if (Object.keys(answers).length) body.custom_fields = answers;
@@ -191,6 +186,7 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
         </div>
         <Field label="What do they need?"><textarea className="textarea" rows={2} value={form.requirement} onChange={(e) => set({ requirement: e.target.value })} placeholder={business ? 'Soil testing for 400 dealers before kharif' : 'A Soil Doctor kit for the shop'} /></Field>
         {!business && fields.length > 0 && <LeadFieldInputs fields={fields} values={custom} onChange={setCustom} />}
+        <LocationFields value={loc} onChange={setLoc} />
         <div className="grid-2">
           <Field label="Source" hint="Where the enquiry came from (not how it was typed in)">
             <select className="select" value={form.source_id} onChange={(e) => set({ source_id: e.target.value })}>
@@ -211,13 +207,11 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
             </Field>
           ))}
         </div>
-        <button type="button" className="btn-link small" aria-expanded={more} onClick={() => setMore((v) => !v)}>{more ? 'Fewer details' : 'More details (designation, website, place, budget, campaign, priority)'}</button>
+        <button type="button" className="btn-link small" aria-expanded={more} onClick={() => setMore((v) => !v)}>{more ? 'Fewer details' : 'More details (designation, website, budget, campaign, priority)'}</button>
         {more && (
           <div className="grid-2">
             <Field label="Designation"><input className="input" value={form.designation} onChange={(e) => set({ designation: e.target.value })} /></Field>
             <Field label="Website"><input className="input" value={form.website} onChange={(e) => set({ website: e.target.value })} placeholder="https://" /></Field>
-            <Field label="City"><input className="input" value={form.city} onChange={(e) => set({ city: e.target.value })} /></Field>
-            <Field label="State"><input className="input" value={form.state} onChange={(e) => set({ state: e.target.value })} /></Field>
             <Field label="Budget (if they said)"><input className="input" type="number" min="0" value={form.budget_amount} onChange={(e) => set({ budget_amount: e.target.value })} /></Field>
             <Field label="Campaign">
               <select className="select" value={form.campaign_id} onChange={(e) => set({ campaign_id: e.target.value })}>
@@ -250,10 +244,16 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
 // ---------------------------------------------------------------- the lead list
 
 const VIEW_LABEL = {
-  open: 'Open', mine: 'Mine', team: 'Team', unassigned: 'Unassigned', new: 'New', overdue: 'Overdue', stale: 'Stale', retry: 'Retry due',
-  nurture: 'Nurture', won: 'Won', converted: 'Converted', disqualified: 'Lost', all: 'All', needs_classification: 'Who is it?',
-  telecrm: 'TeleCRM queue', archived: 'Archived',
+  open: 'Open', mine: 'Mine', team: 'Team', unassigned: 'Unassigned', new: 'New', overdue: 'Overdue', stale: 'Stale', retry: 'Retry due now',
+  retry_later: 'Retry later', nurture: 'Nurture', won: 'Won', converted: 'Converted', disqualified: 'Lost', all: 'All', needs_classification: 'Who is it?',
+  telecrm: 'TeleCRM queue', archived: 'Archived', location_missing: 'No location',
+  // the My Day groups, shown when opened from there
+  fu_overdue: 'Overdue follow-ups', fu_today: 'Due later today', new_uncalled: 'New, not called', no_next_action: 'No next step',
 };
+const QUEUE_VIEWS = ['fu_overdue', 'fu_today', 'new_uncalled', 'no_next_action'];
+// filters a link (from My Day, or a report) can set
+const LINKABLE = ['owner_id', 'for_user', 'call_status_id', 'state', 'district', 'pincode'];
+const shortPlace = (l) => [l.city, l.district && l.district !== l.city ? l.district : null, l.state].filter(Boolean).join(', ');
 
 export function Leads({ meta }) {
   const { can } = useAuth();
@@ -261,8 +261,11 @@ export function Leads({ meta }) {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const view = params.get('view') || 'open';
-  // a report can open the list already narrowed to one calling status
-  const [filters, setFilters] = useState({ q: '', category: '', status: '', owner_id: '', source_id: '', call_status_id: params.get('call_status_id') || '', state: '', sort: 'newest' });
+  // a report or a My Day group can open the list already narrowed
+  const [filters, setFilters] = useState(() => ({
+    q: '', category: '', status: '', owner_id: '', source_id: '', call_status_id: '', state: '', district: '', pincode: '', for_user: '', sort: 'newest',
+    ...Object.fromEntries(LINKABLE.filter((k) => params.get(k)).map((k) => [k, params.get(k)])),
+  }));
   // the lead's own questions that can narrow the list, and the ones worth a glance in each row
   const choiceFields = (meta.lead_fields || []).filter((f) => f.is_active && f.filterable && f.type.includes('SELECT'));
   const rowFields = (meta.lead_fields || []).filter((f) => f.is_active && f.show_in_list);
@@ -283,8 +286,10 @@ export function Leads({ meta }) {
   useEffect(() => { const t = setTimeout(load, filters.q ? 300 : 0); return () => clearTimeout(t); }, [load, filters.q]);
   useEffect(() => { api.sales.get('/views', { area: 'leads' }).then((r) => setSavedViews(r.views)).catch(() => {}); }, []);
 
-  const views = ['open', 'mine', ...(can('crm.view.team') ? ['team'] : []), 'unassigned', 'new', 'overdue', 'retry', 'stale', 'nurture', 'won', 'converted', 'disqualified',
+  const views = [...(QUEUE_VIEWS.includes(view) ? [view] : []), 'open', 'mine', ...(can('crm.view.team') ? ['team'] : []), 'unassigned', 'new', 'overdue', 'retry', 'retry_later', 'stale',
+    'location_missing', 'nurture', 'won', 'converted', 'disqualified',
     ...(routing ? ['needs_classification'] : []), ...(routing && (!meta.tele_sales_here || counts.telecrm_pending) ? ['telecrm'] : []), 'all', 'archived'];
+  const forUser = filters.for_user && meta.users.find((u) => String(u.id) === String(filters.for_user));
   const setView = (v) => { setPage(1); setParams({ tab: 'leads', view: v }, { replace: true }); };
   const toggle = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
@@ -337,6 +342,8 @@ export function Leads({ meta }) {
         </select>
         <select className="select" aria-label="Owner" value={filters.owner_id} onChange={(e) => setFilters({ ...filters, owner_id: e.target.value })}>
           <option value="">Any owner</option><option value="none">Nobody</option>{meta.users.filter((u) => u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+          {/* leads can still belong to someone who has left: they stay findable, labelled */}
+          {meta.users.some((u) => !u.is_active) && <optgroup label="Former accounts">{meta.users.filter((u) => !u.is_active).map((u) => <option key={u.id} value={u.id}>{u.full_name} (former)</option>)}</optgroup>}
         </select>
         <select className="select" aria-label="Source" value={filters.source_id} onChange={(e) => setFilters({ ...filters, source_id: e.target.value })}>
           <option value="">Any source</option>{meta.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -350,7 +357,12 @@ export function Leads({ meta }) {
             <option value="">{f.label}: any</option>{f.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         ))}
-        <input className="input" style={{ maxWidth: 140 }} placeholder="State" aria-label="State" value={filters.state} onChange={(e) => { setPage(1); setFilters({ ...filters, state: e.target.value }); }} />
+        <select className="select" aria-label="State" value={filters.state} onChange={(e) => { setPage(1); setFilters({ ...filters, state: e.target.value }); }}>
+          <option value="">Any state</option><option value="none">State {NOT_PROVIDED.toLowerCase()}</option>
+          {INDIAN_STATES.map((st) => <option key={st} value={st}>{st}</option>)}
+        </select>
+        <input className="input" style={{ maxWidth: 150 }} placeholder="District" aria-label="District (type none for missing)" value={filters.district} onChange={(e) => { setPage(1); setFilters({ ...filters, district: e.target.value }); }} />
+        <input className="input" style={{ maxWidth: 110 }} placeholder="PIN starts" inputMode="numeric" aria-label="PIN code starts with" value={filters.pincode} onChange={(e) => { setPage(1); setFilters({ ...filters, pincode: e.target.value.replace(/\D/g, '').slice(0, 6) }); }} />
         <select className="select" aria-label="Sort" value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value })}>
           <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="score">Highest score</option><option value="rating">Highest rating</option>
           <option value="follow_up">Next follow-up</option><option value="retry">Next retry</option><option value="activity">Recent activity</option><option value="organization">Organization A–Z</option>
@@ -362,6 +374,12 @@ export function Leads({ meta }) {
         )}
         <button type="button" className="btn btn-sm btn-ghost" onClick={saveView}>Save this view</button>
       </div>
+      {forUser && (
+        <div className="row wrap small" style={{ gap: 6 }}>
+          <Badge tone="brand">Follow-ups assigned to {forUser.full_name}{forUser.is_active ? '' : ' (former account)'}</Badge>
+          <button type="button" className="btn-link" onClick={() => setFilters({ ...filters, for_user: '' })}>Show everyone’s</button>
+        </div>
+      )}
       {view === 'telecrm' && routing && <TeleCrmQueue onChanged={load} />}
       {view === 'needs_classification' && routing && <div className="mkt-callout small">These arrived without a category anyone could trust. {meta.tele_sales_here ? 'Their owners work them and say who they are on the call; you can classify them here too.' : 'Open one to classify it: B2B or CSR/NGO enters TaskFlow (and is assigned); retailer, FPO and individual go to the TeleCRM queue.'} Nothing here is lost or deleted.</div>}
       {selected.size > 0 && (
@@ -386,14 +404,14 @@ export function Leads({ meta }) {
             <table className="data-table sales-table">
               <thead><tr>
                 <th><input type="checkbox" aria-label="Select all on this page" checked={selected.size === data.leads.length} onChange={(e) => setSelected(e.target.checked ? new Set(data.leads.map((l) => l.id)) : new Set())} /></th>
-                <th>Lead</th><th>Category</th><th>Status</th><th>Owner</th><th>Score</th><th>Next follow-up</th><th>Last activity</th><th>Source</th>
+                <th>Lead</th><th>Category</th><th>Status</th><th>Owner</th><th>Place</th><th>Score</th><th>Next follow-up</th><th>Last contact</th><th>Source</th>
               </tr></thead>
               <tbody>{data.leads.map((l) => (
                 <tr key={l.id} className={l.overdue_followups ? 'is-late' : ''}>
                   <td><input type="checkbox" aria-label={`Select ${l.ref}`} checked={selected.has(l.id)} onChange={() => toggle(l.id)} /></td>
                   <td className="sales-lead-cell">
                     <Link to={`/sales/leads/${l.id}`} style={{ fontWeight: 600 }}>{l.display_name}</Link> <Stars value={l.rating} />
-                    <div className="small muted">{l.ref}{l.contact_name && l.organization_name ? ` · ${l.contact_name}` : ''}{l.phone && l.display_name !== l.phone ? ` · ${l.phone}` : ''}{l.state ? ` · ${l.state}` : ''}</div>
+                    <div className="small muted">{l.ref}{l.contact_name && l.organization_name ? ` · ${l.contact_name}` : ''}{l.phone && l.display_name !== l.phone ? ` · ${l.phone}` : ''}</div>
                     {rowFields.some((f) => l.custom_fields?.[f.key]) && <div className="small muted truncate">{rowFields.map((f) => fieldValueLabel(f, l.custom_fields?.[f.key])).filter(Boolean).join(' · ')}</div>}
                   </td>
                   <td><CategoryBadge category={l.category} />{l.destination !== 'TASKFLOW' && <> <DestinationBadge destination={l.destination} /></>}</td>
@@ -403,9 +421,10 @@ export function Leads({ meta }) {
                     {l.retry_at && <div className="small muted">retry {when(l.retry_at)}{l.call_attempts ? ` · ${l.call_attempts} tr${l.call_attempts === 1 ? 'y' : 'ies'}` : ''}</div>}
                   </td>
                   <td>{l.owner_name || <span className="muted">Nobody</span>}</td>
+                  <td className="small">{shortPlace(l) || <span className="muted">{NOT_PROVIDED}</span>}{l.pincode ? <div className="muted tnum">{l.pincode}</div> : null}</td>
                   <td className="tnum">{l.effective_score ?? '—'}</td>
-                  <td>{l.next_followup_due ? <span className={new Date(l.next_followup_due) < new Date() ? 'critical-text' : ''}>{when(l.next_followup_due)}</span> : <span className="muted">none</span>}</td>
-                  <td className="small">{l.last_activity_at ? when(l.last_activity_at) : '—'}</td>
+                  <td>{l.next_followup_due ? <span className={new Date(l.next_followup_due) < new Date() ? 'critical-text' : ''}>{when(l.next_followup_due)} <DueBadge dueAt={l.next_followup_due} /></span> : <span className="muted">none</span>}</td>
+                  <td className="small">{l.last_contacted_at ? when(l.last_contacted_at) : <span className="muted">never</span>}</td>
                   <td className="small">{l.original_source_name || l.source_name || '—'}</td>
                 </tr>
               ))}</tbody>
@@ -417,6 +436,7 @@ export function Leads({ meta }) {
                 <div className="grow stack-xs" style={{ minWidth: 0 }}>
                   <div className="row" style={{ gap: 6 }}><CategoryBadge category={l.category} /><span className="truncate" style={{ fontWeight: 600 }}>{l.display_name}</span></div>
                   <div className="small muted">{l.ref} · {l.owner_name || 'unassigned'} · {l.next_followup_due ? `next ${when(l.next_followup_due)}` : l.retry_at ? `retry ${when(l.retry_at)}` : 'no follow-up'}</div>
+                  <div className="small muted truncate">{shortPlace(l) || `Place ${NOT_PROVIDED.toLowerCase()}`}</div>
                 </div>
                 {l.call_status_label ? <CallStatusBadge lead={l} /> : <LeadStatusBadge status={l.status} />}
               </button>

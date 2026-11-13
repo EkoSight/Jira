@@ -36,6 +36,7 @@ import salesPublicRoutes from './routes/salesPublic.js';
 import salesDealRoutes from './routes/salesDeals.js';
 import salesOpsRoutes from './routes/salesOps.js';
 import salesCallingRoutes from './routes/salesCalling.js';
+import salesWorkRoutes from './routes/salesWork.js';
 import { requireMarketingEnabled } from './middleware/marketing.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
@@ -117,6 +118,8 @@ export function createTaskFlowRouter() {
   // calls, WhatsApp, automation, imports and exports, reports, integrations and audit
   router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesOpsRoutes);
   router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesCallingRoutes);
+  // calls as records, follow-up reminders, the daily Chat summary, the work queue, locations
+  router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesWorkRoutes);
 
   // email marketing, mounted the same way — off cleanly when disabled
   router.use('/marketing', requireAttendance, requireMarketingEnabled, requirePermission('marketing.view'), marketingRoutes);

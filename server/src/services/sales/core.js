@@ -397,7 +397,7 @@ export async function workCalendar() {
 
 // ---------------------------------------------------------------- Indian states, dates and sources as people type them
 
-const STATES = [
+export const INDIAN_STATES = [
   'Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand',
   'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan',
   'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal', 'Andaman and Nicobar Islands', 'Chandigarh',
@@ -428,11 +428,11 @@ export function normalizeState(value) {
   const alias = STATE_ALIASES[raw.toLowerCase()];
   if (alias) return alias;
   const s = squash(raw);
-  const exact = STATES.find((x) => squash(x) === s);
+  const exact = INDIAN_STATES.find((x) => squash(x) === s);
   if (exact) return exact;
   // a misspelling: one or two letters off a name long enough not to be confused with another
   if (s.length >= 5) {
-    const scored = STATES.map((x) => [x, editDistance(s, squash(x))]).sort((a, b) => a[1] - b[1]);
+    const scored = INDIAN_STATES.map((x) => [x, editDistance(s, squash(x))]).sort((a, b) => a[1] - b[1]);
     if (scored[0][1] <= 2 && scored[1][1] > scored[0][1]) return scored[0][0];
   }
   return null;

@@ -57,6 +57,7 @@ router.post('/calls', requirePermission('crm.activity.log'), asyncHandler(async 
     phone: z.string().max(40).nullable().optional(), direction: z.enum(['OUTBOUND', 'INBOUND']).default('OUTBOUND'),
     outcome: z.enum(CALL_OUTCOMES), notes: z.string().max(5000).nullable().optional(), duration_sec: z.number().int().min(0).max(86400).nullable().optional(),
     started_at: z.string().max(40).nullable().optional(), next: followUpNext,
+    request_id: z.string().min(8).max(80).nullable().optional(),
   }).parse(req.body);
   if (['CONNECTED', 'INTERESTED', 'NOT_INTERESTED', 'CALLBACK_REQUESTED'].includes(data.outcome) && !data.notes?.trim()) {
     throw badRequest('Note what was said: a connected call with no notes cannot be followed up');
@@ -376,9 +377,41 @@ router.get('/exports/leads', requirePermission('crm.export'), asyncHandler(async
   }
   if (all.length >= 10_000) throw badRequest('More than 10,000 leads match; narrow the filters (for example by date or owner) and export in parts');
   const sensitive = hasPermission(req.currentUser, 'crm.export.sensitive');
-  const cols = [['ref', 'Ref'], ['category', 'Category'], ['status', 'Status'], ['organization_name', 'Organization'], ['contact_name', 'Contact'],
-    ['email', 'Email'], ['phone', 'Phone'], ['city', 'City'], ['state', 'State'], ['owner_name', 'Owner'], ['source_name', 'Source'],
-    ['campaign_name', 'Campaign'], ['score', 'Score'], ['priority', 'Priority'], ['captured_at', 'Captured'], ['last_activity_at', 'Last activity']]
+  // calls by id (accidental repeats a manager marked are not counted), the latest note and call
+  if (all.length) {
+    const { rows: extra } = await query(
+      `SELECT l.id,
+              (SELECT COUNT(*)::int FROM crm_calls c WHERE c.lead_id = l.id AND c.voided_at IS NULL) AS calls_logged,
+              (SELECT COUNT(*)::int FROM crm_calls c WHERE c.lead_id = l.id AND c.voided_at IS NULL AND c.direction = 'OUTBOUND') AS calls_outbound,
+              (SELECT MAX(c.id) FROM crm_calls c WHERE c.lead_id = l.id AND c.voided_at IS NULL) AS last_call_id,
+              (SELECT a.body FROM crm_lead_activities a WHERE a.lead_id = l.id AND a.body IS NOT NULL AND a.type IN ('CALL', 'NOTE', 'CALL_STATUS', 'IMPORT_NOTE')
+                ORDER BY a.occurred_at DESC, a.id DESC LIMIT 1) AS last_note,
+              (SELECT a.type = 'IMPORT_NOTE' FROM crm_lead_activities a WHERE a.lead_id = l.id AND a.body IS NOT NULL AND a.type IN ('CALL', 'NOTE', 'CALL_STATUS', 'IMPORT_NOTE')
+                ORDER BY a.occurred_at DESC, a.id DESC LIMIT 1) AS last_note_imported
+         FROM crm_leads l WHERE l.id = ANY($1::int[])`,
+      [all.map((l) => l.id)],
+    );
+    const byId = new Map(extra.map((e) => [e.id, e]));
+    for (const l of all) {
+      const e = byId.get(l.id) || {};
+      Object.assign(l, {
+        calls_logged: e.calls_logged ?? 0,
+        // attempts counts calls made to them; whatever it holds beyond the calls on record came in with an import
+        attempts_imported: Math.max((l.call_attempts || 0) - (e.calls_outbound ?? 0), 0),
+        last_call_id: e.last_call_id ?? '',
+        last_note: e.last_note ? `${e.last_note_imported ? '[imported] ' : ''}${String(e.last_note).replace(/\s+/g, ' ').slice(0, 500)}` : '',
+        stage_label: l.status, next_follow_up: l.next_followup_due || l.next_follow_up_at || '',
+      });
+    }
+  }
+  const cols = [['ref', 'Ref'], ['category', 'Category'], ['stage_label', 'Lead stage'], ['call_status_label', 'Calling status'],
+    ['organization_name', 'Organization'], ['contact_name', 'Contact'],
+    ['email', 'Email'], ['phone', 'Phone'], ['state', 'State'], ['district', 'District'], ['city', 'City / town / village'], ['block', 'Block / tehsil'],
+    ['address_line1', 'Address'], ['address_line2', 'Address line 2'], ['pincode', 'PIN code'],
+    ['owner_name', 'Owner'], ['source_name', 'Source'], ['campaign_name', 'Campaign'], ['score', 'Score'], ['priority', 'Priority'],
+    ['next_follow_up', 'Next follow-up'], ['retry_at', 'Retry at'], ['last_called_at', 'Last called'], ['calls_logged', 'Calls logged (by id)'],
+    ['attempts_imported', 'Attempts recorded before TaskFlow (imported, no call record)'], ['last_call_id', 'Last call id'], ['last_note', 'Latest note'],
+    ['captured_at', 'Captured'], ['last_activity_at', 'Last activity']]
     .filter(([k]) => sensitive || !SENSITIVE.has(k));
   await exportAudit(req, 'leads', all.length, req.query);
   await sendTable(res, {

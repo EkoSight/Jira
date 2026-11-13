@@ -22,6 +22,8 @@ import { badRequest, conflict, notFound } from '../../lib/errors.js';
 import { recordAuditEvent } from '../audit.js';
 import { reassignLead, autoAssignLead } from './assignment.js';
 import { recordManualCall } from './comms.js';
+import { claimSubmission, settleSubmission } from './callRecords.js';
+import { cancelReminders } from './followupReminders.js';
 import { createFollowUp } from './followups.js';
 import { LEAD_SELECT, cancelLeadFollowUps, decorateLead, getLead, logLeadActivity } from './leads.js';
 import { classifyAccount, routeLead } from './routing.js';
@@ -252,9 +254,13 @@ export async function saveLeadField(id, data, actor) {
  * kept) while its calling status says what happened this time.
  */
 export async function setCallStatus(leadId, {
-  statusId, note = null, lostReason = null, callbackAt = null, callbackKind = 'CALLBACK', rating, logCall = true, durationSec = null,
+  statusId, note = null, lostReason = null, callbackAt = null, callbackKind = 'CALLBACK', rating, logCall = true, durationSec = null, requestId = null,
 }, { actor, source = 'USER', client: outer = null }) {
   const run = async (client) => {
+    // the same submission twice (a double tap, a retry after a dropped answer,
+    // a second tab) is answered with the first result: one call, one attempt
+    const claim = actor?.id ? await claimSubmission(client, actor.id, requestId, 'CALL_OUTCOME', leadId) : null;
+    if (claim?.previous) return { ...(claim.previous.response || {}), duplicate: true };
     const { rows } = await client.query('SELECT * FROM crm_leads WHERE id = $1 FOR UPDATE', [leadId]);
     const lead = rows[0];
     if (!lead) throw notFound('Lead not found');
@@ -273,11 +279,17 @@ export async function setCallStatus(leadId, {
       await reassignLead(client, leadId, { toUserId: actor.id, reason: 'Took it from the call queue', actor });
     }
     const dialled = logCall && status.outcome !== 'NONE';
+    let call = null;
+    let closedFollowUps = [];
     if (dialled) {
-      await recordManualCall(client, {
+      const callOutcome = status.outcome === 'NOT_CONNECTED' ? (status.key === 'busy' ? 'BUSY' : 'NO_ANSWER') : 'CONNECTED';
+      ({ call } = await recordManualCall(client, {
         lead_id: leadId, phone: lead.phone, direction: 'OUTBOUND', notes: text, duration_sec: durationSec,
-        outcome: status.outcome === 'NOT_CONNECTED' ? (status.key === 'busy' ? 'BUSY' : 'NO_ANSWER') : 'CONNECTED',
-      }, actor);
+        outcome: callOutcome, request_id: requestId, recorded_via: 'OUTCOME_FORM', count_on_lead: false,
+      }, actor));
+      // the call a due callback asked for has now happened: close it, linked to
+      // this call, so the same lead does not come straight back to the top
+      closedFollowUps = await closeDueCallFollowUps(client, leadId, { call, outcome: callOutcome, note: text, actor, ownerId: lead.owner_user_id });
     } else if (text) {
       await logLeadActivity(client, leadId, { type: 'NOTE', subject: 'Note', body: text, actorId: actor?.id ?? null });
     }
@@ -326,10 +338,48 @@ export async function setCallStatus(leadId, {
       });
     }
     await refreshScore(client, leadId);
-    return { exhausted, attempts, callback };
+    const result = {
+      exhausted, attempts, callback,
+      call: call ? { id: call.id, started_at: call.started_at, outcome: call.outcome } : null,
+      closed_followups: closedFollowUps.map((t) => ({ id: t.id, title: t.title })),
+    };
+    if (actor?.id) await settleSubmission(client, actor.id, requestId, { callId: call?.id ?? null, response: result });
+    return result;
   };
   const result = outer ? await run(outer) : await withTransaction(run);
   return { ...result, lead: await getLead(leadId, { client: outer }) };
+}
+
+/**
+ * Closes the open Call and Call-back follow-ups on a lead that are due (or due
+ * within the next quarter hour, as the call list shows them) once the call
+ * they asked for has been logged. Each is linked to the call and keeps its
+ * outcome and the note; one due later stays open.
+ */
+export async function closeDueCallFollowUps(client, leadId, { call, outcome, note, actor, ownerId }) {
+  const { rows: done } = await client.query(`SELECT id FROM workflow_statuses WHERE stage = 'done' AND is_active = TRUE ORDER BY position LIMIT 1`);
+  if (!done[0]) return [];
+  const reached = outcome === 'CONNECTED';
+  const { rows } = await client.query(
+    `UPDATE tasks t SET status_id = $2, completed_at = now(), followup_outcome = $3, completion_note = $4, progress = 100,
+            outcome_status = $5, completion_call_id = $6, updated_at = now()
+      WHERE t.crm_lead_id = $1 AND t.followup_kind IN ('CALL', 'CALLBACK') AND t.completed_at IS NULL AND t.is_archived = FALSE
+        AND t.crm_cancel_reason IS NULL AND t.due_date <= now() + interval '15 minutes'
+        AND (t.assignee_id = $7 OR t.assignee_id = $8 OR t.assignee_id IS NULL)
+      RETURNING t.id, t.title`,
+    [leadId, done[0].id, outcome, note || null, reached ? 'ACHIEVED' : 'NOT_ACHIEVED', call.id, actor?.id ?? 0, ownerId ?? 0],
+  );
+  for (const t of rows) {
+    await client.query(
+      `INSERT INTO task_activity (task_id, actor_id, action, meta) VALUES ($1, $2, 'completed', $3)`,
+      [t.id, actor?.id ?? null, JSON.stringify({ outcome, call_id: call.id, by: 'call logged' })],
+    );
+    await logLeadActivity(client, leadId, {
+      type: 'FOLLOWUP', subject: `Done by call #${call.id}: ${t.title}`, actorId: actor?.id ?? null, taskId: t.id, meta: { call_id: call.id },
+    });
+  }
+  if (rows.length) await cancelReminders(client, rows.map((t) => t.id), 'Follow-up done');
+  return rows;
 }
 
 // ---------------------------------------------------------------- the call queue

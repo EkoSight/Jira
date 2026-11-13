@@ -388,6 +388,7 @@ export async function scanTimers(now = new Date()) {
     const { rows: due } = await client.query(
       `UPDATE tasks t SET reminder_sent_at = now()
         WHERE t.followup_kind IS NOT NULL AND t.reminder_at <= $1 AND t.reminder_sent_at IS NULL AND t.completed_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM crm_followup_reminders r WHERE r.task_id = t.id)
           AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL AND (t.snoozed_until IS NULL OR t.snoozed_until <= $1)
         RETURNING t.id, t.title, t.assignee_id, t.due_date, t.crm_lead_id, t.account_id`, [now],
     );

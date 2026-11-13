@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
 import { EmptyState, Field, Icon, Spinner } from '../ui.jsx';
 import { fieldValueLabel, phoneLabel, toIso, when } from '../../lib/sales.js';
+import { newRequestId } from '../../lib/attendance.js';
+import { NO_AUTOMATIC_WIN, STATUS_EXPLAINED, exactTime } from '../../lib/crmWork.js';
 import { CategoryBadge, CallStatusBadge, Stars } from './parts.jsx';
 
 const GROUPS = [
@@ -27,12 +29,40 @@ function callbackChoices() {
   ];
 }
 
+/** Warns before the page is closed or reloaded while something typed is unsaved. */
+export function useUnsavedWarning(dirty) {
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [dirty]);
+}
+
+/** What a call outcome, a lead stage and a deal stage each mean. */
+export function StatusExplainer() {
+  return (
+    <details className="small explainer">
+      <summary>Call outcome, lead stage, deal stage: what is the difference?</summary>
+      <dl className="explainer-list">
+        {STATUS_EXPLAINED.map(([term, text]) => <div key={term}><dt>{term}</dt><dd>{text}</dd></div>)}
+      </dl>
+      <p className="muted">{NO_AUTOMATIC_WIN}</p>
+    </details>
+  );
+}
+
 /**
  * How the call went, in one form: the calling status, a note, a lost reason
  * when the lead is lost, a callback if one was agreed, and stars. Saving logs
  * the call (unless the status means nobody was called).
+ *
+ * Each save carries a request id. A double tap, a retry after a slow or lost
+ * answer, or a second tab sends the same id, and the server answers with the
+ * first result instead of recording a second call. The id is kept if a save
+ * fails (so trying again is safe) and replaced once a save succeeds.
  */
-export function CallStatusForm({ lead, meta, onDone, submitLabel = 'Save' }) {
+export function CallStatusForm({ lead, meta, onDone, onDirty, submitLabel = 'Save' }) {
   const toast = useToast();
   const statuses = (meta.call_statuses || []).filter((s) => s.is_active && groupOf(s));
   const [statusId, setStatusId] = useState(null);
@@ -42,42 +72,70 @@ export function CallStatusForm({ lead, meta, onDone, submitLabel = 'Save' }) {
   const [callback, setCallback] = useState('');
   const [rating, setRating] = useState(lead.rating || null);
   const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(null);
+  const requestId = useRef(newRequestId());
+  const busy = useRef(false);
   const status = statuses.find((s) => s.id === statusId);
   const reasons = meta.settings?.calling?.lostReasons || [];
   const lostReason = reason === '__other' ? otherReason.trim() : reason;
   const closes = status && ['WON', 'DISQUALIFIED'].includes(status.lifecycle);
-  useEffect(() => { setStatusId(null); setNote(''); setReason(''); setOtherReason(''); setCallback(''); setRating(lead.rating || null); }, [lead.id, lead.rating]);
+  const clear = () => { setStatusId(null); setNote(''); setReason(''); setOtherReason(''); setCallback(''); };
+  useEffect(() => { clear(); setSaved(null); setRating(lead.rating || null); requestId.current = newRequestId(); }, [lead.id]);
+  const dirty = Boolean(statusId || note.trim());
+  useUnsavedWarning(dirty);
+  useEffect(() => { onDirty?.(dirty); }, [dirty, onDirty]);
 
   const save = async () => {
-    if (!status) return;
+    // one save at a time, even if the button is pressed again before it disables
+    if (!status || busy.current) return;
+    busy.current = true;
     setSaving(true);
     try {
       const r = await api.sales.post(`/leads/${lead.id}/call-status`, {
         status_id: status.id, note: note.trim() || null, lost_reason: status.needs_reason ? lostReason : null,
-        callback_at: callback && !closes ? toIso(callback) : null, rating: rating || null,
+        callback_at: callback && !closes ? toIso(callback) : null, rating: rating || null, request_id: requestId.current,
       });
-      toast.success(r.exhausted ? `${status.label} — tried ${r.attempts} times; no more automatic retries. Close it or book a callback.`
-        : r.lead.retry_at ? `${status.label} — will come up again ${when(r.lead.retry_at)}` : status.label);
+      requestId.current = newRequestId();
+      clear();
+      setSaved({ ...r, label: status.label });
+      const retry = r.lead?.retry_at ? ` It comes up again ${when(r.lead.retry_at)}.` : '';
+      toast.success(r.duplicate ? 'That was already saved; nothing was added twice.'
+        : r.exhausted ? `${status.label}: tried ${r.attempts} times, so no more automatic retries. Close it or book a callback.`
+          : `${r.call ? `Call #${r.call.id} saved` : 'Saved'}: ${status.label}.${retry}`);
       onDone?.(r);
     } catch (err) {
+      // the same request id stays, so pressing Save again cannot record it twice
       toast.error(err);
     } finally {
+      busy.current = false;
       setSaving(false);
     }
   };
   return (
     <div className="stack-sm call-form">
+      {saved && (
+        <div className="call-saved small" role="status">
+          <Icon name="check" size={14} />
+          <span>
+            {saved.duplicate ? 'Already saved' : saved.call ? <>Call <strong>#{saved.call.id}</strong> saved</> : 'Saved'}
+            {saved.call?.started_at ? <> at <span className="tnum">{exactTime(saved.call.started_at)}</span></> : null}
+            {' '}as {saved.label}.
+            {saved.closed_followups?.length ? ` Closed ${saved.closed_followups.length === 1 ? 'the follow-up' : `${saved.closed_followups.length} follow-ups`} it answered.` : ''}
+            {saved.callback ? ` Call back booked for ${when(saved.callback.due_date)}.` : ''}
+          </span>
+        </div>
+      )}
       {GROUPS.map(([g, label]) => {
         const list = statuses.filter((s) => groupOf(s) === g);
         if (!list.length) return null;
         return (
           <div key={g} className="stack-xs">
-            <span className="small muted">{label}</span>
-            <div className="row wrap" style={{ gap: 6 }} role="radiogroup" aria-label={label}>
+            <span className="small muted" id={`call-group-${g}`}>{label}</span>
+            <div className="row wrap" style={{ gap: 6 }} role="radiogroup" aria-labelledby={`call-group-${g}`}>
               {list.map((s) => (
                 <button key={s.id} type="button" role="radio" aria-checked={statusId === s.id}
                   className={`kind-chip call-chip${statusId === s.id ? ' is-active' : ''}`} style={{ '--status-color': s.color || 'var(--brand)' }}
-                  onClick={() => setStatusId(s.id)}>{s.label}</button>
+                  onClick={() => { setStatusId(s.id); setSaved(null); }}>{s.label}</button>
               ))}
             </div>
           </div>
@@ -92,7 +150,7 @@ export function CallStatusForm({ lead, meta, onDone, submitLabel = 'Save' }) {
         </Field>
       )}
       <Field label="What was said">
-        <textarea className="textarea" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder={status?.outcome === 'NOT_CONNECTED' ? 'Optional' : 'Crops, shop, what they want, objections…'} />
+        <textarea className="textarea" rows={2} value={note} onChange={(e) => { setNote(e.target.value); if (saved) setSaved(null); }} placeholder={status?.outcome === 'NOT_CONNECTED' ? 'Optional' : 'Crops, shop, what they want, objections…'} />
       </Field>
       {status && !closes && (
         <Field label="Call back" hint={status.retry_after_minutes && !callback ? `Left blank, it comes up again in ${status.retry_after_minutes >= 120 ? `${Math.round(status.retry_after_minutes / 60)} hours` : `${status.retry_after_minutes} minutes`}` : 'They asked to be called at a time'}>
@@ -107,10 +165,11 @@ export function CallStatusForm({ lead, meta, onDone, submitLabel = 'Save' }) {
       )}
       <div className="row-between wrap" style={{ gap: 8 }}>
         <span className="row small" style={{ gap: 6 }}>Rating <Stars value={rating} onChange={setRating} /></span>
-        <button type="button" className="btn btn-primary" disabled={!status || saving || (status.needs_reason && !lostReason)} onClick={save}>
+        <button type="button" className="btn btn-primary" aria-busy={saving} disabled={!status || saving || (status.needs_reason && !lostReason)} onClick={save}>
           {saving ? 'Saving…' : submitLabel}
         </button>
       </div>
+      <StatusExplainer />
     </div>
   );
 }

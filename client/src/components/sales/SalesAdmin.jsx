@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { api, downloadFile } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { FollowUpDigestAdmin } from './FollowUpSettings.jsx';
+import { CallReview, LocationReview } from './ReviewLists.jsx';
 import { CopyButton } from '../marketing/parts.jsx';
 import { CATEGORY, CHOOSABLE, dayOf, localDay, money, when } from '../../lib/sales.js';
 import { CallingSettings, LeadFieldsSettings } from './SalesCallingSettings.jsx';
@@ -11,7 +13,8 @@ const SECTIONS = [
   ['setup', 'Setup checklist'], ['general', 'Visibility, routing & calendar'], ['calling', 'Calling statuses & lost reasons'], ['fields', 'Lead fields'],
   ['pipelines', 'Pipelines & stages'], ['assignment', 'Assignment'],
   ['scoring', 'Scoring'], ['sources', 'Sources & campaigns'], ['capture', 'Website forms & API keys'], ['catalogue', 'Catalogue, approvals & rates'],
-  ['integrations', 'Calls, WhatsApp & TeleCRM'], ['automation', 'Automation'], ['remediation', 'Existing records to classify'], ['targets', 'Targets'], ['audit', 'Audit log'],
+  ['integrations', 'Calls, WhatsApp & TeleCRM'], ['followups', 'Follow-up reminders & daily summary'], ['locations', 'Lead locations to review'],
+  ['call_review', 'Repeated calls to review'], ['automation', 'Automation'], ['remediation', 'Existing records to classify'], ['targets', 'Targets'], ['audit', 'Audit log'],
 ];
 
 const save = (toast, p, msg = 'Saved') => p.then((r) => { toast.success(msg); return r; }).catch((err) => { toast.error(err); throw err; });
@@ -837,7 +840,7 @@ export function Imports({ meta }) {
 export function SalesSettings({ meta, onSaved, initial }) {
   const [section, setSection] = useState(initial || 'setup');
   const { can } = useAuth();
-  const allowed = SECTIONS.filter(([k]) => (k === 'audit' ? can('crm.audit') : k === 'automation' ? can('crm.automation') || can('crm.settings') : k === 'remediation' ? can('crm.routing') : can('crm.settings')));
+  const allowed = SECTIONS.filter(([k]) => (k === 'audit' || k === 'call_review' ? can('crm.audit') : k === 'automation' ? can('crm.automation') || can('crm.settings') : k === 'remediation' ? can('crm.routing') : can('crm.settings')));
   if (!allowed.length) return <EmptyState title="Settings are for administrators">Ask an administrator to change how the sales CRM works.</EmptyState>;
   const current = allowed.some(([k]) => k === section) ? section : allowed[0][0];
   return (
@@ -857,6 +860,9 @@ export function SalesSettings({ meta, onSaved, initial }) {
         {current === 'capture' && <Capture meta={meta} />}
         {current === 'catalogue' && <Catalogue meta={meta} />}
         {current === 'integrations' && <Integrations />}
+        {current === 'followups' && <FollowUpDigestAdmin meta={meta} />}
+        {current === 'locations' && <LocationReview />}
+        {current === 'call_review' && <CallReview />}
         {current === 'automation' && <Automation />}
         {current === 'remediation' && <Remediation meta={meta} />}
         {current === 'targets' && <Targets meta={meta} />}

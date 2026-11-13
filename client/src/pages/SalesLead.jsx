@@ -4,28 +4,36 @@ import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import {
-  CallButtons, CallStatusBadge, CategoryBadge, DestinationBadge, FollowUpActions, FollowUpDialog, LeadFieldInputs, LeadStatusBadge, LogCallDialog,
+  CallButtons, CallStatusBadge, CategoryBadge, DestinationBadge, DueBadge, FollowUpActions, FollowUpDialog, LeadFieldInputs, LeadStatusBadge,
   Stars, WhatsAppPanel,
 } from '../components/sales/parts.jsx';
 import { CallStatusForm } from '../components/sales/Calling.jsx';
+import {
+  CallDialog, LeadCalls, LocationDetails, LocationFields, emptyLocation, locationChanges,
+} from '../components/sales/LeadWork.jsx';
+import { exactTime, importedAttempts, locationLine, pinProblem } from '../lib/crmWork.js';
 import {
   CATEGORY, CHOOSABLE, FOLLOWUP_KIND, LEAD_STATUS, PRIORITY, ROUTING_STATUS, dayOf, editableFields, fieldValueLabel, handedOut, money, phoneLabel, useSalesMeta, when,
 } from '../lib/sales.js';
 
 const EDITABLE = [
   ['organization_name', 'Organization'], ['contact_name', 'Contact person'], ['designation', 'Designation'], ['email', 'Email'],
-  ['phone', 'Phone'], ['website', 'Website'], ['city', 'City'], ['state', 'State'], ['requirement', 'Requirement'],
+  ['phone', 'Phone'], ['website', 'Website'], ['requirement', 'Requirement'],
 ];
 
 function EditLead({ lead, meta, onClose, onSaved }) {
   const toast = useToast();
   const fields = editableFields(meta);
   const [custom, setCustom] = useState(() => ({ ...(lead.custom_fields || {}) }));
+  const [loc, setLoc] = useState(() => emptyLocation(lead));
+  const [saving, setSaving] = useState(false);
   const [form, setForm] = useState(() => Object.fromEntries([...EDITABLE.map(([k]) => [k, lead[k] || '']), ['priority', lead.priority],
     ['budget_amount', lead.budget_amount ?? ''], ['fit', lead.fit || ''], ['need_clarity', lead.need_clarity || ''], ['timeline', lead.timeline || ''],
     ['budget_confirmed', lead.budget_confirmed ?? ''], ['decision_maker_engaged', lead.decision_maker_engaged ?? '']]));
   const save = async () => {
-    const body = {};
+    if (saving) return undefined;
+    if (pinProblem(loc.pincode)) return toast.error(pinProblem(loc.pincode));
+    const body = { ...locationChanges(loc, lead) };
     for (const [k, v] of Object.entries(form)) {
       const before = lead[k] ?? '';
       if (String(v) === String(before)) continue;
@@ -35,7 +43,8 @@ function EditLead({ lead, meta, onClose, onSaved }) {
       .map((k) => [k, custom[k] === '' || (Array.isArray(custom[k]) && !custom[k].length) ? null : custom[k]]));
     if (Object.keys(changedFields).length) body.custom_fields = changedFields;
     if (!Object.keys(body).length) return onClose();
-    try { await api.sales.patch(`/leads/${lead.id}`, body); toast.success('Saved'); onSaved(); onClose(); } catch (err) { toast.error(err); }
+    setSaving(true);
+    try { await api.sales.patch(`/leads/${lead.id}`, body); toast.success('Saved'); onSaved(); onClose(); } catch (err) { toast.error(err); } finally { setSaving(false); }
     return undefined;
   };
   const yesNo = (k, label) => (
@@ -43,9 +52,10 @@ function EditLead({ lead, meta, onClose, onSaved }) {
       <option value="">Not known</option><option value="true">Yes</option><option value="false">No</option></select></Field>
   );
   return (
-    <Modal title={`Edit ${lead.ref}`} size="lg" onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" onClick={save}>Save</button></>}>
+    <Modal title={`Edit ${lead.ref}`} size="lg" onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button></>}>
       <div className="stack">
         <div className="grid-2">{EDITABLE.map(([k, label]) => <Field key={k} label={label}><input className="input" value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} /></Field>)}</div>
+        <LocationFields value={loc} onChange={setLoc} legacyState />
         {fields.length > 0 && <><h3 className="small">Their answers</h3><LeadFieldInputs fields={fields} values={custom} onChange={setCustom} /></>}
         <h3 className="small">Qualification (feeds the score)</h3>
         <div className="grid-2">
@@ -169,6 +179,8 @@ export default function SalesLead() {
   const canCall = inTaskflow && lead.status !== 'CONVERTED' && !lead.is_archived && !lead.merged_into_id && (data.can.edit || !lead.owner_user_id);
   const nextOpen = data.followups.filter((f) => !f.completed_at && !f.crm_cancel_reason);
   const score = data.score;
+  const counted = data.calls.filter((c) => !c.voided_at);
+  const imported = importedAttempts(lead, data.calls);
 
   return (
     <div className="stack">
@@ -183,6 +195,7 @@ export default function SalesLead() {
             {lead.is_archived && <Badge tone="critical">Archived{lead.archive_reason ? `: ${lead.archive_reason}` : ''}</Badge>}
             {lead.merged_into_id && <Link to={`/sales/leads/${lead.merged_into_id}`}><Badge tone="warning">Merged into another lead</Badge></Link>}
           </div>
+          <div className="small muted lead-place">{locationLine(lead)}</div>
         </div>
         <div className="row wrap" style={{ gap: 6 }}>
           {data.can.edit && <button type="button" className="btn btn-sm" onClick={() => setDialog('edit')}>Edit</button>}
@@ -234,8 +247,13 @@ export default function SalesLead() {
         </div>
         <div className="card card-pad stack-xs">
           <span className="stat-label">Next follow-up</span>
-          {nextOpen.length ? <strong className={new Date(nextOpen[0].due_date) < new Date() ? 'critical-text' : ''}>{FOLLOWUP_KIND[nextOpen[0].followup_kind]} · {when(nextOpen[0].due_date)}</strong>
-            : <strong className="warning-text">None scheduled</strong>}
+          {nextOpen.length ? (
+            <span className="row wrap" style={{ gap: 6 }}>
+              <strong className={new Date(nextOpen[0].due_date) < new Date() ? 'critical-text' : ''}>{FOLLOWUP_KIND[nextOpen[0].followup_kind]} · {when(nextOpen[0].due_date)}</strong>
+              <DueBadge dueAt={nextOpen[0].due_date} />
+            </span>
+          ) : <strong className="warning-text">None scheduled</strong>}
+          {nextOpen[0]?.title && <span className="small truncate">{nextOpen[0].title}</span>}
           <span className="small muted">Last activity {lead.last_activity_at ? when(lead.last_activity_at) : 'none yet'}{lead.is_stale ? ' · gone quiet' : ''}</span>
         </div>
         <div className="card card-pad stack-xs">
@@ -248,16 +266,20 @@ export default function SalesLead() {
       </div>
 
       {canCall && (
-        <section className="card">
+        <section className="card" id="call-outcome" aria-labelledby="call-outcome-title">
           <div className="card-head">
-            <h3>How did the call go?</h3>
+            <h3 id="call-outcome-title">How did the call go?</h3>
             <span className="small muted">
-              {lead.call_attempts ? `${lead.call_attempts} call${lead.call_attempts === 1 ? '' : 's'}` : 'Not called yet'}
+              {counted.length ? <button type="button" className="btn-link" onClick={() => setTab('calls')}>{counted.length} call{counted.length === 1 ? '' : 's'} recorded</button> : 'No calls recorded yet'}
+              {imported ? ` · ${imported} imported attempt${imported === 1 ? '' : 's'}` : ''}
               {lead.last_called_at ? ` · last ${when(lead.last_called_at)}` : ''}{lead.retry_at ? ` · tries again ${when(lead.retry_at)}` : ''}
             </span>
           </div>
           <div className="card-pad stack-sm">
             {lead.phone && <a className="btn btn-sm call-dial-inline" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}><Icon name="phone" size={13} /> Call {phoneLabel(lead.phone)}</a>}
+            <ol className="call-steps small muted" aria-label="Steps">
+              <li>Call</li><li>Choose how it went</li><li>Write what was said</li><li>Book the next step</li>
+            </ol>
             <CallStatusForm lead={lead} meta={meta} onDone={load} />
           </div>
         </section>
@@ -265,7 +287,7 @@ export default function SalesLead() {
 
       {inTaskflow && (
         <div className="row wrap" style={{ gap: 6 }}>
-          <CallButtons phone={lead.phone} target={target} onLog={() => setDialog('call')} />
+          {!canCall && <CallButtons phone={lead.phone} target={target} />}
           <button type="button" className="btn btn-sm" onClick={() => setDialog('followup')}><Icon name="calendar" size={13} /> Follow-up</button>
           <button type="button" className="btn btn-sm" onClick={() => setDialog('note')}><Icon name="note" size={13} /> Note</button>
           {data.can.edit && lead.status !== 'CONVERTED' && (
@@ -277,7 +299,7 @@ export default function SalesLead() {
       )}
 
       <div className="tabs tabs-scroll" role="tablist">
-        {[['timeline', 'Timeline'], ['followups', `Follow-ups (${data.followups.length})`], ['whatsapp', 'WhatsApp'], ['details', 'Details'], ['score', 'Score'], ['routing', 'Routing & owners'],
+        {[['timeline', 'Timeline'], ['calls', `Calls (${counted.length})`], ['followups', `Follow-ups (${data.followups.length})`], ['whatsapp', 'WhatsApp'], ['details', 'Details'], ['score', 'Score'], ['routing', 'Routing & owners'],
           ...(data.duplicates.leads.length || data.duplicates.accounts.length ? [['duplicates', `Possible duplicates (${data.duplicates.leads.length + data.duplicates.accounts.length})`]] : [])].map(([k, l]) => (
           <button key={k} type="button" role="tab" aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)}>{l}</button>
         ))}
@@ -286,17 +308,27 @@ export default function SalesLead() {
       {tab === 'timeline' && (
         <div className="card card-pad stack-sm">
           {data.timeline.length === 0 ? <div className="empty small">Nothing yet.</div> : data.timeline.map((a) => (
-            <div key={a.id} className="sales-timeline-item">
-              <Badge tone={a.direction === 'INBOUND' ? 'good' : a.direction === 'OUTBOUND' ? 'brand' : 'neutral'}>{String(a.type).toLowerCase().replace(/_/g, ' ')}</Badge>
+            <div key={a.id} className={`sales-timeline-item${a.meta?.voided ? ' is-voided' : ''}`}>
+              <Badge tone={a.direction === 'INBOUND' ? 'good' : a.direction === 'OUTBOUND' ? 'brand' : 'neutral'}>{a.type === 'IMPORT_NOTE' ? 'imported' : String(a.type).toLowerCase().replace(/_/g, ' ')}</Badge>
               <div className="grow">
-                <div className="small" style={{ fontWeight: 600 }}>{a.subject}</div>
+                <div className="small row wrap" style={{ fontWeight: 600, gap: 6 }}>
+                  {a.call_id ? <button type="button" className="btn-link" onClick={() => setDialog({ call: a.call_id })}>Call #{a.call_id}: {a.subject}</button> : a.subject}
+                  {a.meta?.voided && <Badge tone="warning">Repeat, not counted</Badge>}
+                  {a.meta?.edited && <Badge>Edited</Badge>}
+                </div>
                 {a.body && <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{a.body}</div>}
-                <div className="small muted">{when(a.occurred_at)}{a.actor_name ? ` · ${a.actor_name}` : ''}{a.meta?.provider && !a.meta.logged_manually ? ` · from ${a.meta.provider}` : ''}</div>
+                <div className="small muted">
+                  <span className="tnum">{a.call_id ? exactTime(a.occurred_at) : when(a.occurred_at)}</span>{a.actor_name ? ` · ${a.actor_name}` : ''}
+                  {a.meta?.provider && !a.meta.logged_manually ? ` · from ${a.meta.provider}` : ''}{a.type === 'IMPORT_NOTE' ? ' · came in with an import' : ''}
+                </div>
               </div>
             </div>
           ))}
-          {data.calls.length > 0 && <div className="small muted">Calls: {data.calls.length} ({data.calls.filter((c) => c.has_recording).length} with a recording{data.calls.some((c) => c.can_play) ? '' : ' you cannot open'}).</div>}
+          {data.calls.length > 0 && <div className="small muted">Calls: {counted.length} ({data.calls.filter((c) => c.has_recording).length} with a recording{data.calls.some((c) => c.can_play) ? '' : ' you cannot open'}).</div>}
         </div>
+      )}
+      {tab === 'calls' && (
+        <div className="card card-pad"><LeadCalls calls={data.calls} importedAttempts={imported} onOpen={(cid) => setDialog({ call: cid })} /></div>
       )}
       {tab === 'followups' && (
         <div className="card card-pad stack-sm">
@@ -304,7 +336,9 @@ export default function SalesLead() {
             <div key={f.id} className="sales-row">
               <Badge tone={f.completed_at ? 'good' : f.crm_cancel_reason ? 'neutral' : new Date(f.due_date) < new Date() ? 'critical' : 'brand'}>{f.completed_at ? 'done' : f.crm_cancel_reason ? 'cancelled' : FOLLOWUP_KIND[f.followup_kind]}</Badge>
               <span className="grow truncate">{f.title}</span>
-              <span className="small muted">{f.completed_at ? `${String(f.followup_outcome || '').toLowerCase().replace(/_/g, ' ')} ${when(f.completed_at)}` : f.crm_cancel_reason || when(f.due_date)}</span>
+              {!f.completed_at && !f.crm_cancel_reason && <DueBadge dueAt={f.due_date} />}
+              <span className="small muted tnum">{f.completed_at ? `${String(f.followup_outcome || '').toLowerCase().replace(/_/g, ' ')} ${when(f.completed_at)}` : f.crm_cancel_reason || exactTime(f.due_date)}</span>
+              {f.completion_call_id && <button type="button" className="btn-link small" onClick={() => setDialog({ call: f.completion_call_id })}>call #{f.completion_call_id}</button>}
               {!f.completed_at && !f.crm_cancel_reason && <button type="button" className="btn btn-sm" onClick={() => setDialog({ task: f })}>Done / move</button>}
             </div>
           ))}
@@ -312,10 +346,12 @@ export default function SalesLead() {
       )}
       {tab === 'whatsapp' && <div className="card card-pad"><WhatsAppPanel target={target} phone={lead.phone} /></div>}
       {tab === 'details' && (
-        <div className="card card-pad">
+        <div className="card card-pad stack">
+          <LocationDetails lead={lead} canEdit={data.can.edit} onChanged={load} />
+          <h3 className="small">Contact and source</h3>
           <dl className="sales-dl">
             {[['Contact', lead.contact_name], ['Designation', lead.designation], ['Phone', lead.phone], ['Email', lead.email], ['Website', lead.website],
-              ['Place', [lead.city, lead.state, lead.country].filter(Boolean).join(', ')], ['Requirement', lead.requirement], ['Enquiry', lead.enquiry],
+              ['Requirement', lead.requirement], ['Enquiry', lead.enquiry],
               ['Budget', lead.budget_amount ? money(lead.budget_amount, lead.currency) : null], ['Original source', lead.original_source_name], ['Latest source', lead.source_name],
               ['Campaign', lead.original_campaign_name || lead.campaign_name], ['UTM', Object.entries(lead.utm || {}).map(([k, v]) => `${k}=${v}`).join(' · ')],
               ['Came in by', `${String(lead.entry_channel).toLowerCase().replace('_', ' ')}${lead.source_system ? ` (${lead.source_system})` : ''}`],
@@ -378,7 +414,7 @@ export default function SalesLead() {
 
       {dialog === 'edit' && <EditLead lead={lead} meta={meta} onClose={() => setDialog(null)} onSaved={load} />}
       {dialog === 'convert' && <ConvertDialog lead={lead} onClose={() => setDialog(null)} />}
-      {dialog === 'call' && <LogCallDialog target={target} phone={lead.phone} users={meta.users} onClose={() => setDialog(null)} onSaved={load} />}
+      {dialog?.call && <CallDialog callId={dialog.call} onClose={() => setDialog(null)} onChanged={load} />}
       {dialog === 'followup' && <FollowUpDialog target={target} users={meta.users} onClose={() => setDialog(null)} onSaved={load} />}
       {dialog === 'note' && <NoteDialog leadId={lead.id} onClose={() => setDialog(null)} onSaved={load} />}
       {dialog?.task && <FollowUpActions task={dialog.task} users={meta.users} onClose={() => setDialog(null)} onDone={load} />}
