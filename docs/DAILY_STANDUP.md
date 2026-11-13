@@ -85,13 +85,15 @@ On the day itself, each expected person is classified separately:
 | On time | First posted by the deadline in force |
 | Late | First posted after it — including after the review ran |
 | Not seen ("missing") | Nothing by the deadline, after a reminder that was delivered. They get a friendly private message; nobody else is told in Chat. |
-| Exempt | Approved leave (or morning leave), a leave request still pending, their own weekly off, a department holiday, or not yet joined |
+| Exempt | Approved leave (or morning leave), a leave request still pending, their own weekly off, a department or personal holiday (a morning off counts), or not yet joined |
 | Could not be reached | No reminder went out, or it never arrived. Nobody is called missing for a reminder they did not get. |
 
 Company holidays and weekly offs send nothing at all; the day is recorded as
-skipped. Holidays come from **Settings → Attendance & pay → Holidays**, both
-monthly and ad hoc. Until the holiday list is reconciled (the separate holiday
-request), a missing holiday there means a reminder goes out that day.
+skipped. A company holiday that takes the morning off skips the standup too;
+one that takes only the afternoon off does not. Holidays come from **Settings →
+Attendance & pay → Holidays** (see `HOLIDAYS.md`), and count once approved. A
+holiday added after the day lists any standup recorded missing or late that day
+for a standup reviewer to excuse; nothing is changed by itself.
 
 ## Set-up (an admin with "Set up the daily standup")
 

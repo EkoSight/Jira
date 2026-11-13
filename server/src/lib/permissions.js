@@ -83,6 +83,8 @@ export const PERMISSIONS = {
   // The daily standup: a plan for the day, never a penalty
   'standup.review': 'See the daily standup review and follow it up',
   'standup.manage': 'Set up the daily standup: its space, times and who takes part',
+  // proposing a holiday change needs attendance.policy; putting it in force needs this
+  'holiday.approve': 'Approve or reject holiday and closure changes',
   // Money is separate from attendance oversight
   'payroll.view': 'See monthly salary estimates',
   'payroll.manage': 'Prepare payroll months: submit, send back and export',

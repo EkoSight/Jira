@@ -45,6 +45,8 @@ const ATTENDANCE_TYPES = {
   attendance_reminder: '/attendance',
   attendance_checkout_reminder: '/attendance',
   standup_review: '/standup?tab=review',
+  // a holiday or closure announced to the people it covers
+  holiday: '/attendance?tab=month',
 };
 
 // email marketing's notices (approvals waiting, a contact reaching a step)

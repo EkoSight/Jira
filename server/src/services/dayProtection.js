@@ -51,7 +51,7 @@ export async function nextWorkingDay(userId, departmentId, after) {
   );
   for (let d = addDays(after, 1); d <= horizon; d = addDays(d, 1)) {
     const { config } = policyOn(timeline, d);
-    const schedule = scheduleOn(d, { config, profile, holidays, departmentId, ignoreStart: true, ignoreEmployment: true });
+    const schedule = scheduleOn(d, { config, profile, holidays, departmentId, userId, ignoreStart: true, ignoreEmployment: true });
     if (schedule.state !== 'WORKDAY') continue;
     if (leave.some((l) => l.start_date <= d && l.end_date >= d)) continue;
     return d;

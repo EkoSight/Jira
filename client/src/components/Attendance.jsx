@@ -242,6 +242,7 @@ export function TodayAttendanceCard({ variant = 'card' }) {
           <div className="att-eyebrow">
             Attendance · {dayName(today.today)} · office {today.policy.office_start}–{today.policy.office_end}
             {today.policy.grace_minutes ? ` · ${today.policy.grace_minutes} min grace` : ''}
+            {day?.holiday_half ? ` · ${day.holiday_half === 'FIRST_HALF' ? 'morning' : 'afternoon'} off today: ${day.holiday}` : ''}
           </div>
           <div className="att-headline">
             <span className={`att-dot att-dot-${tone}`} aria-hidden="true" />
@@ -836,6 +837,8 @@ export function MonthLedger({ data, onCorrect, onLocation, onReviewDay, onReview
                   <td>
                     <Badge tone={meta.tone}>{meta.label}</Badge>
                     {s?.field_day && <> <Badge tone="brand" title={s.field_note || undefined}>Field day</Badge></>}
+                    {/* the holiday behind the day, so a shorter or free day explains itself */}
+                    {d.holiday && <span className="small muted"> {d.holiday_half ? `${d.holiday_half === 'FIRST_HALF' ? 'Morning' : 'Afternoon'} off — ` : ''}{d.holiday}</span>}
                     <FlagBadges flags={d.flags.filter((f) => f !== 'MISSING_CHECKOUT')} reviewFlags={s?.review_flags} />
                   </td>
                   <td className="tnum">{s ? clockIn(s.check_in_at, tz) : ''}{s?.check_in_source === 'MANUALLY_REGULARIZED' ? '*' : ''}</td>

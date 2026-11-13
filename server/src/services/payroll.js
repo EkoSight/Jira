@@ -14,6 +14,7 @@
 import { query, withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
 import { audit, dateIn, holidaysBetween } from './attendance.js';
+import { openForMonth } from './holidays.js';
 import { PENDING_LEAVE, computePayroll, fingerprint, livePayroll, monthBounds } from './attendanceLedger.js';
 import { getPolicyFor } from './attendancePolicy.js';
 import { eligibilityFor, leaveReviewers } from './leave.js';
@@ -355,6 +356,7 @@ export async function readiness(month, { now = new Date() } = {}) {
 
   const year = first.slice(0, 4);
   const holidays = await holidaysBetween(`${year}-01-01`, `${year}-12-31`);
+  const holidayChanges = await openForMonth(first, last);
   const { rows: [pending] } = await query(
     `SELECT
        (SELECT COUNT(*)::int FROM leave_requests WHERE status = ANY($3::text[]) AND end_date >= $1 AND start_date <= $2) AS leave,
@@ -390,6 +392,13 @@ export async function readiness(month, { now = new Date() } = {}) {
       count: holidays.length,
       hint: holidays.length ? `${holidays.length} recorded.` : `None recorded for ${year}. Confirm there are none, or add them before the month is finalised.`,
       link: '/settings?tab=attendance',
+    }),
+    item('HOLIDAY_CHANGES', 'Holiday changes for this month decided and reconciled', holidayChanges.requests || holidayChanges.corrections ? 'ACTION' : 'OK', {
+      count: holidayChanges.requests + holidayChanges.corrections,
+      hint: holidayChanges.requests || holidayChanges.corrections
+        ? `${holidayChanges.requests} holiday change(s) waiting for approval and ${holidayChanges.corrections} correction(s) waiting for review in this month.`
+        : 'No holiday change or correction is waiting for this month.',
+      link: '/settings?tab=attendance&section=holidays',
     }),
     item('APPROVERS', 'Someone can approve each person\'s leave and corrections', noApprover.length ? 'ACTION' : 'OK', {
       people: noApprover,

@@ -33,9 +33,10 @@ export async function runAttendanceScan(now = new Date()) {
   if (!config.startDate || today < config.startDate) return { notified: [] };
 
   const seconds = secondsInto(today, now, config.timezone);
-  const inAfter = clock(config.officeStart) + (config.reminders?.checkInAfterMinutes ?? 30) * 60;
-  const outAfter = clock(config.officeEnd) + (config.reminders?.checkOutAfterMinutes ?? 30) * 60;
-  if (seconds < inAfter) return { notified: [] };
+  const inDelay = (config.reminders?.checkInAfterMinutes ?? 30) * 60;
+  const outDelay = (config.reminders?.checkOutAfterMinutes ?? 30) * 60;
+  // nobody's day starts before office hours do; a half-day holiday only starts it later
+  if (seconds < clock(config.officeStart) + inDelay) return { notified: [] };
 
   const { rows: users } = await query(
     `SELECT u.id, u.department_id,
@@ -54,14 +55,15 @@ export async function runAttendanceScan(now = new Date()) {
   for (const user of users) {
     const profile = profiles.get(user.id);
     if (profile && !profile.attendance_required) continue;
-    const schedule = scheduleOn(today, { config, profile, holidays, departmentId: user.department_id });
+    const schedule = scheduleOn(today, { config, profile, holidays, departmentId: user.department_id, userId: user.id });
     if (schedule.state !== 'WORKDAY' || user.on_leave) continue;
-    if (!user.session_status) {
+    // each person's own hours: a morning off moves the reminder to the afternoon
+    if (!user.session_status && seconds >= schedule.start + inDelay) {
       if (await remindOnce(user.id, 'attendance_reminder', today, `Check in to start work — ${today}`,
         'You have not checked in yet today. If you cannot, ask for a correction from your attendance page.')) {
         notified.push(user.id);
       }
-    } else if (user.session_status === 'OPEN' && seconds >= outAfter) {
+    } else if (user.session_status === 'OPEN' && seconds >= schedule.end + outDelay) {
       if (await remindOnce(user.id, 'attendance_checkout_reminder', today, `Still checked in — ${today}`,
         'Remember to Check Out / End Work when you finish. TaskFlow never checks you out automatically.')) {
         notified.push(user.id);

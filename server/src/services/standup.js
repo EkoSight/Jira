@@ -29,7 +29,7 @@ import {
 } from '../lib/standup.js';
 import { getSettings } from './settings.js';
 import { getPolicyFor } from './attendancePolicy.js';
-import { addDays, dateIn, holidaysBetween, instantAt, secondsInto } from './attendance.js';
+import { addDays, dateIn, holidaysBetween, instantAt, scheduleOn, secondsInto } from './attendance.js';
 import { notify } from './activity.js';
 
 
@@ -67,14 +67,22 @@ async function directSpace(userId) {
 
 // ---------------------------------------------------------------- the calendar
 
-/** Whether the company works on a date: its weekly days and company-wide holidays. */
+/**
+ * Whether the company works on a date: its weekly days and company-wide
+ * holidays, from the same calendar attendance uses. A company holiday that
+ * takes the morning off covers the standup, so the day is skipped; one that
+ * takes only the afternoon off does not.
+ */
 export async function companyDay(date) {
   const { config: policy } = await getPolicyFor(date);
-  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
-  if (!(policy.workingDays || [1, 2, 3, 4, 5, 6]).includes(weekday)) return { working: false, reason: 'WEEKLY_OFF' };
   const holidays = await holidaysBetween(date, date);
-  const company = holidays.find((h) => h.department_id === null);
-  if (company) return { working: false, reason: `HOLIDAY: ${company.name}` };
+  const schedule = scheduleOn(date, {
+    config: { ...policy, workingDays: policy.workingDays || [1, 2, 3, 4, 5, 6] },
+    profile: null, holidays, departmentId: null, userId: null, ignoreStart: true, ignoreEmployment: true,
+  });
+  if (schedule.state === 'WEEKLY_OFF') return { working: false, reason: 'WEEKLY_OFF' };
+  if (schedule.state === 'HOLIDAY') return { working: false, reason: `HOLIDAY: ${schedule.holiday}` };
+  if (schedule.holidayHalf === 'FIRST_HALF') return { working: false, reason: `HOLIDAY: ${schedule.holiday} (morning)` };
   return { working: true };
 }
 
@@ -101,7 +109,8 @@ export async function eligibility(date) {
         AND status IN ('APPROVED_PAID', 'APPROVED_UNPAID', 'SUBMITTED', 'EMERGENCY_REVIEW', 'NOTICE_EXCEPTION')`,
     [userIds, date],
   ) : { rows: [] };
-  const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+  const { config: policy } = await getPolicyFor(date);
+  const config = { ...policy, workingDays: policy.workingDays || [1, 2, 3, 4, 5, 6] };
 
   const expected = [];
   const exempt = [];
@@ -116,9 +125,14 @@ export async function eligibility(date) {
     if (approved) { exempt.push({ member: m, reason: approved.day_part === 'FIRST_HALF' ? 'LEAVE_MORNING' : 'LEAVE' }); continue; }
     const pending = mine.find((l) => !l.status.startsWith('APPROVED') && l.day_part !== 'SECOND_HALF');
     if (pending) { exempt.push({ member: m, reason: 'LEAVE_PENDING' }); continue; }
-    if (m.working_days?.length && !m.working_days.includes(weekday)) { exempt.push({ member: m, reason: 'WEEKLY_OFF' }); continue; }
-    const deptHoliday = holidays.find((h) => h.department_id !== null && h.department_id === m.dept);
-    if (deptHoliday) { exempt.push({ member: m, reason: `HOLIDAY: ${deptHoliday.name}` }); continue; }
+    // the person's own schedule: weekly days, and department or personal holidays
+    const schedule = scheduleOn(date, {
+      config, profile: { working_days: m.working_days }, holidays, departmentId: m.dept ?? null,
+      userId: m.user_id ?? null, ignoreStart: true, ignoreEmployment: true,
+    });
+    if (schedule.state === 'WEEKLY_OFF') { exempt.push({ member: m, reason: 'WEEKLY_OFF' }); continue; }
+    if (schedule.state === 'HOLIDAY') { exempt.push({ member: m, reason: `HOLIDAY: ${schedule.holiday}` }); continue; }
+    if (schedule.holidayHalf === 'FIRST_HALF') { exempt.push({ member: m, reason: `HOLIDAY: ${schedule.holiday} (morning)` }); continue; }
     expected.push(m);
   }
   return { expected, exempt, excluded };

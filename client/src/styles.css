@@ -4107,3 +4107,25 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .standup-blocker .input { grid-column: 1 / 2; }
   .standup-blocker .btn-icon { grid-column: 2; grid-row: 1; }
 }
+
+/* ---------------------------------------------------------------- holidays and closures */
+.hol-steps { margin: 0; padding-left: 18px; display: grid; gap: 4px; color: var(--ink-2); }
+.hol-list { display: flex; flex-direction: column; }
+.hol-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border); }
+.hol-list .hol-row:first-child { border-top: 0; }
+.modal-body .hol-row { padding: 10px 0; }
+.hol-table tr.is-cancelled td { color: var(--ink-muted); }
+.hol-table tr.is-cancelled td:nth-child(2) { text-decoration: line-through; text-decoration-color: var(--border-strong); }
+.hol-summary { display: grid; gap: 4px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.hol-summary .badge { justify-self: start; }
+.hol-details summary { cursor: pointer; padding: 4px 0; }
+.hol-details[open] summary { margin-bottom: 6px; }
+.hol-audit { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.bm-evidence { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.bm-evidence dt { color: var(--ink-muted); font-size: 12.5px; }
+.bm-evidence dd { margin: 0; }
+@media (max-width: 640px) {
+  .hol-row { flex-wrap: wrap; }
+  .bm-evidence { grid-template-columns: 1fr; }
+  .bm-evidence dt { margin-top: 6px; }
+}

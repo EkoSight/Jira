@@ -346,7 +346,7 @@ export async function workCalendar() {
   let holidays = new Set();
   if (cal.useAttendanceHolidays !== false) {
     try {
-      const { rows } = await query(`SELECT holiday_date::text AS d FROM work_holidays WHERE department_id IS NULL AND holiday_date >= CURRENT_DATE - 7`);
+      const { rows } = await query(`SELECT holiday_date::text AS d FROM work_holidays WHERE department_id IS NULL AND user_id IS NULL AND status = 'APPROVED' AND coverage = 'FULL' AND holiday_date >= CURRENT_DATE - 7`);
       holidays = new Set(rows.map((r) => r.d));
     } catch { /* no holiday list: working days only */ }
   }

@@ -139,14 +139,39 @@ export async function profilesFor(userIds) {
   return new Map(rows.map((r) => [r.user_id, r]));
 }
 
+/**
+ * The holidays in force between two dates: approved entries only. A proposed
+ * change is not in force until it is approved, and a cancelled entry never is.
+ */
 export async function holidaysBetween(from, to) {
   const { rows } = await query(
-    `SELECT h.*, d.name AS department_name FROM work_holidays h
+    `SELECT h.*, d.name AS department_name, u.full_name AS user_name FROM work_holidays h
        LEFT JOIN departments d ON d.id = h.department_id
-      WHERE holiday_date BETWEEN $1 AND $2 ORDER BY holiday_date`,
+       LEFT JOIN users u ON u.id = h.user_id
+      WHERE holiday_date BETWEEN $1 AND $2 AND h.status = 'APPROVED' ORDER BY holiday_date, h.id`,
     [from, to],
   );
   return rows;
+}
+
+/** Whether a holiday entry covers this person: everyone, their department, or them alone. */
+export function holidayAppliesTo(h, departmentId, userId) {
+  if ((h.status ?? 'APPROVED') !== 'APPROVED') return false;
+  if (h.user_id !== null && h.user_id !== undefined) return userId !== null && userId !== undefined && Number(h.user_id) === Number(userId);
+  if (h.department_id !== null && h.department_id !== undefined) return departmentId !== null && departmentId !== undefined && Number(h.department_id) === Number(departmentId);
+  return true;
+}
+
+/**
+ * The holiday on a date for one person, combined across every entry that
+ * covers them: a full day, both halves, or one half. Null when none.
+ */
+export function holidayFor(date, holidays, departmentId, userId) {
+  const mine = holidays.filter((h) => h.holiday_date === date && holidayAppliesTo(h, departmentId, userId));
+  if (!mine.length) return null;
+  const halves = new Set(mine.map((h) => h.coverage || 'FULL'));
+  const coverage = halves.has('FULL') || (halves.has('FIRST_HALF') && halves.has('SECOND_HALF')) ? 'FULL' : [...halves][0];
+  return { coverage, name: mine.map((h) => h.name).join(' / '), ids: mine.map((h) => h.id), kind: mine[0].kind || 'HOLIDAY' };
 }
 
 /**
@@ -158,8 +183,14 @@ export async function holidaysBetween(from, to) {
  * state — Monday is still a working day — and is marked `beforeStart`. That
  * date only decides when check-in becomes required and when a day with no
  * record starts to count; attendance someone does record is always worked out.
+ *
+ * Holidays: a company, department or personal entry that covers this person.
+ * A full day is a HOLIDAY. A half day stays a WORKDAY whose hours start (first
+ * half off) or end (second half off) at the policy's half-day split, so the
+ * required hours, the arrival time and the check-in reminder all follow it.
+ * Pass `userId`, or a personal holiday cannot be seen.
  */
-export function scheduleOn(date, { config, profile, holidays, departmentId, ignoreEmployment = false, ignoreStart = false }) {
+export function scheduleOn(date, { config, profile, holidays, departmentId, userId = null, ignoreEmployment = false, ignoreStart = false }) {
   const base = { start: clock(config.officeStart), end: clock(config.officeEnd), breaks: (config.breaks || []).map((b) => ({ start: clock(b.start), end: clock(b.end), paid: Boolean(b.paid), name: b.name })) };
   if (!ignoreEmployment) {
     if (profile?.joining_date && date < profile.joining_date) return { ...base, state: 'NOT_EMPLOYED' };
@@ -168,8 +199,18 @@ export function scheduleOn(date, { config, profile, holidays, departmentId, igno
   const beforeStart = !ignoreEmployment && !ignoreStart && (!config.startDate || date < config.startDate);
   const days = profile?.working_days?.length ? profile.working_days : config.workingDays;
   if (!days.includes(weekday(date))) return { ...base, state: 'WEEKLY_OFF', beforeStart };
-  const holiday = holidays.find((h) => h.holiday_date === date && (h.department_id === null || h.department_id === departmentId));
-  if (holiday) return { ...base, state: 'HOLIDAY', holiday: holiday.name, beforeStart };
+  const holiday = holidayFor(date, holidays || [], departmentId ?? null, userId ?? profile?.user_id ?? null);
+  if (holiday?.coverage === 'FULL') {
+    return { ...base, state: 'HOLIDAY', holiday: holiday.name, holidayIds: holiday.ids, holidayCoverage: 'FULL', beforeStart };
+  }
+  if (holiday) {
+    const split = Math.min(Math.max(clock(config.halfDaySplit || '13:30'), base.start), base.end);
+    const hours = holiday.coverage === 'FIRST_HALF' ? { start: split } : { end: split };
+    return {
+      ...base, ...hours, state: 'WORKDAY', holiday: holiday.name, holidayIds: holiday.ids,
+      holidayCoverage: holiday.coverage, holidayHalf: holiday.coverage, beforeStart,
+    };
+  }
   return { ...base, state: 'WORKDAY', beforeStart };
 }
 
@@ -431,7 +472,7 @@ export async function attendanceGate(user, now = new Date()) {
   const profile = await getProfile(user.id);
   if (profile && !profile.attendance_required) return { ...open, reason: 'NOT_REQUIRED' };
   const holidays = await holidaysBetween(today, today);
-  const schedule = scheduleOn(today, { config, profile, holidays, departmentId: user.department_id });
+  const schedule = scheduleOn(today, { config, profile, holidays, departmentId: user.department_id, userId: user.id });
   if (schedule.state !== 'WORKDAY') return { ...open, reason: schedule.state };
 
   const { rows } = await query(

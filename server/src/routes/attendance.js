@@ -22,6 +22,7 @@ import {
   CORRECTION_KINDS, cancelCorrection, createCorrection, decideCorrection, getCorrection, reviewDay, reviewExtra,
 } from '../services/attendanceCorrections.js';
 import { computePayroll } from '../services/attendanceLedger.js';
+import holidayRoutes from './holidays.js';
 
 const router = Router();
 
@@ -728,48 +729,8 @@ router.post(
   }),
 );
 
-// holidays
-
-router.get(
-  '/holidays',
-  asyncHandler(async (req, res) => {
-    const year = /^\d{4}$/.test(req.query.year || '') ? req.query.year : new Date().getFullYear();
-    res.json({ holidays: await holidaysBetween(`${year}-01-01`, `${year}-12-31`) });
-  }),
-);
-
-router.post(
-  '/holidays',
-  requirePermission('attendance.policy'),
-  asyncHandler(async (req, res) => {
-    const body = z.object({ holiday_date: z.string(), name: z.string().trim().min(1).max(120), department_id: z.number().int().nullable().optional() }).parse(req.body);
-    assertDate(body.holiday_date, 'holiday date');
-    const closed = await lastClosedMonth();
-    if (closed && body.holiday_date <= monthBounds(closed).last) throw conflict('Payroll for that month is closed');
-    const { rows } = await query(
-      `INSERT INTO work_holidays (holiday_date, name, department_id, created_by) VALUES ($1, $2, $3, $4) RETURNING *`,
-      [body.holiday_date, body.name, body.department_id ?? null, req.currentUser.id],
-    );
-    await audit(null, { entityType: 'HOLIDAY', entityId: rows[0].id, actorId: req.currentUser.id, action: 'CREATED', after: rows[0] });
-    resetGateCache();
-    res.status(201).json({ holiday: rows[0] });
-  }),
-);
-
-router.delete(
-  '/holidays/:id',
-  requirePermission('attendance.policy'),
-  asyncHandler(async (req, res) => {
-    const { rows } = await query('SELECT * FROM work_holidays WHERE id = $1', [Number(req.params.id)]);
-    if (!rows[0]) throw notFound('Holiday not found');
-    const closed = await lastClosedMonth();
-    if (closed && rows[0].holiday_date <= monthBounds(closed).last) throw conflict('Payroll for that month is closed');
-    await query('DELETE FROM work_holidays WHERE id = $1', [rows[0].id]);
-    await audit(null, { entityType: 'HOLIDAY', entityId: rows[0].id, actorId: req.currentUser.id, action: 'REMOVED', before: rows[0] });
-    resetGateCache();
-    res.json({ ok: true });
-  }),
-);
+// holidays: proposed, approved, published and reconciled (routes/holidays.js)
+router.use(holidayRoutes);
 
 // employee schedules
 
@@ -902,8 +863,8 @@ router.get(
     const holidays = await holidaysBetween(from, to);
     res.json({
       days: datesBetween(from, to).map((date) => {
-        const s = scheduleOn(date, { config, profile, holidays, departmentId: req.currentUser.department_id, ignoreStart: true });
-        return { date, state: s.state, holiday: s.holiday || null };
+        const s = scheduleOn(date, { config, profile, holidays, departmentId: req.currentUser.department_id, userId: req.currentUser.id, ignoreStart: true });
+        return { date, state: s.state, holiday: s.holiday || null, holiday_half: s.holidayHalf || null };
       }),
     });
   }),

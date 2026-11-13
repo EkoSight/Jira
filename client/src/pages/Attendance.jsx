@@ -13,6 +13,7 @@ import {
   outsideHoursWords, shiftMonth, todayIn, words,
 } from '../lib/attendance.js';
 import { useLoad } from '../lib/useLoad.js';
+import { HolidayCorrectionsQueue } from '../components/HolidaySettings.jsx';
 import { LoadState, OfflineNote } from '../components/LoadState.jsx';
 
 /**
@@ -479,6 +480,7 @@ function ApprovalsTab() {
 
   return (
     <div className="stack">
+      <HolidayCorrectionsQueue />
       {can('leave.approve') && (
         <section className="card">
           <div className="card-head"><h2>Leave waiting for a decision</h2></div>

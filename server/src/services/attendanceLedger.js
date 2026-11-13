@@ -65,8 +65,11 @@ function leaveOnDate(request, date, schedule, config) {
 /**
  * Every day for these people between two dates, computed.
  * Returns Map(userId → { user, profile, days: [...] }).
+ *
+ * `holidays` replaces the holiday list — an impact preview uses it to compute
+ * the same days under a calendar that is only proposed. Nothing is written.
  */
-export async function buildLedgers(userIds, from, to, { now = new Date() } = {}) {
+export async function buildLedgers(userIds, from, to, { now = new Date(), holidays: holidayList = null } = {}) {
   const timeline = await policyTimeline();
   // "today" as the version in force today sees it — not a version scheduled for later
   const current = policyAt(timeline, now).config;
@@ -75,7 +78,7 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
   const [users, profiles, holidays, sessions, leaves, reviews, extras] = await Promise.all([
     userBasics(userIds),
     profilesFor(userIds),
-    holidaysBetween(from, to),
+    holidayList ? Promise.resolve(holidayList) : holidaysBetween(from, to),
     query(`SELECT ${SESSION_COLUMNS} FROM attendance_sessions s WHERE user_id = ANY($1::int[]) AND work_date BETWEEN $2 AND $3`, [userIds, from, to]),
     query(`SELECT * FROM leave_requests WHERE user_id = ANY($1::int[]) AND end_date >= $2 AND start_date <= $3
             AND status = ANY($4::text[])`, [userIds, from, to, [...PENDING_LEAVE, ...APPROVED_LEAVE]]),
@@ -99,7 +102,7 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
     const days = datesBetween(from, to).map((date) => {
       const version = policyOn(timeline, date);
       const { config } = version;
-      const schedule = scheduleOn(date, { config, profile, holidays, departmentId: user.department_id });
+      const schedule = scheduleOn(date, { config, profile, holidays, departmentId: user.department_id, userId: user.id });
       const row = sessionBy.get(key(user.id, date)) || null;
       const tz = config.timezone;
 
@@ -141,6 +144,10 @@ export async function buildLedgers(userIds, from, to, { now = new Date() } = {})
         // before the attendance start date: shown, never owed
         before_start: Boolean(schedule.beforeStart),
         holiday: schedule.holiday || null,
+        // a half-day holiday leaves the day a working day with shorter hours
+        holiday_half: schedule.holidayHalf || null,
+        // the calendar entries behind it, for the audit link
+        holiday_ids: schedule.holidayIds || [],
         session: row ? {
           id: row.id, status, check_in_at: row.check_in_at, check_out_at: row.check_out_at,
           check_in_source: row.check_in_source, check_out_source: row.check_out_source,
@@ -240,7 +247,7 @@ export async function computePayroll(userId, month, { now = new Date() } = {}) {
   const holidays = await holidaysBetween(first, last);
   const fullMonthRequired = ledger.days.reduce((sum, d) => {
     const { config } = policyOn(timeline, d.date);
-    return sum + requiredSeconds(scheduleOn(d.date, { config, profile: ledger.profile, holidays, departmentId: ledger.user.department_id, ignoreEmployment: true }));
+    return sum + requiredSeconds(scheduleOn(d.date, { config, profile: ledger.profile, holidays, departmentId: ledger.user.department_id, userId: ledger.user.id, ignoreEmployment: true }));
   }, 0);
 
   const { rows: bases } = await query(

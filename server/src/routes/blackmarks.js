@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db/pool.js';
-import { asyncHandler, notFound, badRequest } from '../lib/errors.js';
+import { asyncHandler, notFound, badRequest, forbidden } from '../lib/errors.js';
 import { requirePermission } from '../middleware/auth.js';
 import { hasPermission } from '../lib/permissions.js';
-import { recordBlackMark, runBlackMarkScan, monthlyReview } from '../services/blackmarks.js';
+import { audit } from '../services/attendance.js';
+import { marksToRecheck, recordBlackMark, runBlackMarkScan, monthlyReview } from '../services/blackmarks.js';
 
 const router = Router();
 
@@ -194,18 +195,27 @@ router.post(
   }),
 );
 
+const markState = (m) => ({ status: m.status, waived_by: m.waived_by, waived_reason: m.waived_reason, waived_at: m.waived_at });
+
+// Each waive and restore is written to the audit trail with the state before
+// and after, so restoring a mark never loses who waived it and why.
 router.post(
   '/:id/waive',
   requirePermission('blackmark.waive'),
   asyncHandler(async (req, res) => {
     const { reason } = z.object({ reason: z.string().min(3).max(500) }).parse(req.body);
+    const { rows: [before] } = await query('SELECT * FROM black_marks WHERE id = $1', [Number(req.params.id)]);
+    if (!before) throw notFound('Black mark not found');
     const { rows } = await query(
       `UPDATE black_marks
           SET status = 'waived', waived_by = $1, waived_reason = $2, waived_at = now()
         WHERE id = $3 RETURNING *`,
-      [req.currentUser.id, reason, req.params.id],
+      [req.currentUser.id, reason, before.id],
     );
-    if (!rows[0]) throw notFound('Black mark not found');
+    await audit(null, {
+      entityType: 'BLACK_MARK', entityId: before.id, subjectUserId: before.user_id, actorId: req.currentUser.id,
+      action: 'WAIVED', reason, before: markState(before), after: markState(rows[0]), source: 'black_marks_page',
+    });
     res.json({ mark: rows[0] });
   }),
 );
@@ -214,13 +224,70 @@ router.post(
   '/:id/restore',
   requirePermission('blackmark.waive'),
   asyncHandler(async (req, res) => {
+    const { rows: [before] } = await query('SELECT * FROM black_marks WHERE id = $1', [Number(req.params.id)]);
+    if (!before) throw notFound('Black mark not found');
     const { rows } = await query(
       `UPDATE black_marks SET status = 'active', waived_by = NULL, waived_reason = NULL, waived_at = NULL
         WHERE id = $1 RETURNING *`,
-      [req.params.id],
+      [before.id],
     );
-    if (!rows[0]) throw notFound('Black mark not found');
+    await audit(null, {
+      entityType: 'BLACK_MARK', entityId: before.id, subjectUserId: before.user_id, actorId: req.currentUser.id,
+      action: 'RESTORED', reason: req.body?.reason || null, before: markState(before), after: markState(rows[0]), source: 'black_marks_page',
+    });
     res.json({ mark: rows[0] });
+  }),
+);
+
+/** Marks the calendar in force no longer supports, for someone to look at. Nothing changes here. */
+router.get(
+  '/recheck',
+  requirePermission('blackmark.waive'),
+  asyncHandler(async (req, res) => {
+    res.json({ marks: await marksToRecheck() });
+  }),
+);
+
+/**
+ * Where a mark came from and everything that happened to it: the task and
+ * rule, the evidence recorded with it (the rule as it stood, the deadline and
+ * the deadline in force, the attendance policy version), every waive and
+ * restore, and any holiday correction that touched it.
+ */
+router.get(
+  '/:id/history',
+  requirePermission('blackmark.view'),
+  asyncHandler(async (req, res) => {
+    const { rows: [mark] } = await query(
+      `SELECT bm.*, u.full_name, t.ref AS task_ref, t.title AS task_title, t.due_date AS task_due_date,
+              r.name AS rule_name, r.trigger_type, r.points AS rule_points_now, r.grace_hours AS rule_grace_hours_now,
+              r.updated_at AS rule_updated_at, w.full_name AS waived_by_name, c.full_name AS created_by_name
+         FROM black_marks bm JOIN users u ON u.id = bm.user_id
+         LEFT JOIN tasks t ON t.id = bm.task_id LEFT JOIN blackmark_rules r ON r.id = bm.rule_id
+         LEFT JOIN users w ON w.id = bm.waived_by LEFT JOIN users c ON c.id = bm.created_by
+        WHERE bm.id = $1`,
+      [Number(req.params.id)],
+    );
+    if (!mark) throw notFound('Black mark not found');
+    const wide = hasPermission(req.currentUser, 'blackmark.waive') || hasPermission(req.currentUser, 'report.view');
+    if (!wide && mark.user_id !== req.currentUser.id) throw forbidden('You can only see your own marks');
+    const { rows: corrections } = await query(
+      `SELECT c.id, c.request_id, c.kind, c.status, c.summary, c.work_date, c.decided_at, c.decision_note, c.reversed_at, c.reverse_reason,
+              d.full_name AS decided_by_name, x.full_name AS reversed_by_name, r.action AS request_action, r.name AS holiday_name
+         FROM holiday_corrections c JOIN holiday_requests r ON r.id = c.request_id
+         LEFT JOIN users d ON d.id = c.decided_by LEFT JOIN users x ON x.id = c.reversed_by
+        WHERE (c.target_type = 'BLACK_MARK' AND c.target_id = $1)
+           OR (c.target_type = 'TASK' AND c.target_key = $2)
+        ORDER BY c.created_at`,
+      [mark.id, mark.occurrence_key],
+    );
+    const { rows: trail } = await query(
+      `SELECT a.id, a.action, a.reason, a.before, a.after, a.source, a.created_at, u.full_name AS actor_name
+         FROM attendance_audit a LEFT JOIN users u ON u.id = a.actor_id
+        WHERE a.entity_type = 'BLACK_MARK' AND a.entity_id = $1 ORDER BY a.created_at`,
+      [String(mark.id)],
+    );
+    res.json({ mark, evidence: mark.evidence || null, corrections, audit: trail });
   }),
 );
 

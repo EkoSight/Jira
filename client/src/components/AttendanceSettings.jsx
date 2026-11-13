@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
+import HolidaySettings from './HolidaySettings.jsx';
 import { useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, ConfirmButton, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, Field, Icon, Modal, Spinner } from './ui.jsx';
 import { PRIVACY_NOTICE, WEEKDAYS, dayName, todayIn } from '../lib/attendance.js';
 
 /**
@@ -10,8 +12,11 @@ import { PRIVACY_NOTICE, WEEKDAYS, dayName, todayIn } from '../lib/attendance.js
  * it), and what has not been supplied yet (drafts run without it, nothing is
  * finalised until it is set).
  */
+const SECTIONS = ['policy', 'holidays', 'people', 'access'];
+
 export default function AttendanceSettings() {
-  const [section, setSection] = useState('policy');
+  const [params] = useSearchParams();
+  const [section, setSection] = useState(SECTIONS.includes(params.get('section')) ? params.get('section') : 'policy');
   return (
     <div className="stack">
       <div className="seg">
@@ -20,7 +25,7 @@ export default function AttendanceSettings() {
         ))}
       </div>
       {section === 'policy' && <PolicySection />}
-      {section === 'holidays' && <HolidaysSection />}
+      {section === 'holidays' && <HolidaySettings />}
       {section === 'people' && <PeopleSection />}
       {section === 'access' && <AccessSection />}
     </div>
@@ -226,62 +231,6 @@ const SelectField = ({ label, value, onChange, options, boolean }) => (
     </select>
   </Field>
 );
-
-function HolidaysSection() {
-  const toast = useToast();
-  const { departments } = useRefData();
-  const [year, setYear] = useState(Number(todayIn().slice(0, 4)));
-  const [items, setItems] = useState(null);
-  const [date, setDate] = useState('');
-  const [name, setName] = useState('');
-  const [dept, setDept] = useState('');
-  const load = useCallback(() => { api.holidays(year).then((d) => setItems(d.holidays)).catch(toast.error); }, [year, toast]);
-  useEffect(load, [load]);
-  return (
-    <section className="card card-pad stack">
-      <div className="row-between wrap">
-        <h2>Paid holidays</h2>
-        <div className="row" style={{ gap: 6 }}>
-          <button type="button" className="btn btn-sm" onClick={() => setYear(year - 1)}>{year - 1}</button>
-          <strong>{year}</strong>
-          <button type="button" className="btn btn-sm" onClick={() => setYear(year + 1)}>{year + 1}</button>
-        </div>
-      </div>
-      <form
-        className="row wrap"
-        style={{ gap: 8, alignItems: 'flex-end' }}
-        onSubmit={async (e) => {
-          e.preventDefault();
-          try { await api.addHoliday({ holiday_date: date, name, department_id: dept ? Number(dept) : null }); setName(''); load(); } catch (err) { toast.error(err); }
-        }}
-      >
-        <Field label="Date"><input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} required /></Field>
-        <Field label="Name"><input className="input" value={name} onChange={(e) => setName(e.target.value)} required maxLength={120} placeholder="Diwali" /></Field>
-        <Field label="For">
-          <select className="select" value={dept} onChange={(e) => setDept(e.target.value)}>
-            <option value="">Everyone</option>
-            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
-        </Field>
-        <button type="submit" className="btn btn-primary">Add holiday</button>
-      </form>
-      {!items ? <Spinner /> : items.length === 0 ? <div className="small muted">No holidays in {year}.</div> : (
-        <table className="data">
-          <tbody>
-            {items.map((h) => (
-              <tr key={h.id}>
-                <td className="nowrap">{dayName(h.holiday_date)}</td>
-                <td>{h.name}</td>
-                <td className="small muted">{h.department_name || 'Everyone'}</td>
-                <td><ConfirmButton label="Remove" onConfirm={async () => { try { await api.removeHoliday(h.id); load(); } catch (err) { toast.error(err); } }} /></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </section>
-  );
-}
 
 function PeopleSection() {
   const toast = useToast();

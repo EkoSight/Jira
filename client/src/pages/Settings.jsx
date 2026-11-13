@@ -580,6 +580,10 @@ function ThresholdsTab({ onChanged }) {
     <div className="stack">
       <div className="card">
         <div className="card-head"><h2>Black mark thresholds</h2></div>
+        <div className="card-pad small muted" style={{ paddingBottom: 0 }}>
+          These flag people for the monthly review conversation. They do not change attendance, leave or pay: no rule turns
+          black marks into absence.
+        </div>
         <div className="card-pad grid-2">
           <Field label="Missed deadlines before a member is flagged" hint="Your rule of thumb is 3">
             <input type="number" min="1" className="input" value={form.blackmarks.missedDeadlineLimit} onChange={set('blackmarks', 'missedDeadlineLimit')} disabled={disabled} />

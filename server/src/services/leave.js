@@ -43,17 +43,23 @@ export const EMAIL_NOTE = 'TaskFlow does not send email — no mail service is c
 const MAX_BACK_DAYS = 31;
 const MAX_AHEAD_DAYS = 400;
 
-/** The scheduled working days a request covers, with how much of each. */
-export async function leaveDays(userId, departmentId, start, end, dayPart) {
+/**
+ * The scheduled working days a request covers, with how much of each. A
+ * preview can pass the holiday list as it would be after a change.
+ */
+export async function leaveDays(userId, departmentId, start, end, dayPart, { holidays: holidayList = null } = {}) {
   const profile = await getProfile(userId);
   const timeline = await policyTimeline();
-  const holidays = await holidaysBetween(start, end);
+  const holidays = holidayList ?? await holidaysBetween(start, end);
   const out = [];
   for (let date = start; date <= end; date = addDays(date, 1)) {
     const { config } = policyOn(timeline, date);
-    const schedule = scheduleOn(date, { config, profile, holidays, departmentId, ignoreStart: true });
+    const schedule = scheduleOn(date, { config, profile, holidays, departmentId, userId, ignoreStart: true });
     if (schedule.state !== 'WORKDAY') continue;
-    out.push({ date, portion: dayPart === 'FULL' ? 1 : 0.5 });
+    // a half-day holiday: only the working half can be leave
+    let portion = dayPart === 'FULL' ? 1 : 0.5;
+    if (schedule.holidayHalf) portion = dayPart === 'FULL' ? 0.5 : dayPart === schedule.holidayHalf ? 0 : 0.5;
+    if (portion > 0) out.push({ date, portion });
   }
   return { days: out, profile };
 }

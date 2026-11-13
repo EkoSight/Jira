@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
 import { BarList } from '../components/charts.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import { formatDate, monthKey, monthLabel } from '../lib/format.js';
+import { CORRECTION_LABEL, CORRECTION_STATUS, SHIFT_LABEL, shortDate } from '../lib/holidays.js';
 
 const TRIGGER_LABEL = {
   deadline_missed: 'Deadline missed',
@@ -85,6 +87,102 @@ function ManualMarkDialog({ onClose, onSaved }) {
   );
 }
 
+/** Why a deadline moved: "Sun 11 Oct weekly day off, Mon 12 Oct holiday (Diwali)". */
+const shiftWords = (list) => (list || []).map((s) => `${shortDate(s.date)} ${SHIFT_LABEL[s.code] || s.code}${s.name ? ` (${s.name})` : ''}`).join(', ');
+
+/**
+ * Where a mark came from: the task and rule, the evidence kept when it was
+ * recorded, and everything done to it since — waives, restores and holiday
+ * corrections — with who and why.
+ */
+function MarkSourceDialog({ markId, onClose, onOpenTask }) {
+  const toast = useToast();
+  const [data, setData] = useState(null);
+  useEffect(() => { api.blackMarkHistory(markId).then(setData).catch(toast.error); }, [markId, toast]);
+  const ev = data?.evidence;
+  return (
+    <Modal title="Where this mark came from" onClose={onClose} size="lg" footer={<button type="button" className="btn" onClick={onClose}>Close</button>}>
+      {!data ? <Spinner /> : (
+        <div className="stack">
+          <div className="hol-summary">
+            <div className="row wrap" style={{ gap: 6 }}>
+              {data.mark.status === 'waived' ? <Badge>Waived</Badge> : <Badge tone="critical">Active</Badge>}
+              <strong>{data.mark.full_name}</strong>
+              <span className="tnum">{Number(data.mark.points)} pt</span>
+            </div>
+            <div>{data.mark.reason}</div>
+            <div className="small muted">Recorded {formatDate(data.mark.occurred_at, { withTime: true })} · {data.mark.source === 'manual' ? `raised by ${data.mark.created_by_name || 'someone'}` : 'by the automatic scan'}</div>
+          </div>
+          <dl className="bm-evidence small">
+            {data.mark.task_ref && (
+              <>
+                <dt>Source event</dt>
+                <dd>
+                  <button type="button" className="btn btn-ghost btn-sm" style={{ padding: 0, height: 'auto' }} onClick={() => onOpenTask(data.mark.task_id)}>
+                    <span className="task-ref">{data.mark.task_ref}</span>
+                  </button> {data.mark.task_title}
+                </dd>
+              </>
+            )}
+            <dt>Rule</dt>
+            <dd>
+              {ev?.rule ? `${ev.rule.name} — ${ev.rule.points} pt, ${ev.rule.grace_hours}h grace, as it stood when recorded` : data.mark.rule_name || (data.mark.source === 'manual' ? 'Raised manually' : '—')}
+              {ev?.rule && data.mark.rule_points_now !== null && Number(data.mark.rule_points_now) !== Number(ev.rule.points) && (
+                <span className="muted"> (now {Number(data.mark.rule_points_now)} pt)</span>
+              )}
+            </dd>
+            {ev?.due && (
+              <>
+                <dt>Deadline</dt>
+                <dd>{formatDate(ev.due, { withTime: true })}</dd>
+                <dt>In force when recorded</dt>
+                <dd>
+                  {formatDate(ev.effective_due, { withTime: true })}
+                  {ev.shifted_past?.length ? <span className="muted"> — moved past {shiftWords(ev.shifted_past)}</span> : <span className="muted"> — a working time for them</span>}
+                </dd>
+                <dt>Judged against</dt>
+                <dd>Attendance policy version {ev.attendance_policy_id ?? '—'}: {ev.calendar}{ev.counting ? `; cycles count ${ev.counting}` : ''}</dd>
+              </>
+            )}
+            {!ev && <><dt>Evidence</dt><dd className="muted">Recorded before evidence was kept with each mark.</dd></>}
+            {ev?.recorded_by_correction && <><dt>Recorded by</dt><dd>Holiday correction #{ev.recorded_by_correction} (request #{ev.holiday_request_id}), reviewed by a person</dd></>}
+          </dl>
+
+          <section className="stack-sm">
+            <h3>Corrections and decisions</h3>
+            {data.corrections.length === 0 && data.audit.length === 0 && <div className="small muted">None.</div>}
+            {data.corrections.map((c) => (
+              <div key={`c${c.id}`} className="hol-row">
+                <div className="grow">
+                  <div className="row wrap" style={{ gap: 6 }}>
+                    <Badge tone={CORRECTION_STATUS[c.status].tone}>{CORRECTION_STATUS[c.status].label}</Badge>
+                    <strong>{CORRECTION_LABEL[c.kind]}</strong>
+                    <span className="small muted">holiday request #{c.request_id}{c.holiday_name ? ` — ${c.holiday_name}` : ''}</span>
+                  </div>
+                  <div className="small">{c.summary}</div>
+                  {c.decided_by_name && <div className="small muted">{CORRECTION_STATUS[c.status].label} by {c.decided_by_name} {formatDate(c.decided_at)}{c.decision_note ? ` — ${c.decision_note}` : ''}</div>}
+                  {c.reversed_at && <div className="small muted">Reversed by {c.reversed_by_name} {formatDate(c.reversed_at)} — {c.reverse_reason}</div>}
+                </div>
+                <Link className="btn btn-sm btn-ghost" to="/settings?tab=attendance&section=holidays" onClick={onClose}>Open holidays</Link>
+              </div>
+            ))}
+            {data.audit.length > 0 && (
+              <ul className="small hol-audit">
+                {data.audit.map((a) => (
+                  <li key={`a${a.id}`}>
+                    {formatDate(a.created_at, { withTime: true })} — {a.actor_name || 'TaskFlow'} {a.action.toLowerCase()} it{a.reason ? `: “${a.reason}”` : ''}
+                    {a.action === 'RESTORED' && a.before?.waived_reason ? ` (it had been waived: “${a.before.waived_reason}”)` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 export default function BlackMarks() {
   const { can } = useAuth();
   const { departments } = useRefData();
@@ -99,6 +197,8 @@ export default function BlackMarks() {
   const [manual, setManual] = useState(false);
   const [openTask, setOpenTask] = useState(null);
   const [scanning, setScanning] = useState(false);
+  const [source, setSource] = useState(null);
+  const [recheck, setRecheck] = useState(null);
 
   const load = () => {
     setLoading(true);
@@ -115,6 +215,9 @@ export default function BlackMarks() {
   };
 
   useEffect(load, [month, departmentId]);
+  useEffect(() => {
+    if (tab === 'recheck' && recheck === null) api.blackMarkRecheck().then((d) => setRecheck(d.marks)).catch(toast.error);
+  }, [tab, recheck, toast]);
 
   const runScan = async () => {
     setScanning(true);
@@ -231,6 +334,7 @@ export default function BlackMarks() {
         {[
           ['review', 'Monthly review'],
           ['marks', `All marks (${marks.length})`],
+          ...(can('blackmark.waive') ? [['recheck', 'Check against the calendar']] : []),
         ].map(([key, label]) => (
           <button key={key} type="button" className={`tab ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
             {label}
@@ -317,6 +421,7 @@ export default function BlackMarks() {
               <hr className="divider" style={{ margin: '14px 0' }} />
               <div className="small muted stack-sm">
                 <div>Warning at {review.thresholds.warningPoints} points · action needed at {review.thresholds.criticalPoints} points.</div>
+                <div>{review.consequences || 'Flags for review only.'}</div>
                 <div>Adjust these, and the rules that generate marks, under Settings → Black mark rules.</div>
               </div>
             </div>
@@ -373,7 +478,8 @@ export default function BlackMarks() {
                         <Badge tone="critical">Active</Badge>
                       )}
                     </td>
-                    <td>
+                    <td className="nowrap">
+                      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSource(mark.id)}>Source</button>
                       {can('blackmark.waive') && (
                         mark.status === 'active' ? (
                           <button type="button" className="btn btn-sm" onClick={() => waive(mark)}>Waive</button>
@@ -382,8 +488,12 @@ export default function BlackMarks() {
                             type="button"
                             className="btn btn-sm btn-ghost"
                             onClick={async () => {
-                              await api.restoreBlackMark(mark.id);
-                              load();
+                              try {
+                                await api.restoreBlackMark(mark.id);
+                                load();
+                              } catch (err) {
+                                toast.error(err);
+                              }
                             }}
                           >
                             Restore
@@ -399,6 +509,46 @@ export default function BlackMarks() {
         </div>
       )}
 
+      {tab === 'recheck' && (
+        <section className="card">
+          <div className="card-head"><h2>Marks the calendar no longer supports</h2></div>
+          <div className="card-pad small muted" style={{ paddingTop: 0 }}>
+            Active marks whose deadline, judged against today’s holidays, approved leave and weekly days off, was not missed. This often
+            means leave or a holiday was approved after the mark. Nothing changes here: open the source, then waive it if that is right.
+          </div>
+          {recheck === null ? <Spinner /> : recheck.length === 0 ? (
+            <EmptyState title="Nothing to recheck">Every active mark still stands against the calendar.</EmptyState>
+          ) : (
+            <div className="table-wrap">
+              <table className="data">
+                <thead><tr><th>Member</th><th>Task</th><th>Deadline</th><th>In force now</th><th /></tr></thead>
+                <tbody>
+                  {recheck.map((m) => (
+                    <tr key={m.mark_id}>
+                      <td>{m.full_name}</td>
+                      <td><span className="task-ref">{m.task_ref}</span> <span className="small">{m.rule_name}</span></td>
+                      <td className="small nowrap">{formatDate(m.due, { withTime: true })}</td>
+                      <td className="small">{formatDate(m.effective_due, { withTime: true })}<div className="muted">moved past {shiftWords(m.because)}</div></td>
+                      <td className="nowrap">
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSource(m.mark_id)}>Source</button>
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={() => waive({ id: m.mark_id, full_name: m.full_name }).then(() => setRecheck(null))}
+                        >
+                          Waive
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {source && <MarkSourceDialog markId={source} onClose={() => setSource(null)} onOpenTask={(id) => { setSource(null); setOpenTask(id); }} />}
       {manual && <ManualMarkDialog onClose={() => setManual(false)} onSaved={load} />}
       {openTask && <TaskDialog taskId={openTask} onClose={() => setOpenTask(null)} onSaved={load} />}
     </div>

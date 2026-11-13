@@ -196,8 +196,45 @@ the policy timezone (default `Asia/Kolkata`). Durations are integer seconds.
 | GET | `/attendance/policy` | signed in (payroll part only for `attendance.policy`) |
 | POST / PATCH | `/attendance/policy`, `/attendance/policy/:id` | `attendance.policy` — new version from a date / edit an unused version (clears acceptance) |
 | POST | `/attendance/policy/:id/accept` | `attendance.policy` |
-| GET/POST/DELETE | `/attendance/holidays` | read: signed in; change: `attendance.policy` |
+| GET | `/attendance/holidays?year=` | signed in — the holidays in force (approved) |
+| GET | `/attendance/holidays/manage?year=` or `?from=&to=` | `attendance.policy` or `holiday.approve` — every entry whatever its status, with requests and open corrections |
+| GET | `/attendance/holidays/:id/history` | as above — the requests that made and ended it, and its audit trail |
+| POST | `/attendance/holiday-requests` | `attendance.policy` — propose a change (below). Nothing is in force until approved |
+| GET | `/attendance/holiday-requests/:id` | `attendance.policy` or `holiday.approve` — the request, its impact (live while waiting; as the approver saw it once decided), corrections, audit |
+| POST | `/attendance/holiday-requests/:id/approve` | `holiday.approve`, not one's own (an `admin` may, with `{ note }`) — `{ note? }` |
+| POST | `/attendance/holiday-requests/:id/reject` | `holiday.approve` — `{ note }` |
+| POST | `/attendance/holiday-requests/:id/withdraw` | whoever proposed it, or `holiday.approve` |
+| GET | `/attendance/holiday-corrections?request_id=&status=` | a reviewer: `holiday.approve`, `attendance.policy`, `blackmark.waive`, `blackmark.create`, `standup.review` or `leave.approve` |
+| POST | `/attendance/holiday-corrections/:id/apply` · `/reject` · `/reverse` | the permission for the record it touches (below), never about oneself — `{ note? }` / `{ note }` / `{ reason }` |
+| POST / DELETE | `/attendance/holidays`, `/attendance/holidays/:id` | kept for older screens: they *propose* an addition or a cancellation (202), they do not change the calendar |
 | GET / PUT | `/attendance/profiles`, `/attendance/profiles/:userId` | `attendance.policy` (read also `attendance.all`, `payroll.view`) |
+
+**Holiday changes.** A request is one of:
+
+```json
+{ "action": "ADD", "name": "Diwali", "kind": "HOLIDAY", "start_date": "2026-11-09", "end_date": "2026-11-10",
+  "coverage": "FULL", "scope": "COMPANY", "reason": "Announced by the owner" }
+{ "action": "AMEND", "target_ids": [41], "coverage": "SECOND_HALF", "reason": "Only the afternoon" }
+{ "action": "CANCEL", "target_ids": [41, 42], "reason": "Entered for the wrong team" }
+```
+
+`kind` is `HOLIDAY` or `CLOSURE`; `coverage` is `FULL`, `FIRST_HALF` (morning
+off) or `SECOND_HALF` (afternoon off), split at the policy's `halfDaySplit`;
+`scope` is `COMPANY`, `DEPARTMENT` (+ `department_id`) or `PERSON` (+ `user_id`).
+At most 62 days per change; dates in an approved or locked payroll month are
+refused. An amendment ends its targets and adds the new entries; fields left
+out carry over. Nothing is deleted: a cancelled entry keeps who cancelled it,
+when and why.
+
+**Corrections** an approved change leaves for review, with the permission each
+needs: `MARK_WAIVE`, `MARK_RESTORE` (`blackmark.waive`), `MARK_CREATE`
+(`blackmark.create`), `STANDUP_EXCUSE`, `STANDUP_UNEXCUSE` (`standup.review`),
+`LEAVE_DAY_RELEASE`, `LEAVE_DAY_RESTORE` (`leave.approve`, for a person the
+reviewer is authorised for). Applying records the record's state before and
+after; a record that changed meanwhile makes the correction `STALE` instead of
+being overwritten; reversing puts the record back exactly, or is refused if it
+has changed since. Proposals that relied on an entry a later change ends become
+`STALE`.
 | GET / PUT | `/attendance/team-access`, `/attendance/team-access/:managerId` | `attendance.policy` |
 | GET | `/attendance/audit?user_id=&entity_type=` | `attendance.all`, `payroll.view` or `attendance.policy` |
 
@@ -646,14 +683,29 @@ as blocked no matter what you call it.
 |---|---|---|
 | GET | `/blackmarks` | `blackmark.view` (own record only without `report.view` / `blackmark.waive`) |
 | POST | `/blackmarks` | `blackmark.create` |
-| POST | `/blackmarks/:id/waive` | `blackmark.waive` |
-| POST | `/blackmarks/:id/restore` | `blackmark.waive` |
+| POST | `/blackmarks/:id/waive` | `blackmark.waive` — written to the audit trail with the state before and after |
+| POST | `/blackmarks/:id/restore` | `blackmark.waive` — likewise, so the waiver's reason and author are kept |
+| GET | `/blackmarks/:id/history` | `blackmark.view` (own marks only without `blackmark.waive` / `report.view`) — the mark, its evidence, holiday corrections and audit trail |
+| GET | `/blackmarks/recheck` | `blackmark.waive` — active marks the calendar in force no longer supports (leave or a holiday approved later); changes nothing |
 | GET | `/blackmarks/review` | `blackmark.view` |
 | GET | `/blackmarks/rules` | `blackmark.view` |
 | POST | `/blackmarks/rules` | `blackmark.rules` |
 | PATCH | `/blackmarks/rules/:id` | `blackmark.rules` |
 | DELETE | `/blackmarks/rules/:id` | `blackmark.rules` |
 | POST | `/blackmarks/scan` | `blackmark.rules` |
+
+**Deadlines and days off.** The scan judges each deadline against the
+assignee's own calendar: weekly days (their override or the company's),
+approved holidays covering them (company, department or personal; a half day
+covers its half) and approved leave. A deadline that falls while they are not
+working is in force from the same time on their next working day; an
+escalation counts their working days. The task's own due date never changes.
+A holiday cancelled after its day had begun still protects deadlines from
+*automatic* marks; any mark for them comes through a reviewed `MARK_CREATE`.
+Each new mark stores `evidence`: the rule as it stood, the deadline and the
+deadline in force with what it moved past, and the attendance policy version.
+Months (`period_month`, the monthly review) run midnight to midnight in the
+policy timezone. Marks never change attendance, leave or pay.
 
 ### Rule shape
 
