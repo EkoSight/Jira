@@ -37,6 +37,8 @@ import salesDealRoutes from './routes/salesDeals.js';
 import salesOpsRoutes from './routes/salesOps.js';
 import salesCallingRoutes from './routes/salesCalling.js';
 import salesWorkRoutes from './routes/salesWork.js';
+import photoRoutes from './routes/photos.js';
+import { brandingAdminRouter, publicBrandingRouter } from './routes/branding.js';
 import { requireMarketingEnabled } from './middleware/marketing.js';
 import { requireOkrEnabled } from './middleware/okr.js';
 import { requireCrmEnabled } from './middleware/crm.js';
@@ -60,6 +62,8 @@ export function createTaskFlowRouter() {
   // preference pages, signup forms, images, delivery reports. Always on, so a
   // link in an email already sent keeps working.
   router.use('/m', marketingPublicRoutes);
+  // the name, colours and logo: the sign-in page needs them before anyone signs in
+  router.use('/branding', publicBrandingRouter);
   // the sales CRM's lead capture and provider webhooks, reached without signing in
   router.use('/s', requireCrmEnabled, salesPublicRoutes);
 
@@ -67,6 +71,8 @@ export function createTaskFlowRouter() {
   router.use(authenticate, touchActivity);
 
   router.use('/users', userRoutes);
+  router.use('/photos', photoRoutes);
+  router.use('/branding', brandingAdminRouter);
   router.use('/departments', departmentRoutes);
   router.use('/statuses', statusRoutes);
   router.use('/tasks', requireAttendance, taskRoutes);

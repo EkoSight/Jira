@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { createTaskFlowRouter } from './router.js';
 import { errorHandler, notFoundHandler } from './middleware/error.js';
+import { manifest } from './services/branding.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.resolve(here, '../../client/dist');
@@ -34,6 +35,22 @@ export function createApp() {
   });
 
   app.use(config.apiPrefix, corsMiddleware, createTaskFlowRouter());
+
+  // the installed app's name, colour and icons follow Settings → Branding
+  app.get('/manifest.webmanifest', async (req, res, next) => {
+    try {
+      res.set({ 'Content-Type': 'application/manifest+json', 'Cache-Control': 'no-cache' });
+      res.send(JSON.stringify(await manifest(config.apiPrefix)));
+    } catch (err) { next(err); }
+  });
+  // the face finder's engine, sent compressed (it is large, and phones are often on mobile data)
+  app.get(/^\/vendor\/mediapipe\/.+\.wasm$/, (req, res, next) => {
+    const file = path.join(clientDist, req.path);
+    const accepts = /\bgzip\b/.test(req.headers['accept-encoding'] || '');
+    if (!file.startsWith(clientDist) || !accepts || !fs.existsSync(`${file}.gz`)) return next();
+    res.set({ 'Content-Type': 'application/wasm', 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding', 'Cache-Control': 'public, max-age=31536000, immutable' });
+    return fs.createReadStream(`${file}.gz`).pipe(res);
+  });
 
   // in production the built PWA is served from the same origin as the API
   if (fs.existsSync(clientDist)) {

@@ -334,6 +334,17 @@ export const DEFAULT_SETTINGS = {
     spaceCheck: null,
   },
 
+  // The organisation's name, colours and logos (Settings → Branding). Colours
+  // are checked by shared/brandTheme.js; assets null = the bundled Soil Doctor ones.
+  branding: {
+    version: 1,
+    appName: 'TaskFlow',
+    byline: 'by ekosight',
+    primary: '#073F2A',
+    accent: '#8B5E3B',
+    assets: { mark: null, markDark: null, wordmark: null, wordmarkDark: null },
+  },
+
   // Sales CRM follow-ups in Google Chat: reminders and the daily summary.
   // Both off until an administrator has previewed, tested and switched them on.
   crmFollowUps: {

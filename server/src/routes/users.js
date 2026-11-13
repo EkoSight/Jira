@@ -56,7 +56,7 @@ const router = Router();
 
 const SELECT_USER = `
   SELECT u.id, u.full_name, u.email, u.role, u.department_id, u.job_title, u.phone,
-         u.avatar_color, u.weekly_capacity_hours, u.max_concurrent_tasks,
+         u.avatar_color, u.photo_version, u.weekly_capacity_hours, u.max_concurrent_tasks,
          u.extra_permissions, u.revoked_permissions, u.is_active, u.must_change_password,
          u.external_user_id, u.last_login_at, u.last_activity_at, u.created_at,
          d.name AS department_name, d.color AS department_color
