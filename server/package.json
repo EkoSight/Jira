@@ -16,6 +16,8 @@
     "chat:check": "node src/db/chatCheck.js",
     "leave:reconcile": "node src/db/leaveReconcile.js",
     "access:super-admin": "node src/db/superAdmin.js",
+    "crm:call-review": "node src/db/callReview.js",
+    "crm:owner-review": "node src/db/ownerReview.js",
     "test": "node --env-file=.env.test --test --test-concurrency=1 \"tests/**/*.test.js\""
   },
   "dependencies": {

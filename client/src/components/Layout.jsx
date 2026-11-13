@@ -100,6 +100,13 @@ export default function Layout({ children }) {
   }, [location.search]);
   const primed = useRef(false);
 
+  // a follow-up reminder opens its lead, and tells the server it was seen
+  const openFollowUpReminder = (n) => {
+    if (n.type !== 'crm_reminder' || !n.crm_lead_id) return false;
+    if (n.task_id) api.sales.post(`/followups/${n.task_id}/acknowledge`).catch(() => {});
+    navigate(`/sales/leads/${n.crm_lead_id}`);
+    return true;
+  };
   const loadNotifications = useCallback(
     () =>
       api
@@ -115,6 +122,7 @@ export default function Layout({ children }) {
           }
           announce(data.notifications, {
             onOpen: (notification) => {
+              if (openFollowUpReminder(notification)) return;
               if (notification.task_id) setOpenTaskId(notification.task_id);
               else if (notification.objective_id) navigate(`/goals/${notification.objective_id}`);
               else if (notification.account_id) navigate(`/accounts/${notification.account_id}`);
@@ -322,7 +330,9 @@ export default function Layout({ children }) {
                   cursor: n.task_id || n.objective_id || n.account_id || n.crm_lead_id || noticeRoute(n.type) ? 'pointer' : 'default',
                 }}
                 onClick={() => {
-                  if (n.task_id) {
+                  if (openFollowUpReminder(n)) {
+                    setShowNotifications(false);
+                  } else if (n.task_id) {
                     setShowNotifications(false);
                     setOpenTaskId(n.task_id);
                   } else if (n.crm_lead_id) {

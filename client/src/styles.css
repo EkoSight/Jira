@@ -16,7 +16,8 @@
 
   --ink: #0b0b0b;
   --ink-2: #52514e;
-  --ink-muted: #797874;
+  /* at least 4.5:1 on white, the page ground and the brand wash (was #797874, 4.0–4.4:1) */
+  --ink-muted: #6c6b67;
 
   --brand: #2a78d6;
   --brand-ink: #1c5cab;
@@ -4150,8 +4151,9 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .reminder-list { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 6px; }
 .calls-table td { vertical-align: top; }
 .calls-note { max-width: 360px; white-space: pre-wrap; }
-.calls-table tr.is-voided td, .sales-timeline-item.is-voided { opacity: 0.62; }
-.calls-table tr.is-voided td:first-child { text-decoration: line-through; }
+.calls-table tr.is-voided td { background: var(--plane); }
+.calls-table tr.is-voided td:first-child .btn-link { text-decoration: line-through; }
+.sales-timeline-item.is-voided { border-left: 3px solid var(--warning); padding-left: 8px; }
 .call-edits { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .call-edit-diff { margin-top: 2px; overflow-wrap: anywhere; }
 .call-edit-diff del { color: var(--critical-text); background: var(--critical-wash); text-decoration-thickness: 1px; padding: 0 3px; border-radius: 3px; }
@@ -4171,6 +4173,7 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .queue-group:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .queue-group.is-active { background: var(--brand-wash); border-color: var(--brand); border-left-color: var(--tone); }
 .queue-group.is-empty .queue-group-count { color: var(--ink-muted); }
+.queue-group.is-active .queue-group-label { color: var(--ink); }
 .queue-group-count { font-size: 20px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
 .queue-group-label { font-size: 12px; color: var(--ink-muted); }
 .queue-list { list-style: none; margin: 0; padding: 0; display: grid; }
@@ -4183,6 +4186,14 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .queue-row { flex-direction: column; }
   .queue-actions { flex-direction: row; flex-wrap: wrap; width: 100%; }
   .queue-actions .btn { flex: 1 1 auto; justify-content: center; }
-  .queue-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .queue-groups { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .queue-group { padding: 6px 8px; border-left-width: 3px; }
+  .queue-group-count { font-size: 17px; }
+  .queue-group-label { font-size: 11.5px; line-height: 1.25; }
   .location-fields { padding: 10px; }
 }
+.funnel-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; }
+.funnel-step { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.funnel-value { font-size: 20px; font-weight: 700; color: var(--ink); }
+.funnel-label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.funnel-note { font-size: 11.5px; color: var(--ink-muted); }

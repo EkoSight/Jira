@@ -453,6 +453,74 @@ export async function sendScheduledReports(now = new Date()) {
 
 const BREAKDOWNS = { state: 'l.state', category: 'l.category', source: 'COALESCE(os.name, cs_src.name)', owner: 'u.full_name' };
 
+const CONVERSATION = `c.status = 'COMPLETED' AND COALESCE(c.outcome, '') NOT IN ('NO_ANSWER', 'BUSY', 'WRONG_NUMBER', 'LEFT_MESSAGE')`;
+
+/**
+ * From dialling to money, each step counted on its own evidence for the period
+ * (by when it happened, not by when the lead came in), never inferred from the
+ * step before:
+ *   call attempts      outbound calls recorded (repeats a manager marked are left out)
+ *   leads called       distinct leads with at least one of those calls
+ *   conversations      calls that reached someone (answered; not no answer, busy,
+ *                      wrong number or a left message)
+ *   leads spoken to    distinct leads with a conversation
+ *   qualified          distinct leads marked qualified, or converted to a deal
+ *   orders             commercial deals won
+ *   money received     payments recorded on commercial deals, not void, less refunds
+ * Attempts that came in with an import have no date or call record; they are
+ * shown apart and never added to the period's figures.
+ */
+export async function callingFunnel(f, scope) {
+  const b = builder(f, scope, 'lead');
+  const [calls] = (await query(
+    `SELECT COUNT(*) FILTER (WHERE c.direction = 'OUTBOUND' AND c.voided_at IS NULL)::int AS attempts,
+            COUNT(DISTINCT c.lead_id) FILTER (WHERE c.direction = 'OUTBOUND' AND c.voided_at IS NULL)::int AS leads_called,
+            COUNT(*) FILTER (WHERE c.voided_at IS NULL AND ${CONVERSATION})::int AS conversations,
+            COUNT(DISTINCT c.lead_id) FILTER (WHERE c.voided_at IS NULL AND ${CONVERSATION})::int AS leads_spoken,
+            COUNT(*) FILTER (WHERE c.direction = 'INBOUND' AND c.voided_at IS NULL)::int AS inbound,
+            COUNT(*) FILTER (WHERE c.voided_at IS NOT NULL)::int AS repeats_marked
+       FROM crm_calls c JOIN crm_leads l ON l.id = c.lead_id
+      WHERE ${b.lead} AND ${b.inRange('c.started_at')}`,
+    b.params,
+  )).rows;
+  const [qualified] = (await query(
+    `SELECT COUNT(DISTINCT a.lead_id)::int AS n FROM crm_lead_activities a JOIN crm_leads l ON l.id = a.lead_id
+      WHERE ${b.lead} AND ${b.inRange('a.occurred_at')}
+        AND ((a.type = 'STATUS' AND a.subject = 'Status: qualified') OR (a.type = 'CALL_STATUS' AND a.meta->>'lifecycle' = 'QUALIFIED') OR a.type = 'CONVERSION')`,
+    b.params,
+  )).rows;
+  const [imported] = (await query(
+    `SELECT COALESCE(SUM(GREATEST(l.call_attempts - COALESCE(x.n, 0), 0)), 0)::int AS attempts
+       FROM crm_leads l LEFT JOIN (SELECT lead_id, COUNT(*) AS n FROM crm_calls WHERE voided_at IS NULL AND direction = 'OUTBOUND' GROUP BY lead_id) x ON x.lead_id = l.id
+      WHERE ${b.lead}`,
+    b.params,
+  )).rows;
+  const d = builder(f, scope, 'deal');
+  const [money] = (await query(
+    `SELECT COUNT(*) FILTER (WHERE o.status = 'WON' AND ${d.inRange('o.closed_at')} AND COALESCE(p.key, 'b2b') <> 'csr')::int AS orders,
+            (SELECT COALESCE(SUM(CASE WHEN pm.kind = 'REFUND' THEN -pm.amount ELSE pm.amount END), 0) FROM opportunity_payments pm JOIN (${DEAL_FROM}) ON o.id = pm.opportunity_id
+              WHERE ${d.deal} AND pm.is_void = FALSE AND pm.currency = $4 AND pm.received_on BETWEEN $1::date AND $2::date AND COALESCE(p.key, 'b2b') <> 'csr') AS received
+       FROM ${DEAL_FROM} WHERE ${d.deal}`,
+    d.params,
+  )).rows;
+  return {
+    currency: f.currency,
+    steps: [
+      { key: 'attempts', label: 'Call attempts', value: calls.attempts, note: 'Outbound calls recorded in the period' },
+      { key: 'leads_called', label: 'Leads called', value: calls.leads_called, note: 'Different leads called at least once' },
+      { key: 'conversations', label: 'Conversations', value: calls.conversations, note: 'Calls that reached someone' },
+      { key: 'leads_spoken', label: 'Leads spoken to', value: calls.leads_spoken, note: 'Different leads with a conversation' },
+      { key: 'qualified', label: 'Qualified', value: qualified.n, note: 'Leads marked qualified or converted to a deal' },
+      { key: 'orders', label: 'Orders', value: money.orders, note: 'Commercial deals won' },
+      { key: 'received', label: 'Money received', value: Number(money.received) || 0, money: true, note: 'Payments recorded as received, less refunds' },
+    ],
+    inbound: calls.inbound,
+    repeats_marked: calls.repeats_marked,
+    imported_attempts: imported.attempts,
+    note: 'Each figure is counted from its own records for the period, not worked out from the one before. Attempts that came in with imports have no date or call record, so they are shown on their own and not added here.',
+  };
+}
+
 /**
  * How the calling is going, for the leads captured in the period (a cohort, as
  * with conversion): where they stand by calling status; per person, the calls
@@ -479,7 +547,7 @@ export async function callingReport(input, scope) {
             COUNT(c.id) FILTER (WHERE c.status = 'COMPLETED' AND COALESCE(c.outcome, '') NOT IN ('NO_ANSWER', 'BUSY', 'WRONG_NUMBER'))::int AS connected,
             COUNT(DISTINCT c.lead_id)::int AS leads_called, COALESCE(SUM(c.duration_sec), 0)::int AS talk_seconds
        FROM crm_calls c JOIN crm_leads l ON l.id = c.lead_id JOIN users u ON u.id = c.agent_user_id
-      WHERE ${b.lead} AND ${b.inRange('c.started_at')}
+      WHERE ${b.lead} AND ${b.inRange('c.started_at')} AND c.voided_at IS NULL
       GROUP BY u.id, u.full_name ORDER BY calls DESC, u.full_name`,
     b.params,
   );
@@ -511,7 +579,8 @@ export async function callingReport(input, scope) {
   return {
     filters: f,
     by,
-    note: 'Leads captured in the period, by where they stand now; calls are those logged in the period. A call is "connected" when it was answered.',
+    funnel: await callingFunnel(f, scope),
+    note: 'Leads captured in the period, by where they stand now; calls are those logged in the period. A call is "connected" when it was answered. Calls a manager marked as accidental repeats are not counted.',
     statuses,
     people: people.map((p) => ({ ...p, won: outcome.get(p.id)?.won ?? 0, closed_lost: outcome.get(p.id)?.closed_lost ?? 0, connect_rate: ratio(p.connected, p.calls) })),
     breakdown,

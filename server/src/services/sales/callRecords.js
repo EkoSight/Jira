@@ -202,7 +202,7 @@ const fingerprint = (text) => (text ? crypto.createHash('sha256').update(String(
  *            DIFFERENT_NOTES (a correction saved as a new call, most likely),
  *            NEEDS_A_PERSON (anything else)
  */
-export async function callReview({ leadIds = null, since = null, windowSeconds = 120 } = {}, runner = { query }) {
+export async function callReview({ leadIds = null, since = null, windowSeconds = 120, legacy = false } = {}, runner = { query }) {
   if (!leadIds?.length && !since) throw badRequest('Name the leads, or a date to start from');
   const params = [];
   const push = (v) => { params.push(v); return `$${params.length}`; };
@@ -210,7 +210,8 @@ export async function callReview({ leadIds = null, since = null, windowSeconds =
   const sinceFilter = since ? push(since) : null;
   const { rows: calls } = await runner.query(
     `SELECT c.id, c.lead_id, c.agent_user_id, u.full_name AS agent_name, c.direction, c.status, c.outcome, c.duration_sec, c.notes,
-            c.started_at, c.created_at, c.provider, c.logged_manually, c.recorded_via, c.request_id, c.follow_up_task_id, c.voided_at, c.edit_count
+            c.started_at, c.created_at, c.provider, c.logged_manually, c.follow_up_task_id,
+            ${legacy ? "NULL::text AS recorded_via, NULL::text AS request_id, NULL::timestamptz AS voided_at, 0 AS edit_count" : 'c.recorded_via, c.request_id, c.voided_at, c.edit_count'}
        FROM crm_calls c LEFT JOIN users u ON u.id = c.agent_user_id
       WHERE c.lead_id IS NOT NULL AND ${leadFilter.replace('lead_id', 'c.lead_id')} ${sinceFilter ? `AND c.created_at >= ${sinceFilter}::date` : ''}
       ORDER BY c.lead_id, c.created_at, c.id`,

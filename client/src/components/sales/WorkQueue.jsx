@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth } from '../../state/AppState.jsx';
 import { Badge, EmptyState, Icon, Modal, Spinner } from '../ui.jsx';
-import { FOLLOWUP_KIND, phoneLabel, when } from '../../lib/sales.js';
-import { NOT_PROVIDED, exactTime } from '../../lib/crmWork.js';
+import { FOLLOWUP_KIND, phoneLabel } from '../../lib/sales.js';
+import { NOT_PROVIDED, exactTime, indiaTime } from '../../lib/crmWork.js';
 import { CallStatusBadge, CategoryBadge, DueBadge, FollowUpActions, Stars } from './parts.jsx';
 import { CallStatusForm } from './Calling.jsx';
 
@@ -34,11 +34,11 @@ function QueueRow({ lead, onCall, onFollowUp }) {
         <div className="queue-facts small">
           <span><span className="muted">Owner</span> {lead.owner_name || <span className="warning-text">Nobody</span>}</span>
           <span><span className="muted">Place</span> {place || <span className="muted">{NOT_PROVIDED}</span>}</span>
-          <span><span className="muted">Last contact</span> {lead.last_contacted_at ? when(lead.last_contacted_at) : 'never'}{lead.call_attempts ? ` · ${lead.call_attempts} attempt${lead.call_attempts === 1 ? '' : 's'}` : ''}</span>
+          <span><span className="muted">Last contact</span> {lead.last_contacted_at ? indiaTime(lead.last_contacted_at) : 'never'}{lead.call_attempts ? ` · ${lead.call_attempts} attempt${lead.call_attempts === 1 ? '' : 's'}` : ''}</span>
           <span>
             <span className="muted">Next</span>{' '}
             {fu ? <>{FOLLOWUP_KIND[fu.kind] || 'Follow-up'}{fu.title ? `: ${fu.title}` : ''} · <span className="tnum">{exactTime(fu.due_date)}</span> <DueBadge dueAt={fu.due_date} /></>
-              : lead.retry_at ? <>Try again {when(lead.retry_at)} <DueBadge dueAt={lead.retry_at} /></> : <span className="warning-text">nothing planned</span>}
+              : lead.retry_at ? <>Try again {indiaTime(lead.retry_at)} <DueBadge dueAt={lead.retry_at} /></> : <span className="warning-text">nothing planned</span>}
           </span>
         </div>
         {lead.latest_note && (
@@ -105,7 +105,7 @@ export function WorkQueue({ meta, userId }) {
         {group && (
           <div className="row-between wrap small" style={{ gap: 6 }}>
             <span className="muted">{group.note}. {data.total} lead{data.total === 1 ? '' : 's'}.</span>
-            <Link className="btn-link" to={groupLink(group)}>Open these {data.total} in Leads</Link>
+            <Link className="btn-link" to={groupLink(group)}>{data.total === 1 ? 'Open it in Leads' : `Open these ${data.total} in Leads`}</Link>
           </div>
         )}
         {data.leads.length === 0 ? <div className="empty small">Nothing here right now.</div> : (

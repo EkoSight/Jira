@@ -145,6 +145,12 @@ export async function sendDueReminders(now = new Date(), { limit = 200 } = {}) {
         RETURNING r.*`,
       [now, limit],
     );
+    // in time order; when the worker was behind and several reminders of one
+    // follow-up are due together, only the latest is sent, so nobody gets a
+    // burst of out-of-date "in 30 min", "in 15 min" for the same thing
+    rows.sort((a, b) => new Date(a.remind_at) - new Date(b.remind_at) || a.id - b.id);
+    const latest = new Map();
+    for (const r of rows) latest.set(`${r.task_id}:${r.channel}`, r.id);
     for (const r of rows) {
       const { rows: tr } = await client.query(
         `SELECT t.id, t.title, t.followup_kind, t.assignee_id, t.due_date, t.completed_at, t.crm_cancel_reason, t.is_archived, t.snoozed_until,
@@ -153,6 +159,7 @@ export async function sendDueReminders(now = new Date(), { limit = 200 } = {}) {
         [r.task_id],
       );
       const t = tr[0];
+      const superseded = latest.get(`${r.task_id}:${r.channel}`) !== r.id;
       const finish = async (status, error = null, extra = {}) => {
         await client.query(
           `UPDATE crm_followup_reminders SET status = $2, last_error = $3, sent_at = CASE WHEN $2 = 'SENT' THEN $4::timestamptz ELSE sent_at END,
@@ -166,9 +173,12 @@ export async function sendDueReminders(now = new Date(), { limit = 200 } = {}) {
       if (t.assignee_id !== r.user_id || new Date(t.due_date).getTime() !== new Date(r.due_at).getTime()) { await finish('CANCELLED', 'Follow-up changed'); continue; }
       if (new Date(t.due_date).getTime() <= now.getTime()) { await finish('SKIPPED', 'The follow-up time had passed before it could be sent; it shows as due instead'); continue; }
       if (t.snoozed_until && new Date(t.snoozed_until) > now) { await finish('SKIPPED', 'Snoozed'); continue; }
+      if (superseded) { await finish('SKIPPED', 'A later reminder for the same follow-up was due at the same time; only that one was sent'); continue; }
       const about = t.lead_name || t.account_name || 'a follow-up';
       const link = t.crm_lead_id ? `/sales/leads/${t.crm_lead_id}` : t.account_id ? `/accounts/${t.account_id}` : '/sales?tab=day';
-      const title = `In ${r.offset_minutes} min: ${t.title}`;
+      // the minutes actually left, which is the planned offset unless the worker was behind
+      const left = Math.max(1, Math.round((new Date(t.due_date).getTime() - now.getTime()) / 60_000));
+      const title = `In ${left} min: ${t.title}`;
       const body = `${about}${t.lead_ref ? ` (${t.lead_ref})` : ''} · due ${timeWords(new Date(t.due_date), tz)} ${tz === 'Asia/Kolkata' ? 'IST' : tz}`
         + `${t.description ? ` · ${String(t.description).slice(0, 160)}` : ''}`;
       if (r.channel === 'APP') {
@@ -177,9 +187,17 @@ export async function sendDueReminders(now = new Date(), { limit = 200 } = {}) {
         continue;
       }
       // Google Chat: only when the organization allows it, and only to a linked direct message
-      if (!chatAllowed) { await finish('SKIPPED', 'Chat reminders are switched off for the organization (Settings → Sales CRM → Follow-ups)'); continue; }
-      const { rows: dm } = await client.query(`SELECT space_name FROM chat_spaces WHERE kind = 'DM' AND user_id = $1 AND active`, [r.user_id]);
+      if (!chatAllowed) { await finish('SKIPPED', 'Chat reminders are switched off for the organization (Sales CRM settings → Follow-up reminders & daily summary)'); continue; }
+      const { rows: dm } = await client.query(
+        `SELECT s.space_name, s.added_by_email, u.email FROM chat_spaces s JOIN users u ON u.id = s.user_id WHERE s.kind = 'DM' AND s.user_id = $1 AND s.active`,
+        [r.user_id],
+      );
       if (!dm[0]) { await finish('FAILED', 'Not linked to Google Chat yet: open TaskFlow in Chat and send it a message'); continue; }
+      // the same check as the daily summary: the Chat account must be this person's own login
+      if (dm[0].added_by_email && dm[0].added_by_email.toLowerCase() !== String(dm[0].email).toLowerCase()) {
+        await finish('FAILED', 'The Chat account linked to this person is not their login email; an administrator should check it');
+        continue;
+      }
       const key = `crm-reminder:${r.id}`;
       await client.query(
         `INSERT INTO chat_outbox (dedupe_key, space_name, user_id, kind, payload) VALUES ($1, $2, $3, 'CRM_REMINDER', $4)

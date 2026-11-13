@@ -3,6 +3,14 @@ import { api } from '../../api/client.js';
 import { useToast } from '../../state/AppState.jsx';
 import { Badge, Field, Modal, Spinner } from '../ui.jsx';
 import { CHANNEL_LABEL, REMINDER_OFFSETS, exactTime, reminderWords } from '../../lib/crmWork.js';
+import { notificationPermission, requestNotificationPermission } from '../../lib/alerts.js';
+
+const PERMISSION_WORDS = {
+  granted: 'This browser shows them as pop-ups while TaskFlow is open.',
+  denied: 'This browser blocks pop-ups from TaskFlow; reminders still wait under the bell. Allow notifications for this site in the browser’s settings to see pop-ups.',
+  default: 'This browser has not been asked about pop-ups yet; reminders wait under the bell until you allow them.',
+  unsupported: 'This browser cannot show pop-ups; reminders wait under the bell.',
+};
 
 const DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
 const toggle = (list, v) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v].sort((a, b) => a - b));
@@ -34,6 +42,7 @@ export function FollowUpReminderDefaults() {
   const [form, setForm] = useState(null);
   const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [permission, setPermission] = useState(() => notificationPermission());
   useEffect(() => {
     api.sales.get('/reminder-prefs').then((r) => { setData(r); setForm({ offsets: r.prefs.offsets || [], channels: r.prefs.channels || [] }); }).catch(() => setData(false));
   }, []);
@@ -71,6 +80,11 @@ export function FollowUpReminderDefaults() {
           })}
         </div>
         <div className="small">{form.offsets.length ? reminderWords(form.offsets, form.channels.filter((c) => c !== 'CHAT' || data.chat_allowed)) : 'No reminders before follow-ups'}</div>
+        <div className="small muted">
+          In TaskFlow: reminders arrive under the bell, sent by the server whether or not TaskFlow is open. {PERMISSION_WORDS[permission] || ''}
+          {permission === 'default' && <> <button type="button" className="btn-link" onClick={() => requestNotificationPermission().then(setPermission)}>Allow pop-ups</button></>}
+          {data.chat_allowed ? ' Google Chat reaches you on your phone even when TaskFlow is closed, once you have messaged TaskFlow in Chat.' : ''}
+        </div>
         <div className="row wrap" style={{ gap: 6 }}>
           <button type="button" className="btn btn-primary btn-sm" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
           <button type="button" className="btn btn-sm" onClick={() => api.sales.get('/followup-digest/preview').then(setPreview).catch(toast.error)}>Preview my morning summary</button>

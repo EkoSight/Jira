@@ -89,6 +89,7 @@ router.get('/calls', asyncHandler(async (req, res) => {
   const { rows } = await query(
     `SELECT c.id, c.provider, c.direction, c.status, c.from_number, c.to_number, c.started_at, c.duration_sec, c.outcome, c.notes, c.logged_manually,
             c.lead_id, c.account_id, c.opportunity_id, c.agent_user_id, (c.recording_ref IS NOT NULL) AS has_recording,
+            c.created_at, c.recorded_via, c.voided_at, c.edit_count,
             u.full_name AS agent_name, l.ref AS lead_ref, COALESCE(a.name, l.organization_name, l.contact_name) AS about
        FROM crm_calls c LEFT JOIN users u ON u.id = c.agent_user_id LEFT JOIN crm_leads l ON l.id = c.lead_id LEFT JOIN accounts a ON a.id = c.account_id
       WHERE ${where.join(' AND ')} ORDER BY COALESCE(c.started_at, c.created_at) DESC LIMIT 200`, params,

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, downloadFile, fetchBlobUrl } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { RECORDED_VIA, durationWords, exactTime } from '../../lib/crmWork.js';
+import { CallDialog } from './LeadWork.jsx';
 import { CALL_OUTCOME, CATEGORY, dayOf, localDay, money, when } from '../../lib/sales.js';
 import { Metric } from './parts.jsx';
 
@@ -241,6 +243,26 @@ export function Reports({ meta }) {
           {tab === 'calling' && (
             <div className="stack">
               <div className="small muted">{dayOf(data.filters.from)} – {dayOf(data.filters.to)} · {data.note} Only records you may see.</div>
+              {data.funnel && (
+                <section className="stack-sm" aria-labelledby="funnel-title">
+                  <h3 id="funnel-title" className="small">From calls to money, in the period</h3>
+                  <div className="funnel-steps">
+                    {data.funnel.steps.map((st) => (
+                      <div key={st.key} className="funnel-step">
+                        <span className="funnel-value tnum">{st.money ? money(st.value, data.funnel.currency) : st.value}</span>
+                        <span className="funnel-label">{st.label}</span>
+                        <span className="funnel-note">{st.note}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="small muted">
+                    {data.funnel.note}
+                    {data.funnel.inbound ? ` ${data.funnel.inbound} call${data.funnel.inbound === 1 ? '' : 's'} came in from them (not counted as attempts).` : ''}
+                    {data.funnel.repeats_marked ? ` ${data.funnel.repeats_marked} call${data.funnel.repeats_marked === 1 ? ' was' : 's were'} marked as accidental repeats and left out.` : ''}
+                    {data.funnel.imported_attempts ? ` Imported, with no call record: ${data.funnel.imported_attempts} attempt${data.funnel.imported_attempts === 1 ? '' : 's'}.` : ''}
+                  </div>
+                </section>
+              )}
               <h3 className="small">Leads captured in the period, by calling status now</h3>
               <div className="call-bars">
                 {(() => {
@@ -330,7 +352,10 @@ export function Calls() {
   const [data, setData] = useState(null);
   const [mine, setMine] = useState(false);
   const [playing, setPlaying] = useState({});
-  useEffect(() => { setData(null); api.sales.get('/calls', { mine: mine ? '1' : undefined }).then(setData).catch(() => setData({ calls: [] })); }, [mine]);
+  const [open, setOpen] = useState(null);
+  const load = () => api.sales.get('/calls', { mine: mine ? '1' : undefined }).then(setData).catch(() => setData({ calls: [] }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setData(null); load(); }, [mine]);
   const play = async (c) => {
     try {
       const url = await fetchBlobUrl(api.sales.url(`/calls/${c.id}/recording`));
@@ -342,19 +367,24 @@ export function Calls() {
     <div className="stack-sm">
       <div className="row" style={{ gap: 6 }}><button type="button" className={`kind-chip${!mine ? ' is-active' : ''}`} onClick={() => setMine(false)}>All I can see</button><button type="button" className={`kind-chip${mine ? ' is-active' : ''}`} onClick={() => setMine(true)}>My calls</button></div>
       {data.calls.length === 0 ? <EmptyState title="No calls yet">Calls logged by hand, and calls from a connected phone system, appear here.</EmptyState> : (
-        <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>About</th><th>Who</th><th>Direction</th><th>Outcome</th><th className="num">Length</th><th>Source</th><th>Recording</th></tr></thead>
+        <div className="table-scroll"><table className="data-table"><thead><tr><th>Call</th><th>When</th><th>About</th><th>Who</th><th>Direction</th><th>Outcome</th><th className="num">Length</th><th>Source</th><th>Recording</th></tr></thead>
           <tbody>{data.calls.map((c) => (
-            <tr key={c.id}>
-              <td>{when(c.started_at)}</td>
+            <tr key={c.id} className={c.voided_at ? 'is-voided' : ''}>
+              <td><button type="button" className="btn-link tnum" onClick={() => setOpen(c.id)} aria-label={`Open call ${c.id}`}>#{c.id}</button></td>
+              <td className="tnum nowrap">{exactTime(c.started_at || c.created_at)}</td>
               <td>{c.lead_id ? <Link to={`/sales/leads/${c.lead_id}`}>{c.about}</Link> : c.account_id ? <Link to={`/accounts/${c.account_id}`}>{c.about}</Link> : c.about}</td>
               <td>{c.agent_name || '—'}</td><td>{c.direction.toLowerCase()}</td>
-              <td>{CALL_OUTCOME[c.outcome] || String(c.status).toLowerCase().replace('_', ' ')}</td>
-              <td className="num">{c.duration_sec ? `${Math.floor(c.duration_sec / 60)}:${String(c.duration_sec % 60).padStart(2, '0')}` : '—'}</td>
-              <td className="small">{c.logged_manually ? 'logged by hand' : c.provider}</td>
+              <td>
+                {CALL_OUTCOME[c.outcome] || String(c.status).toLowerCase().replace('_', ' ')}
+                {c.voided_at && <> <Badge tone="warning">Repeat, not counted</Badge></>}{c.edit_count > 0 && <> <Badge>Edited</Badge></>}
+              </td>
+              <td className="num tnum">{durationWords(c.duration_sec)}</td>
+              <td className="small">{RECORDED_VIA[c.recorded_via] || (c.logged_manually ? 'logged by hand' : c.provider)}</td>
               <td>{playing[c.id] ? <audio controls src={playing[c.id]} /> : c.can_play ? <button type="button" className="btn btn-sm" onClick={() => play(c)}>Play</button> : c.has_recording ? <span className="small muted">restricted</span> : '—'}</td>
             </tr>
           ))}</tbody></table></div>
       )}
+      {open && <CallDialog callId={open} onClose={() => setOpen(null)} onChanged={load} />}
     </div>
   );
 }

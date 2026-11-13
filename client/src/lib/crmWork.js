@@ -28,8 +28,11 @@ export function pinProblem(value) {
 /** "Indore, Indore district, Madhya Pradesh · 452001", or "Not provided". */
 export function locationLine(lead) {
   if (!lead) return NOT_PROVIDED;
-  const district = lead.district && lead.district !== lead.city ? `${lead.district} district` : null;
-  const place = [lead.city, lead.block, district, lead.state].filter(Boolean).join(', ');
+  const same = (a, b) => a && b && String(a).toLowerCase() === String(b).toLowerCase();
+  const district = lead.district && !same(lead.district, lead.city) ? `${lead.district} district` : null;
+  // a town and its tehsil often share a name: say it once
+  const block = same(lead.block, lead.city) ? null : lead.block;
+  const place = [lead.city, block, district, lead.state].filter(Boolean).join(', ');
   const text = [place, lead.pincode].filter(Boolean).join(' · ');
   return text || NOT_PROVIDED;
 }
@@ -70,8 +73,8 @@ export function reminderWords(offsets, channels) {
   const o = [...new Set(offsets || [])].sort((a, b) => b - a);
   if (!o.length) return 'No reminders';
   const list = o.length === 1 ? `${o[0]}` : `${o.slice(0, -1).join(', ')} and ${o[o.length - 1]}`;
-  const where = (channels || []).map((c) => CHANNEL_LABEL[c]).filter(Boolean);
-  return `${list} minutes before${where.length ? `, ${where.join(' and ')}` : ''}`;
+  const where = (channels || []).map((c) => ({ APP: 'TaskFlow', CHAT: 'Google Chat' }[c])).filter(Boolean);
+  return `${list} minutes before${where.length ? `, in ${where.join(' and ')}` : ''}`;
 }
 
 /** Where a follow-up stands against now: due now (within five minutes), overdue, or ahead. */
@@ -99,4 +102,10 @@ export const NO_AUTOMATIC_WIN = 'A call never marks a lead won or creates revenu
 export function importedAttempts(lead, calls = []) {
   const outbound = calls.filter((c) => !c.voided_at && c.direction === 'OUTBOUND').length;
   return Math.max((lead?.call_attempts || 0) - outbound, 0);
+}
+
+/** A short time in India time, for rows whose header says so: "13 Nov, 5:15 pm". */
+export function indiaTime(value) {
+  if (!value) return '';
+  return new Date(value).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
 }

@@ -900,3 +900,39 @@ Nothing here changes attendance, leave, pay or black marks.
 | GET / PUT | `/standup/settings` | `standup.manage` — a new space switches the standup off; `enabled: true` needs a passing space check (409 `SPACE_NOT_CHECKED`) |
 | POST | `/standup/settings/check-space` | `standup.manage` — asks Google whether the app is in the space and whether outsiders can join |
 | POST | `/standup/run` | `standup.manage` — one pass of the schedule now; safe to repeat |
+
+## Sales CRM — calls, locations, the work queue and follow-up reminders
+
+Under `/sales`, behind `crm.view`. See `SALES_CRM_CALLS.md`.
+
+**Request ids.** `POST /leads/:id/call-status` and `POST /calls` accept
+`request_id` (8–80 letters, digits, `-` or `_`). The same person sending the
+same id again gets the first answer with `duplicate: true`, and no second call
+is recorded. Send a new id for each new call, and the same id when retrying.
+
+| Method | Route | Permission |
+|---|---|---|
+| POST | `/leads/:id/call-status` | owner or assigner — `{ status_id, note?, lost_reason?, callback_at?, rating?, request_id? }` → `{ call: { id, started_at, outcome }, closed_followups, callback, attempts, exhausted, lead, duplicate? }` |
+| GET | `/leads/:id/calls` | can see the lead — every call, newest first, with `counted` (false for a marked repeat) |
+| GET | `/calls/:id` | can see what it is about — `{ call, edits, timeline, followups }` |
+| PATCH | `/calls/:id` | `crm.activity.log`, and the person who made it or someone who assigns — `{ notes?, duration_sec?, reason? }`. Corrects that call; never adds one. `changed: false` when nothing differed |
+| POST | `/calls/:id/void`, `/calls/:id/restore` | `crm.audit` or `crm.assign` — `{ reason }`. Marks a reviewed accidental repeat: kept, not counted; restore counts it again |
+| GET | `/calls/review?lead_id=692,693&since=&window=` | `crm.audit` — calls close together, grouped with advice. Read only |
+| GET / PUT | `/reminder-prefs` | signed in — `{ offsets: [30,15,10,5 any], channels: ['APP','CHAT'] }`; the reply says whether Chat is allowed |
+| GET | `/followups/:id/reminders` | can see the follow-up — each planned reminder, its status, error and Chat delivery |
+| POST | `/followups/:id/acknowledge` | can see the follow-up — marks your sent reminders as seen |
+| POST | `/followups`, `/followups/:id/reschedule` | as before, plus `reminder_offsets` and `reminder_channels` (omit for the person's defaults; `[]` for none) |
+| GET / PUT | `/followup-digest/settings` | `crm.settings` — `{ enabled, testMode, time, lastSendTime, days, skipHolidays, chatReminders }` |
+| GET | `/followup-digest/preview?user_id=` | your own; anyone's with `crm.settings` |
+| POST | `/followup-digest/test` | `crm.settings` — `{ user_id? }`; sent to your own Chat only, labelled TEST |
+| GET | `/followup-digest/log?date=` | `crm.settings` — the day's record per person |
+| PUT | `/followup-digest/exceptions/:userId` | `crm.settings` — `{ mode: SKIP/INCLUDE/null, until?, reason? }` |
+| GET | `/work-queue?bucket=&page=&page_size=&user_id=` | your own; someone else's with team access — each group's count and `filters` (the same filters on `GET /leads` give the same total), one page of one group |
+| GET | `/leads` | adds views `retry` (due now), `retry_later`, `fu_overdue`, `fu_today`, `new_uncalled`, `no_next_action`, `location_missing`, and filters `district` (or `none`), `block`, `pincode` (prefix), `state=none`, `for_user` |
+| POST / PATCH | `/leads`, `/leads/:id` | adds `district`, `block`, `address_line1`, `address_line2`, `pincode`. A PIN that is not six digits → 400 `BAD_PINCODE`; a state that is not a state or union territory → 400 `BAD_STATE` |
+| GET | `/location/districts?state=&q=` | signed in — districts to offer for a state |
+| GET | `/location-suggestions?status=` | the suggestions waiting on leads you can see |
+| GET | `/leads/:id/location-suggestions` | can see the lead |
+| POST | `/location-suggestions/:id/accept`, `/reject` | owner or assigner — accepting fills only an empty field |
+| POST | `/location-suggestions/generate` | `crm.settings` — builds the review list; changes no lead |
+| GET | `/reports/calling` | adds `funnel`: attempts, leads called, conversations, leads spoken to, qualified, orders, money received, plus inbound calls, marked repeats and imported attempts shown apart |

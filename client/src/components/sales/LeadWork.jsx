@@ -177,8 +177,12 @@ export function CallDialog({ callId, onClose, onChanged }) {
   const [data, setData] = useState(null);
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ notes: '', minutes: '', reason: '' });
+  const [shownMinutes, setShownMinutes] = useState('');
   const [busy, setBusy] = useState(false);
-  const load = () => api.sales.get(`/calls/${callId}`).then((r) => { setData(r); setForm({ notes: r.call.notes || '', minutes: r.call.duration_sec ? String(Math.round(r.call.duration_sec / 6) / 10) : '', reason: '' }); })
+  const load = () => api.sales.get(`/calls/${callId}`).then((r) => {
+    const minutes = r.call.duration_sec ? String(Math.round(r.call.duration_sec / 6) / 10) : '';
+    setData(r); setShownMinutes(minutes); setForm({ notes: r.call.notes || '', minutes, reason: '' });
+  })
     .catch((err) => setData({ error: err.message }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [callId]);
@@ -189,11 +193,18 @@ export function CallDialog({ callId, onClose, onChanged }) {
   const act = async (fn, message) => {
     if (busy) return;
     setBusy(true);
-    try { await fn(); toast.success(message); setEditing(false); await load(); onChanged?.(); } catch (err) { toast.error(err); } finally { setBusy(false); }
+    try {
+      const r = await fn();
+      toast.success(typeof message === 'function' ? message(r) : message);
+      setEditing(false); await load(); onChanged?.();
+    } catch (err) { toast.error(err); } finally { setBusy(false); }
   };
+  // only what the person changed is sent: a length shown rounded to minutes is not rewritten by itself
   const saveEdit = () => act(() => api.sales.patch(`/calls/${callId}`, {
-    notes: form.notes.trim() || null, duration_sec: form.minutes === '' ? null : Math.round(Number(form.minutes) * 60), reason: form.reason.trim() || null,
-  }), 'Correction saved; the earlier wording is kept in its history');
+    ...(form.notes.trim() !== (c.notes || '') ? { notes: form.notes.trim() || null } : {}),
+    ...(form.minutes !== shownMinutes ? { duration_sec: form.minutes === '' ? null : Math.round(Number(form.minutes) * 60) } : {}),
+    reason: form.reason.trim() || null,
+  }), (r) => (r?.changed === false ? 'Nothing was changed' : 'Correction saved; the earlier wording is kept in its history'));
   const voidIt = () => {
     const reason = window.prompt('Why is this an accidental repeat? (It stays listed and can be restored.)');
     if (reason && reason.trim().length >= 3) act(() => api.sales.post(`/calls/${callId}/void`, { reason: reason.trim() }), 'Marked as a repeat: kept, not counted');
