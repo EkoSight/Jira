@@ -549,7 +549,7 @@ function GoalRail({ objective, keyResults, tasks, childGoals, canEdit, onOverrid
       <section className="card card-pad stack rail-card">
         <h3>Accountable</h3>
         <div className="row">
-          <Avatar name={objective.owner_name || '?'} color={objective.owner_color} size={34} />
+          <Avatar userId={objective.owner_user_id} name={objective.owner_name || '?'} color={objective.owner_color} size={34} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 600, fontSize: 13.5 }}>{objective.owner_name || 'Nobody yet'}</div>
             <div className="small muted">

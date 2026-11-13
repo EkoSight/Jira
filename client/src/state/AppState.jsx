@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, tokenStore, setUnauthorizedHandler } from '../api/client.js';
+import { REFRESH_MS, applyBranding, cachedBranding, fetchBranding, rememberLook, resolveMode, storedAccent, storedMode } from '../lib/brand.js';
+import { clearPhotoVersions, loadPhotoVersions } from '../lib/photos.js';
 
 const AuthContext = createContext(null);
 const ToastContext = createContext(null);
@@ -50,6 +52,7 @@ export function AuthProvider({ children }) {
 
   const signOut = useCallback(() => {
     tokenStore.clear();
+    clearPhotoVersions();
     setUser(null);
   }, []);
 
@@ -116,6 +119,7 @@ export function RefDataProvider({ children }) {
       api.users().catch(() => ({ users: [] })),
       api.settings().catch(() => ({ settings: null })),
     ]);
+    loadPhotoVersions({ force: true });
     setData({
       departments: departments.departments || [],
       statuses: statuses.statuses || [],
@@ -164,11 +168,75 @@ export function useOnlineStatus() {
   return online;
 }
 
-export function useTheme() {
-  const [theme, setTheme] = useState(() => localStorage.getItem('taskflow.theme') || 'light');
+// ---------------------------------------------------------------- branding and look
+
+const BrandContext = createContext(null);
+
+/**
+ * The organisation's name, colours and logos, and the person's own look
+ * (light, dark or match the device; an optional accent). Their saved choice
+ * follows them to every device; the organisation's changes arrive without a
+ * redeploy (checked on return to the app and every two minutes).
+ */
+export function BrandingProvider({ children }) {
+  const { user, setUser } = useAuth();
+  const [branding, setBranding] = useState(cachedBranding);
+  const [mode, setModeState] = useState(() => user?.theme_mode || storedMode());
+  const [accent, setAccentState] = useState(() => (user ? user.theme_accent ?? null : storedAccent()));
+
+  // a person's saved look wins once they are signed in
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('taskflow.theme', theme);
-  }, [theme]);
-  return [theme, () => setTheme((t) => (t === 'light' ? 'dark' : 'light'))];
+    if (!user) return;
+    if (user.theme_mode) setModeState(user.theme_mode);
+    setAccentState(user.theme_accent ?? null);
+  }, [user?.id, user?.theme_mode, user?.theme_accent]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    applyBranding(branding, { mode, accent });
+    rememberLook({ mode, accent });
+    if (mode !== 'SYSTEM' || !window.matchMedia) return undefined;
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const follow = () => applyBranding(branding, { mode, accent });
+    mq.addEventListener?.('change', follow);
+    return () => mq.removeEventListener?.('change', follow);
+  }, [branding, mode, accent]);
+
+  const refresh = useCallback(() => fetchBranding()
+    .then((b) => setBranding((current) => (JSON.stringify(current) === JSON.stringify(b) ? current : b)))
+    .catch(() => {}), []);
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, REFRESH_MS);
+    const back = () => { if (document.visibilityState === 'visible') refresh(); };
+    document.addEventListener('visibilitychange', back);
+    window.addEventListener('focus', back);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', back); window.removeEventListener('focus', back); };
+  }, [refresh]);
+
+  const savePrefs = useCallback(async (changes) => {
+    if (!tokenStore.get()) return;
+    try {
+      const saved = await api.put('/auth/me/preferences', changes);
+      setUser((u) => (u ? { ...u, ...saved } : u));
+    } catch { /* kept in this browser; saved to the account next time */ }
+  }, [setUser]);
+
+  const value = useMemo(() => {
+    const setMode = (m) => { setModeState(m); savePrefs({ theme_mode: m }); };
+    const setAccent = (a) => { setAccentState(a || null); savePrefs({ theme_accent: a || null }); };
+    return {
+      branding, setBranding, refresh, mode, accent, setMode, setAccent,
+      resolved: resolveMode(mode),
+      toggle: () => setMode(resolveMode(mode) === 'dark' ? 'LIGHT' : 'DARK'),
+    };
+  }, [branding, refresh, mode, accent, savePrefs]);
+  return <BrandContext.Provider value={value}>{children}</BrandContext.Provider>;
+}
+
+export const useBranding = () => useContext(BrandContext);
+
+/** [light|dark, switch] for the top bar's quick switch. */
+export function useTheme() {
+  const b = useContext(BrandContext);
+  return [b.resolved, b.toggle];
 }

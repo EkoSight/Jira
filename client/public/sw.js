@@ -1,10 +1,10 @@
 /* TaskFlow service worker — app shell caching + offline reads. */
-// bumped to clear payroll copies cached by earlier versions
-const VERSION = 'taskflow-v2';
+// bumped to clear payroll copies cached by earlier versions, then for the new icons and branding
+const VERSION = 'taskflow-v3';
 const SHELL_CACHE = `${VERSION}-shell`;
 const DATA_CACHE = `${VERSION}-data`;
 
-const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/icons/icon-192.png'];
+const SHELL_ASSETS = ['/', '/index.html', '/manifest.webmanifest', '/brand/icon-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -39,6 +39,9 @@ self.addEventListener('fetch', (event) => {
   if (/\/api\/[^/]+\/m\//.test(url.pathname)) return;
   // pay estimates are never kept on a device, and never shown from an old copy
   if (/\/api\/[^/]+\/payroll(\/|$)/.test(url.pathname)) return;
+  // profile photos (and the private originals) are never kept by the offline copy:
+  // a deleted photo must not linger on a shared device
+  if (/\/api\/[^/]+\/photos(\/|$)/.test(url.pathname)) return;
 
   // API: network first, fall back to the last good response so the board still
   // renders something useful when the phone drops off the network.

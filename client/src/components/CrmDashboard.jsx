@@ -354,7 +354,7 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
                   <tr key={row.user.id} className={row.nothing_recorded ? 'is-quiet-row' : ''}>
                     <td>
                       <Link to={`/team/${row.user.id}`} className="row" style={{ gap: 6 }}>
-                        <Avatar name={row.user.full_name} color={row.user.avatar_color} size={22} />
+                        <Avatar userId={row.user.id} name={row.user.full_name} color={row.user.avatar_color} size={22} />
                         <span className="small">{row.user.full_name}</span>
                       </Link>
                       {row.nothing_recorded && (

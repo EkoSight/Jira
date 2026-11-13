@@ -104,7 +104,7 @@ export function ListView({ board, search }) {
                 <td>
                   {deal.owner_name ? (
                     <span className="row" style={{ gap: 5 }}>
-                      <Avatar name={deal.owner_name} color={deal.owner_color} size={20} />
+                      <Avatar userId={deal.owner_user_id} name={deal.owner_name} color={deal.owner_color} size={20} />
                       <span className="small">{deal.owner_name}</span>
                     </span>
                   ) : <span className="kr-flag kr-flag-warning">nobody</span>}
@@ -433,7 +433,7 @@ export function MapView({ departmentId, segmentId, ownerId }) {
                   )}
                 </div>
                 {lead.owner_name && (
-                  <Avatar name={lead.owner_name} color={lead.owner_color} size={22} title={`${lead.owner_name} leads it`} />
+                  <Avatar userId={lead.owner_user_id} name={lead.owner_name} color={lead.owner_color} size={22} title={`${lead.owner_name} leads it`} />
                 )}
               </li>
             ))}
@@ -488,7 +488,7 @@ export function TreeView({ departmentId }) {
         {org.eligible_value > 0 && ` · ${formatMoney(org.eligible_value)}`}
       </span>
       {org.follower_name && (
-        <Avatar name={org.follower_name} size={18}
+        <Avatar userId={org.follower_user_id} name={org.follower_name} size={18}
           title={`${org.follower_name} follows it — not counted in anyone's totals`} />
       )}
     </li>
@@ -507,7 +507,7 @@ export function TreeView({ departmentId }) {
         return (
           <section key={manager.user.id} className="card card-pad stack-sm">
             <button type="button" className="tree-head" onClick={() => toggle(manager.user.id)}>
-              <Avatar name={manager.user.full_name} color={manager.user.avatar_color} size={28} />
+              <Avatar userId={manager.user.id} name={manager.user.full_name} color={manager.user.avatar_color} size={28} />
               <span className="grow" style={{ minWidth: 0 }}>
                 <strong style={{ fontSize: 14 }}>{manager.user.full_name}</strong>
                 {manager.user.job_title && <span className="small muted"> · {manager.user.job_title}</span>}

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth } from '../../state/AppState.jsx';
-import { Badge, EmptyState, Icon, Modal, Spinner } from '../ui.jsx';
+import { Avatar, Badge, EmptyState, Icon, Modal, Spinner } from '../ui.jsx';
 import { FOLLOWUP_KIND, phoneLabel } from '../../lib/sales.js';
 import { NOT_PROVIDED, exactTime, indiaTime } from '../../lib/crmWork.js';
 import { CallStatusBadge, CategoryBadge, DueBadge, FollowUpActions, Stars } from './parts.jsx';
@@ -32,7 +32,7 @@ function QueueRow({ lead, onCall, onFollowUp }) {
           <CallStatusBadge lead={lead} /><Stars value={lead.rating} />
         </div>
         <div className="queue-facts small">
-          <span><span className="muted">Owner</span> {lead.owner_name || <span className="warning-text">Nobody</span>}</span>
+          <span className="row" style={{ gap: 4 }}><span className="muted">Owner</span> {lead.owner_name ? <><Avatar userId={lead.owner_user_id} name={lead.owner_name} color={lead.owner_color} size={18} />{lead.owner_name}</> : <span className="warning-text">Nobody</span>}</span>
           <span><span className="muted">Place</span> {place || <span className="muted">{NOT_PROVIDED}</span>}</span>
           <span><span className="muted">Last contact</span> {lead.last_contacted_at ? indiaTime(lead.last_contacted_at) : 'never'}{lead.call_attempts ? ` · ${lead.call_attempts} attempt${lead.call_attempts === 1 ? '' : 's'}` : ''}</span>
           <span>

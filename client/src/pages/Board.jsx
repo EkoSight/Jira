@@ -281,7 +281,7 @@ export default function Board() {
                       <td>
                         {task.assignee_name ? (
                           <div className="row" style={{ gap: 6 }}>
-                            <Avatar name={task.assignee_name} color={task.assignee_color} size={20} />
+                            <Avatar userId={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={20} />
                             <span className="small">{task.assignee_name}</span>
                           </div>
                         ) : (

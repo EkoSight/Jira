@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useOnlineStatus, useRefData, useTheme } from '../state/AppState.jsx';
+import { BrandLockup, BrandMark, introOnce } from './BrandMark.jsx';
 import { Avatar, Icon, Modal, PageErrorBoundary } from './ui.jsx';
 import TaskDialog from './TaskDialog.jsx';
 import { AttendanceGate, SignOutReminder } from './Attendance.jsx';
@@ -65,6 +66,8 @@ export default function Layout({ children }) {
   const { refresh, settings } = useRefData();
   const online = useOnlineStatus();
   const [theme, toggleTheme] = useTheme();
+  // the mark's intro plays once per tab, then it stays still
+  const [introMode] = useState(() => introOnce());
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -153,8 +156,7 @@ export default function Layout({ children }) {
     <div className="app">
       <aside className="sidebar">
         <div className="sidebar-brand">
-          <span className="brand-mark">TF</span>
-          TaskFlow
+          <BrandLockup size={30} mode={introMode} />
         </div>
 
         <nav className="sidebar-nav">
@@ -179,7 +181,7 @@ export default function Layout({ children }) {
 
         <div className="sidebar-foot">
           <div className="row">
-            <Avatar name={user.full_name} color={user.avatar_color} size={30} />
+            <Avatar userId={user.id} name={user.full_name} color={user.avatar_color} size={30} />
             <div className="grow truncate">
               <div className="small" style={{ fontWeight: 600 }}>{user.full_name}</div>
               <div className="small muted">{{ super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' }[user.role] || user.role}</div>
@@ -193,7 +195,7 @@ export default function Layout({ children }) {
 
       <div className="main">
         <header className="topbar">
-          <span className="brand-mark" style={{ display: 'none' }} />
+          <BrandMark size={28} mode="off" className="topbar-mark" />
           <div className="topbar-title grow truncate">{pageTitle}</div>
 
           <button
@@ -252,7 +254,7 @@ export default function Layout({ children }) {
           </button>
 
           {can('task.create') && !gated && (
-            <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)} aria-label="New task">
               <Icon name="plus" size={14} />
               <span className="new-task-label">New</span>
             </button>

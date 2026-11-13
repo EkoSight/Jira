@@ -19,6 +19,7 @@ duplicate.
 | POST | `/auth/login` | — | `{ email, password }` → `{ token, user }` |
 | GET | `/auth/me` | signed in | Current user with effective permissions |
 | POST | `/auth/change-password` | signed in | `{ currentPassword, newPassword }`, returns a fresh token |
+| PUT | `/auth/me/preferences` | signed in | `{ theme_mode?: LIGHT/DARK/SYSTEM, theme_accent?: preset key or null }`. The look follows the person to every device; an accent outside the offered presets → 400 |
 
 ---
 
@@ -936,3 +937,43 @@ is recorded. Send a new id for each new call, and the same id when retrying.
 | POST | `/location-suggestions/:id/accept`, `/reject` | owner or assigner — accepting fills only an empty field |
 | POST | `/location-suggestions/generate` | `crm.settings` — builds the review list; changes no lead |
 | GET | `/reports/calling` | adds `funnel`: attempts, leads called, conversations, leads spoken to, qualified, orders, money received, plus inbound calls, marked repeats and imported attempts shown apart |
+
+## Profile photos
+
+Under `/photos`, signed in. See `BRANDING_PHOTOS.md`. Uploads are
+`multipart/form-data` with `photo` (the framed square), an optional `original`
+and `edit` (JSON: the editor's framing and fixes, kept for re-framing). Each is
+at most 10 MB, JPEG, PNG or WebP. HEIC → 400 `HEIC`; a picture under 32 px →
+400 `TOO_SMALL`. The server re-encodes everything, so no EXIF or GPS is kept.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/photos/versions` | signed in — `{ versions: [{ id, v }] }`, who has a photo and its version |
+| GET | `/photos/:userId/:size?v=` | signed in — WebP at 64, 128, 256 or 512. With `v` it is cached privately for a year |
+| GET | `/photos/me` | signed in — `{ photo, last, proposals, notice, sizes, max_mb }`; `last` carries a removal reason |
+| POST | `/photos/me` | signed in — your own photo; withdraws pending suggestions for you |
+| DELETE | `/photos/me` | signed in — removes every size and the original |
+| GET | `/photos/me/original` | signed in — your own kept original, never cached |
+| POST | `/photos/me/suggestions/:id/accept`, `/decline` | the person it was suggested for — accepting makes it their photo and records their agreement |
+| POST | `/photos/:userId/suggest` | administrator, not for yourself — the same upload plus `note`; the person is notified |
+| GET | `/photos/suggestions` | administrator — pending suggestions |
+| GET | `/photos/suggestions/:id/picture` | the person it is for, or an administrator |
+| DELETE | `/photos/suggestions/:id` | administrator — withdraws it |
+| DELETE | `/photos/:userId` | administrator — `{ reason }` (3–300 characters); removes every file, audits it and tells the person |
+
+## Branding
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/branding` | none (the sign-in page needs it) — name, colours, the light and dark palettes, logo addresses, icons and `accentPresets` |
+| GET | `/branding/assets/:kind` | none — `mark`, `markDark`, `wordmark`, `wordmarkDark`. SVGs are served under a sandboxing security policy |
+| GET | `/branding/icons/:name` | none — `favicon-32.png`, `favicon-48.png`, `apple-touch-180.png`, `icon-192.png`, `icon-512.png`, `maskable-512.png`, made from the mark |
+| POST | `/branding/check` | `settings.manage` — `{ primary, accent }` → `{ ok, primary: { value, problems, suggestion }, accent, palette }` |
+| PUT | `/branding` | `settings.manage` — `{ appName, byline, primary, accent }`. Colours that fail → 400 `COLOUR_CHECK`, with the suggestions |
+| POST | `/branding/reset`, `/branding/undo` | `settings.manage` — back to the defaults, or to the value before the last change |
+| GET | `/branding/history` | `settings.manage` — every change, who and when |
+| POST / DELETE | `/branding/assets/:kind` | `settings.manage` — upload (`file`: SVG, PNG, JPEG or WebP) or go back to the bundled file. An SVG with scripts, handlers, links or external references → 400 `UNSAFE_SVG` |
+
+Outside the API prefix: `GET /manifest.webmanifest` follows the branding name,
+colour and icons. The face-detection engine is served from
+`/vendor/mediapipe/`, pre-compressed.

@@ -19,12 +19,20 @@
   /* at least 4.5:1 on white, the page ground and the brand wash (was #797874, 4.0–4.4:1) */
   --ink-muted: #6c6b67;
 
-  --brand: #2a78d6;
-  --brand-ink: #1c5cab;
-  --brand-wash: #eaf2fd;
-
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
+  /* the organisation's colours (Settings → Branding) replace these at run time */
+  --brand: #073F2A;
+  --on-brand: #ffffff;
+  --brand-hover: #00311F;
+  --brand-pressed: #002617;
+  --brand-ink: #073F2A;
+  --brand-wash: #DCF8E9;
+  --brand-border: #9DD2B7;
+  --accent: #8B5E3B;
+  --on-accent: #ffffff;
+  --accent-ink: #8B5E3B;
+  --accent-wash: #FFECDF;
+  --series-1: #073F2A;
+  --series-2: #8B5E3B;
 
   --good: #0ca30c;
   --warning: #fab219;
@@ -69,12 +77,19 @@
   --ink-2: #c3c2b7;
   --ink-muted: #898781;
 
-  --brand: #3987e5;
-  --brand-ink: #86b6ef;
-  --brand-wash: rgba(57, 135, 229, 0.16);
-
-  --series-1: #3987e5;
-  --series-2: #d95926;
+  --brand: #3E7059;
+  --on-brand: #ffffff;
+  --brand-hover: #4C7F67;
+  --brand-pressed: #245641;
+  --brand-ink: #6EA288;
+  --brand-wash: #123626;
+  --brand-border: #32644D;
+  --accent: #8B5E3B;
+  --on-accent: #ffffff;
+  --accent-ink: #BA8A66;
+  --accent-wash: #402713;
+  --series-1: #3E7059;
+  --series-2: #8B5E3B;
 
   --good-text: #0ca30c;
   --warning-text: #fab219;
@@ -158,9 +173,10 @@ button, input, select, textarea {
 .btn-primary {
   background: var(--brand);
   border-color: var(--brand);
-  color: #fff;
+  color: var(--on-brand, #fff);
 }
-.btn-primary:hover:not(:disabled) { background: var(--brand-ink); border-color: var(--brand-ink); }
+.btn-primary:hover:not(:disabled) { background: var(--brand-hover, var(--brand-ink)); border-color: var(--brand-hover, var(--brand-ink)); }
+.btn-primary:active:not(:disabled) { background: var(--brand-pressed, var(--brand-ink)); border-color: var(--brand-pressed, var(--brand-ink)); }
 .btn-danger { color: var(--critical-text); border-color: var(--border); }
 .btn-danger:hover:not(:disabled) { background: var(--critical-wash); }
 .btn-ghost { background: transparent; border-color: transparent; }
@@ -318,7 +334,7 @@ button, input, select, textarea {
   background: var(--brand);
   display: grid;
   place-items: center;
-  color: #fff;
+  color: var(--on-brand, #fff);
   font-size: 12px;
   font-weight: 800;
 }
@@ -3934,7 +3950,7 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .mkt-step.is-selected { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-wash); }
 .mkt-step > .grow { display: flex; flex-direction: column; gap: 2px; }
 .mkt-step-icon { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; background: var(--surface-3); color: var(--ink-2); flex: none; }
-.mkt-step-trigger .mkt-step-icon { background: var(--brand); color: #ffffff; }
+.mkt-step-trigger .mkt-step-icon { background: var(--brand); color: var(--on-brand, #ffffff); }
 .mkt-step-email .mkt-step-icon { background: var(--brand-wash); color: var(--brand-ink); }
 .mkt-step-condition .mkt-step-icon { background: color-mix(in srgb, var(--series-2) 18%, transparent); color: var(--ink); }
 .mkt-step-kind { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--ink-muted); }
@@ -3979,7 +3995,7 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .mkt-cal-day:nth-child(7n) { border-right: 0; }
 .mkt-cal-day.is-out { background: var(--surface-2); }
 .mkt-cal-day.is-out .mkt-cal-date { color: var(--ink-muted); }
-.mkt-cal-day.is-today .mkt-cal-date { background: var(--brand); color: #ffffff; border-radius: 999px; padding: 0 6px; align-self: flex-start; }
+.mkt-cal-day.is-today .mkt-cal-date { background: var(--brand); color: var(--on-brand, #ffffff); border-radius: 999px; padding: 0 6px; align-self: flex-start; }
 .mkt-cal-date { font-weight: 650; }
 .mkt-cal-item { display: block; font-size: 11.5px; line-height: 1.3; padding: 2px 6px; border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-left: 3px solid transparent; color: var(--ink); }
 .mkt-cal-item.is-campaign { background: color-mix(in srgb, var(--series-1) 14%, transparent); border-left-color: var(--series-1); }
@@ -4197,3 +4213,82 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .funnel-value { font-size: 20px; font-weight: 700; color: var(--ink); }
 .funnel-label { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .funnel-note { font-size: 11.5px; color: var(--ink-muted); }
+
+/* ---------------------------------------------------------------- photos, branding, look */
+.avatar-photo { object-fit: cover; background: var(--surface-3); display: inline-block; }
+.photo-notice { margin: 0; }
+.photo-compare { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
+.photo-compare figure { margin: 0; display: grid; gap: 6px; justify-items: center; }
+.photo-preview { width: min(260px, 40vw); height: auto; aspect-ratio: 1; border-radius: 50%; background: var(--surface-3); box-shadow: 0 0 0 1px var(--border); }
+.photo-preview.is-live { cursor: grab; touch-action: none; }
+.photo-preview.is-live:active { cursor: grabbing; }
+.photo-preview.is-live:focus-visible { outline: 3px solid var(--brand-ink); outline-offset: 3px; }
+.photo-fixes { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin: 0; display: grid; gap: 6px; }
+.photo-fixes legend { padding: 0 6px; font-weight: 600; }
+.photo-faces { position: relative; width: 100%; max-height: 50vh; }
+.photo-faces canvas { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: 8px; }
+.photo-face { position: absolute; border: 3px solid #ffffff; outline: 2px solid var(--brand); border-radius: 8px; background: transparent; cursor: pointer; padding: 0; }
+.photo-face span { position: absolute; top: -14px; left: -14px; width: 26px; height: 26px; border-radius: 50%; background: var(--brand); color: var(--on-brand, #fff); font-weight: 700; display: grid; place-items: center; }
+.photo-face:focus-visible { outline: 3px solid var(--brand-ink); }
+.photo-suggestion { width: 96px; height: 96px; border-radius: 50%; object-fit: cover; background: var(--surface-3); flex: none; }
+@media (max-width: 560px) {
+  .photo-preview { width: 42vw; }
+}
+
+/* ---------------------------------------------------------------- the Soil Doctor mark (docs/SOIL_DOCTOR_LOGO_ANIMATION.md) */
+@keyframes sdBandL { from { transform: translateX(-104%) } to { transform: translateX(0) } }
+@keyframes sdBandR { from { transform: translateX(104%) } to { transform: translateX(0) } }
+@keyframes sdDraw { from { stroke-dashoffset: 100 } to { stroke-dashoffset: 0 } }
+@keyframes sdSpark { 0% { stroke-dashoffset: 12 } 55% { stroke-dashoffset: -104 } 100% { stroke-dashoffset: -104 } }
+@keyframes sdBeat { 0%, 22% { transform: scale(1) } 29% { transform: scale(1.07) } 38%, 100% { transform: scale(1) } }
+.sd-mark { overflow: visible; flex: none; display: block; }
+.sd-mark[data-mode='intro'] .sd-l, .sd-mark[data-mode='loop'] .sd-l { animation: sdBandL 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.sd-mark[data-mode='intro'] .sd-r, .sd-mark[data-mode='loop'] .sd-r { animation: sdBandR 0.9s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.sd-mark[data-mode='intro'] .sd-pulse, .sd-mark[data-mode='loop'] .sd-pulse { stroke-dasharray: 100; animation: sdDraw 0.8s cubic-bezier(0.5, 0, 0.2, 1) 0.5s both; }
+.sd-mark[data-mode='loop'] { transform-origin: 50% 50%; animation: sdBeat 3.4s ease-in-out 1.5s infinite; }
+.sd-mark .sd-spark { stroke-dasharray: 9 220; stroke-dashoffset: 12; animation: sdSpark 3.4s linear 1.5s infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .sd-mark, .sd-mark * { animation: none !important; }
+  .sd-mark .sd-spark { display: none; }
+}
+.brand-logo { object-fit: contain; flex: none; }
+.brand-lockup { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-name { display: grid; line-height: 1.1; min-width: 0; }
+.brand-app { font-weight: 750; font-size: 15px; letter-spacing: -0.02em; color: var(--ink); }
+.brand-byline { font-size: 11.5px; color: var(--ink-muted); font-weight: 550; }
+.brand-wordmark { display: inline-flex; }
+.brand-wordmark img { width: auto; display: block; }
+.brand-wordmark.on-plate { background: #ffffff; border-radius: 8px; padding: 6px 10px; }
+.brand-loader { min-height: 60vh; display: grid; place-content: center; justify-items: center; gap: 12px; }
+.topbar-mark { display: none; }
+@media (max-width: 900px) {
+  .topbar-mark { display: block; }
+}
+.login-brand { display: grid; gap: 14px; justify-items: start; margin-bottom: 18px; }
+.login-brand .brand-app { font-size: 20px; }
+.login-company { padding-top: 14px; margin-top: 18px; border-top: 1px solid var(--border); display: grid; gap: 6px; justify-items: start; }
+.brand-previews { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.brand-preview { display: flex; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); min-height: 170px; }
+.brand-preview-side { width: 112px; background: var(--surface); border-right: 1px solid var(--border); padding: 10px 8px; display: grid; align-content: start; gap: 4px; }
+.brand-preview-name { font-weight: 750; font-size: 13px; color: var(--ink); padding: 0 6px 6px; }
+.brand-preview-nav { font-size: 12.5px; padding: 5px 8px; border-radius: 6px; color: var(--ink); }
+.brand-preview-nav.is-active { background: var(--brand-wash); color: var(--brand-ink); font-weight: 650; }
+.brand-preview-main { flex: 1; padding: 12px; display: grid; gap: 10px; align-content: start; background: var(--plane); }
+.brand-preview-link { color: var(--brand-ink); text-decoration: underline; font-size: 13px; }
+.brand-preview-bars { display: flex; align-items: flex-end; gap: 6px; height: 46px; }
+.brand-preview-bars span { width: 16px; border-radius: 3px 3px 0 0; }
+.brand-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18); }
+.brand-swatch.is-large { width: 22px; height: 22px; border-radius: 6px; }
+.brand-colour-pick { width: 44px; height: 38px; padding: 2px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.brand-logos { display: grid; gap: 10px; }
+.brand-logo-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.brand-logo-sample { width: 120px; height: 52px; display: grid; place-items: center; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--border); }
+.brand-logo-sample.is-dark { background: #161b22; }
+.brand-logo-sample img { max-width: 108px; max-height: 44px; }
+.brand-history { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.look-group { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.look-group legend { font-weight: 600; margin-bottom: 6px; }
+.look-swatch { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px 5px 6px; border-radius: 999px; border: 1px solid var(--border); cursor: pointer; font-size: 13px; }
+.look-swatch.is-active { border-color: var(--brand-ink); box-shadow: 0 0 0 1px var(--brand-ink); }
+.look-swatch:focus-within, .kind-chip:focus-within { outline: 2px solid var(--brand-ink); outline-offset: 2px; }
+.brand-logo-sample.is-dark .muted { color: #c3c2b7; }

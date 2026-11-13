@@ -117,7 +117,7 @@ function GoalCard({ objective }) {
 
       <div className="goal-card-foot">
         <span className="row" style={{ gap: 6, minWidth: 0 }}>
-          <Avatar name={objective.owner_name || '?'} color={objective.owner_color} size={20} />
+          <Avatar userId={objective.owner_user_id} name={objective.owner_name || '?'} color={objective.owner_color} size={20} />
           <span className="small truncate">{objective.owner_name}</span>
         </span>
         <span className="row small muted" style={{ gap: 5 }}>

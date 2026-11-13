@@ -150,7 +150,7 @@ export default function Payroll() {
                       )}
                       <td>
                         <div className="row" style={{ gap: 8 }}>
-                          <Avatar name={p.user.full_name} color={p.user.avatar_color} size={24} /> {p.user.full_name}
+                          <Avatar userId={p.user.id} name={p.user.full_name} color={p.user.avatar_color} size={24} /> {p.user.full_name}
                           {/* two people can share a name; the id tells them apart */}
                           <span className="small muted">#{p.user.id}</span>
                           {p.user.is_active === false && <Badge tone="neutral">Left</Badge>}

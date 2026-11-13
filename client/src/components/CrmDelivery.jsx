@@ -364,7 +364,7 @@ function EngagementCard({ engagement, onChanged }) {
                       textDecoration: t.stage === 'done' ? 'line-through' : 'none',
                     }}>{t.title}</span>
                     <Badge tone={t.stage === 'done' ? 'good' : 'neutral'}>{t.status_name}</Badge>
-                    {t.assignee_name && <Avatar name={t.assignee_name} color={t.assignee_color} size={20} />}
+                    {t.assignee_name && <Avatar userId={t.assignee_id} name={t.assignee_name} color={t.assignee_color} size={20} />}
                   </li>
                 ))}
               </ul>

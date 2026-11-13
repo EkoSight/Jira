@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import ProfilePhoto, { PhotoAdminActions } from '../components/ProfilePhoto.jsx';
 import { LoadMeter } from '../components/charts.jsx';
 import { WORKLOAD_STATUS, loadSummary, relativeTime } from '../lib/format.js';
 import { AwayBadge, TeamCalendar } from '../components/Availability.jsx';
@@ -20,6 +21,7 @@ const AVATAR_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#
 const RANK = { super_admin: 4, admin: 3, manager: 2, member: 1, viewer: 0 };
 /** Whether the viewer may change this person's role, permissions, password or access. */
 export const canManageAccount = (viewer, target) => viewer?.role === 'super_admin' || (RANK[viewer?.role] ?? -1) > (RANK[target?.role] ?? -1);
+const isAdmin = (u) => u?.role === 'admin' || u?.role === 'super_admin';
 const roleLabel = (role) => ({ super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' }[role] || role);
 
 function MemberDialog({ member, onClose, onSaved }) {
@@ -156,6 +158,8 @@ function MemberDialog({ member, onClose, onSaved }) {
       }
     >
       <div className="stack">
+        {!isNew && member.id === user?.id && <ProfilePhoto />}
+        {!isNew && member.id !== user?.id && isAdmin(user) && <PhotoAdminActions member={member} onChanged={onSaved} />}
         <div className="grid-2">
           <Field label="Full name">
             <input className="input" value={form.full_name} onChange={set('full_name')} autoFocus />
@@ -390,7 +394,7 @@ export default function Team() {
                   <tr key={member.id}>
                     <td>
                       <div className="row">
-                        <Avatar name={member.full_name} color={member.avatar_color} size={30} />
+                        <Avatar userId={member.id} name={member.full_name} color={member.avatar_color} size={30} />
                         <div>
                           <div className="row wrap" style={{ gap: 6, fontWeight: 600 }}>
                             {member.full_name}

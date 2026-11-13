@@ -761,7 +761,7 @@ export function TeamReviews({ departmentId }) {
             <section key={r.user.id} className="card card-pad stack-sm">
               <div className="row-between wrap">
                 <span className="row" style={{ gap: 8 }}>
-                  <Avatar name={r.user.full_name} color={r.user.avatar_color} size={24} />
+                  <Avatar userId={r.user.id} name={r.user.full_name} color={r.user.avatar_color} size={24} />
                   <strong>{r.user.full_name}</strong>
                 </span>
                 {r.review.status === 'SUBMITTED' ? <Badge tone="good">Sent {formatDate(r.review.submitted_at)}</Badge>

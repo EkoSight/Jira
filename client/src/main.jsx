@@ -3,9 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import './styles.css';
+import { applyBranding, cachedBranding } from './lib/brand.js';
 
-// restore the saved theme before first paint
-document.documentElement.dataset.theme = localStorage.getItem('taskflow.theme') || 'light';
+// the organisation's colours and the person's light/dark choice, before first paint
+applyBranding(cachedBranding());
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>

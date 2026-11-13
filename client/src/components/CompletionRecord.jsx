@@ -114,7 +114,7 @@ export default function CompletionRecord({ data, onOpenTask }) {
       <div className="record-facts">
         <Fact label="Owner">
           <span className="row" style={{ gap: 6 }}>
-            <Avatar name={task.assignee_name || '?'} color={task.assignee_color} size={22} />
+            <Avatar userId={task.assignee_id} name={task.assignee_name || '?'} color={task.assignee_color} size={22} />
             <span>{task.assignee_name || 'Nobody'}</span>
           </span>
         </Fact>
@@ -256,7 +256,7 @@ export default function CompletionRecord({ data, onOpenTask }) {
                   <div className="thread-body">
                     {(thread.messages || []).map((message) => (
                       <div key={message.id} className="thread-message">
-                        <Avatar name={message.author_name || 'Someone'}
+                        <Avatar userId={message.author_id} name={message.author_name || 'Someone'}
                           color={message.avatar_color} size={22} />
                         <div className="grow" style={{ minWidth: 0 }}>
                           <div className="row" style={{ gap: 7 }}>

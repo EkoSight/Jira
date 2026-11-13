@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, downloadFile, postDownload } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
 import {
   CATEGORY, CHOOSABLE, ELIGIBLE, FOLLOWUP_KIND, PRIORITY, dayOf, editableFields, fieldValueLabel, handedOut, money, when,
 } from '../../lib/sales.js';
@@ -420,7 +420,7 @@ export function Leads({ meta }) {
                     {l.is_stale && <> <Badge tone="warning">stale</Badge></>}
                     {l.retry_at && <div className="small muted">retry {when(l.retry_at)}{l.call_attempts ? ` · ${l.call_attempts} tr${l.call_attempts === 1 ? 'y' : 'ies'}` : ''}</div>}
                   </td>
-                  <td>{l.owner_name || <span className="muted">Nobody</span>}</td>
+                  <td>{l.owner_name ? <span className="row" style={{ gap: 6 }}><Avatar userId={l.owner_user_id} name={l.owner_name} color={l.owner_color} size={20} />{l.owner_name}</span> : <span className="muted">Nobody</span>}</td>
                   <td className="small">{shortPlace(l) || <span className="muted">{NOT_PROVIDED}</span>}{l.pincode ? <div className="muted tnum">{l.pincode}</div> : null}</td>
                   <td className="tnum">{l.effective_score ?? '—'}</td>
                   <td>{l.next_followup_due ? <span className={new Date(l.next_followup_due) < new Date() ? 'critical-text' : ''}>{when(l.next_followup_due)} <DueBadge dueAt={l.next_followup_due} /></span> : <span className="muted">none</span>}</td>

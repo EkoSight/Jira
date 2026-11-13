@@ -1,7 +1,8 @@
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { AuthProvider, RefDataProvider, ToastProvider, useAuth, useRefData } from './state/AppState.jsx';
+import { AuthProvider, BrandingProvider, RefDataProvider, ToastProvider, useAuth, useRefData } from './state/AppState.jsx';
 import { Spinner } from './components/ui.jsx';
+import { BrandLoader } from './components/BrandMark.jsx';
 import Layout from './components/Layout.jsx';
 import Login, { ForcePasswordChange } from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
@@ -37,7 +38,7 @@ function Protected({ permission, children }) {
 
 function Shell() {
   const { ready } = useRefData();
-  if (!ready) return <Spinner label="Loading your workspace" />;
+  if (!ready) return <BrandLoader label="Loading your workspace" />;
 
   return (
     <Layout>
@@ -171,7 +172,7 @@ function Shell() {
 
 function Gate() {
   const { user, loading } = useAuth();
-  if (loading) return <Spinner label="Signing you in" />;
+  if (loading) return <BrandLoader label="Signing you in" />;
   if (!user) return <Login />;
   if (user.must_change_password) return <ForcePasswordChange />;
   return (
@@ -187,7 +188,9 @@ export default function App() {
   return (
     <ToastProvider>
       <AuthProvider>
-        <Gate />
+        <BrandingProvider>
+          <Gate />
+        </BrandingProvider>
       </AuthProvider>
     </ToastProvider>
   );

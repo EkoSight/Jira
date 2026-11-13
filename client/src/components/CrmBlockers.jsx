@@ -230,7 +230,7 @@ function BlockerFacts({ thread, onEdit }) {
         {thread.dependency === 'EXTERNAL' ? (thread.external_party || 'someone outside') : 'us'}
       </span>
       <span className="row" style={{ gap: 4 }}>
-        <Avatar name={thread.responsible_name} color={thread.responsible_color} size={16} />
+        <Avatar userId={thread.responsible_user_id} name={thread.responsible_name} color={thread.responsible_color} size={16} />
         {firstName(thread.responsible_name)} clears it
       </span>
       <span className={late ? 'is-late' : ''}>

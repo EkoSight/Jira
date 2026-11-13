@@ -81,7 +81,7 @@ function ReviewBody({ review, month, canShare }) {
       <section className="card card-pad">
         <div className="row-between wrap" style={{ gap: 10 }}>
           <div className="row">
-            <Avatar name={review.user.full_name} color={review.user.avatar_color} size={40} />
+            <Avatar userId={review.user.id} name={review.user.full_name} color={review.user.avatar_color} size={40} />
             <div>
               <h2>{review.user.full_name}</h2>
               <div className="small muted">
@@ -350,7 +350,7 @@ export default function Performance() {
                 >
                   <div className="row-between wrap" style={{ gap: 10 }}>
                     <div className="row">
-                      <Avatar name={entry.user.full_name} color={entry.user.avatar_color} size={30} />
+                      <Avatar userId={entry.user.id} name={entry.user.full_name} color={entry.user.avatar_color} size={30} />
                       <div>
                         <div style={{ fontWeight: 600 }}>{entry.user.full_name}</div>
                         <div className="small muted">{entry.user.department || 'No department'}</div>

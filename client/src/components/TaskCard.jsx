@@ -86,7 +86,7 @@ export default function TaskCard({ task, onOpen, onOpenParent, draggable, onDrag
 
         <span style={{ marginLeft: 'auto' }}>
           {task.assignee_name ? (
-            <Avatar name={task.assignee_name} color={task.assignee_color} size={22} />
+            <Avatar userId={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={22} />
           ) : (
             <Badge tone="warning">Unassigned</Badge>
           )}

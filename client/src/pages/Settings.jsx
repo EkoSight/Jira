@@ -6,6 +6,9 @@ import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '.
 import { PRIORITIES } from '../lib/format.js';
 import AttendanceSettings from '../components/AttendanceSettings.jsx';
 import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
+import ProfilePhoto from '../components/ProfilePhoto.jsx';
+import LookSettings from '../components/LookSettings.jsx';
+import BrandingSettings from '../components/BrandingSettings.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
 import ReminderSettings from '../components/ReminderSettings.jsx';
@@ -676,6 +679,7 @@ const TABS = [
   ['thresholds', 'Thresholds'],
   ['attendance', 'Attendance & pay', 'attendance.policy'],
   ['chat', 'Google Chat', 'settings.manage'],
+  ['branding', 'Branding', 'settings.manage'],
   ['account', 'My account'],
 ];
 
@@ -705,6 +709,8 @@ function AccountTab() {
   return (
     <div className="stack">
       <SuperAdminClaim />
+      <ProfilePhoto />
+      <LookSettings />
       <div className="card card-pad stack-sm">
         <h3>{user.full_name}</h3>
         <div className="small muted">{user.email} · {{ super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' }[user.role] || user.role}</div>
@@ -770,6 +776,7 @@ export default function Settings() {
       {tab === 'thresholds' && <ThresholdsTab onChanged={refresh} />}
       {tab === 'attendance' && <AttendanceSettings />}
       {tab === 'chat' && <GoogleChatSettings />}
+      {tab === 'branding' && <BrandingSettings />}
       {tab === 'account' && <AccountTab />}
     </div>
   );

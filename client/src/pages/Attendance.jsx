@@ -284,7 +284,7 @@ function TeamTab() {
                       <tr key={p.user.id} className="clickable" onClick={() => setPerson(p.user)}>
                         <td>
                           <div className="row" style={{ gap: 8 }}>
-                            <Avatar name={p.user.full_name} color={p.user.avatar_color} size={24} />
+                            <Avatar userId={p.user.id} name={p.user.full_name} color={p.user.avatar_color} size={24} />
                             <div>
                               <div>{p.user.full_name}</div>
                               <div className="small muted">{p.user.department_name}</div>
@@ -332,7 +332,7 @@ function TeamTab() {
               {monthData.people.map((p) => (
                 <tr key={p.user.id} className="clickable" onClick={() => setPerson(p.user)}>
                   <td>
-                    <div className="row" style={{ gap: 8 }}><Avatar name={p.user.full_name} color={p.user.avatar_color} size={24} /> {p.user.full_name}</div>
+                    <div className="row" style={{ gap: 8 }}><Avatar userId={p.user.id} name={p.user.full_name} color={p.user.avatar_color} size={24} /> {p.user.full_name}</div>
                   </td>
                   <td className="tnum">{hhmm(p.totals.required_to_date ?? p.totals.required)}</td>
                   <td className="tnum">{hhmm(p.totals.in_schedule)}</td>
@@ -631,7 +631,7 @@ function QueueGroup({ title, note, items, render, action, bulk }) {
         <div className="att-queue">
           {items.map((i) => (
             <div key={`${i.user.id}-${i.date}-${i.kind}`} className="att-item">
-              <Avatar name={i.user.full_name} color={i.user.avatar_color} size={24} />
+              <Avatar userId={i.user.id} name={i.user.full_name} color={i.user.avatar_color} size={24} />
               <div className="grow">
                 <strong>{i.user.full_name}</strong> <span className="small muted">· {dayName(i.date)}</span>
                 {render && <div className="small">{render(i)}</div>}

@@ -1,20 +1,25 @@
 import { useState } from 'react';
 import { api, tokenStore } from '../api/client.js';
-import { useAuth, useToast } from '../state/AppState.jsx';
+import { useAuth, useBranding, useToast } from '../state/AppState.jsx';
 import { Field } from '../components/ui.jsx';
+import { BrandMark, Wordmark } from '../components/BrandMark.jsx';
 
 function Shell({ children }) {
+  const { branding } = useBranding();
   return (
     <div className="login-shell">
       <div className="login-card">
-        <div className="row" style={{ gap: 10, marginBottom: 18 }}>
-          <span className="brand-mark" style={{ width: 32, height: 32, fontSize: 14 }}>TF</span>
-          <div>
-            <h1 style={{ fontSize: 19 }}>TaskFlow</h1>
-            <div className="small muted">EkoSight task management</div>
-          </div>
+        <div className="login-brand">
+          <BrandMark size={56} mode="intro" label="" />
+          <h1 className="brand-name">
+            <span className="brand-app">{branding.appName}</span>
+            {branding.byline && <span className="brand-byline">{branding.byline}</span>}
+          </h1>
         </div>
         {children}
+        <div className="login-company">
+          <Wordmark height={34} />
+        </div>
       </div>
     </div>
   );

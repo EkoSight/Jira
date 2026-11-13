@@ -236,7 +236,7 @@ function TaskRow({ task, onOpenTask, onUnlink }) {
       </button>
       {task.is_overdue && <Badge tone="critical">late</Badge>}
       {task.assignee_name && (
-        <Avatar name={task.assignee_name} color={task.assignee_color} size={20} title={task.assignee_name} />
+        <Avatar userId={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={20} title={task.assignee_name} />
       )}
       <Badge tone={task.stage === 'done' ? 'good' : 'neutral'}>
         {STAGE_LABEL[task.stage] || task.status_name}
@@ -375,7 +375,7 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
               <div className="kr-figure-cell">
                 <div className="stat-label">Owner</div>
                 <div className="row" style={{ marginTop: 6 }}>
-                  <Avatar name={keyResult.owner_name || '?'} color={keyResult.owner_color} size={26} />
+                  <Avatar userId={keyResult.owner_user_id} name={keyResult.owner_name || '?'} color={keyResult.owner_color} size={26} />
                   <span style={{ fontWeight: 600, fontSize: 13 }}>
                     {keyResult.owner_name || 'Nobody yet'}
                   </span>
@@ -636,7 +636,7 @@ export default function KeyResultPanel({ keyResult, tasks = [], canEdit, onChang
             <span className="kr-measure tnum">{measurementSummary(keyResult)}</span>
             {keyResult.owner_name && (
               <span className="row" style={{ gap: 5 }}>
-                <Avatar name={keyResult.owner_name} color={keyResult.owner_color} size={18} />
+                <Avatar userId={keyResult.owner_user_id} name={keyResult.owner_name} color={keyResult.owner_color} size={18} />
                 <span>{mine ? 'You' : keyResult.owner_name}</span>
               </span>
             )}

@@ -246,6 +246,8 @@ export async function manifest(prefix) {
     start_url: '/',
     scope: '/',
     display: 'standalone',
+    orientation: 'any',
+    categories: ['productivity', 'business'],
     background_color: '#ffffff',
     theme_color: b.palette.light['--brand'],
     icons: [

@@ -183,7 +183,7 @@ export function Thread({ thread, canRaiseReview, canManage = false, onChanged })
         <div className="thread-body">
           {(thread.messages || []).map((message) => (
             <div key={message.id} className="thread-message">
-              <Avatar name={message.author_name || 'Someone'} color={message.avatar_color} size={24} />
+              <Avatar userId={message.author_id} name={message.author_name || 'Someone'} color={message.avatar_color} size={24} />
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="row" style={{ gap: 7 }}>
                   <strong className="small">{message.author_name || 'Removed user'}</strong>

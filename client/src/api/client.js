@@ -1,4 +1,4 @@
-export const BASE = import.meta.env.VITE_API_URL || '/api/taskflow';
+export const BASE = import.meta.env?.VITE_API_URL || '/api/taskflow';
 const TOKEN_KEY = 'taskflow.token';
 
 export const tokenStore = {
@@ -127,6 +127,25 @@ export async function postDownload(url, body, filename) {
   setTimeout(() => URL.revokeObjectURL(href), 10_000);
 }
 
+/** A form with several files and fields (profile photos, logos). */
+async function formRequest(method, path, form) {
+  const token = tokenStore.get();
+  let response;
+  try {
+    response = await fetch(`${BASE}${path}`, { method, headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form });
+  } catch {
+    throw new ApiError('Cannot reach the server — check your connection', 0);
+  }
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  if (!response.ok) {
+    if (response.status === 401) onUnauthorized();
+    throw new ApiError(data.error || `Upload failed (${response.status})`, response.status, data.details);
+  }
+  return data;
+}
+
 /** A body that is not JSON — a CSV file, an image — sent as it is. */
 async function rawRequest(method, path, body, contentType) {
   const token = tokenStore.get();
@@ -160,6 +179,15 @@ const qs = (params = {}) => {
 };
 
 export const api = {
+  // any route, for screens that are not wrapped below
+  get: (path, params) => request('GET', `${path}${qs(params)}`),
+  post: (path, body) => request('POST', path, body || {}),
+  put: (path, body) => request('PUT', path, body || {}),
+  del: (path, body) => request('DELETE', path, body),
+  form: (path, form, method = 'POST') => formRequest(method, path, form),
+  url: (path, params) => `${BASE}${path}${qs(params)}`,
+  token: tokenStore,
+
   login: (email, password) => request('POST', '/auth/login', { email, password }),
   me: () => request('GET', '/auth/me'),
   changePassword: (currentPassword, newPassword) =>

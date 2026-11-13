@@ -626,7 +626,7 @@ export function Subtasks({ task, subtasks, onOpen, onChanged, canEdit }) {
               {subtask.repeats_with_parent ? 'repeats' : 'one-off'}
             </button>
           )}
-          {subtask.assignee_name && <Avatar name={subtask.assignee_name} color={subtask.assignee_color} size={20} />}
+          {subtask.assignee_name && <Avatar userId={subtask.assignee_id} name={subtask.assignee_name} color={subtask.assignee_color} size={20} />}
         </div>
       ))}
 

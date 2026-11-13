@@ -145,7 +145,7 @@ function DealCard({ deal, stages, onOpen, onDragStart, onDragEnd, onMove, onChan
         <div className="row-between">
           {deal.owner_name ? (
             <span className="row" style={{ gap: 6 }} title="Accountable for this deal">
-              <Avatar name={deal.owner_name} color={deal.owner_color} size={20} />
+              <Avatar userId={deal.owner_user_id} name={deal.owner_name} color={deal.owner_color} size={20} />
               <span className="small muted truncate">{deal.owner_name}</span>
             </span>
           ) : <span className="kr-flag kr-flag-warning">Nobody owns it</span>}

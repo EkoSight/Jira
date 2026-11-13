@@ -236,7 +236,7 @@ function PersonLoad({ person, todayDate }) {
     <section className="card card-pad stack-sm person-load">
       <div className="row-between wrap" style={{ gap: 8 }}>
         <span className="row" style={{ gap: 8 }}>
-          <Avatar name={person.user.full_name} color={person.user.avatar_color} size={26} />
+          <Avatar userId={person.user.id} name={person.user.full_name} color={person.user.avatar_color} size={26} />
           <span>
             <strong>{person.user.full_name}</strong>
             {person.user.department && <span className="small muted"> · {person.user.department}</span>}

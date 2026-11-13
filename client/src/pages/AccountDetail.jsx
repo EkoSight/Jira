@@ -241,7 +241,7 @@ export default function AccountDetail() {
             <div className="row" style={{ marginTop: 6 }}>
               {account.owner_name ? (
                 <>
-                  <Avatar name={account.owner_name} color={account.owner_color} size={26} />
+                  <Avatar userId={account.owner_user_id} name={account.owner_name} color={account.owner_color} size={26} />
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{account.owner_name}</span>
                 </>
               ) : <span className="muted small">Nobody yet</span>}
@@ -252,7 +252,7 @@ export default function AccountDetail() {
             <div className="row" style={{ marginTop: 6 }}>
               {account.follower_name ? (
                 <>
-                  <Avatar name={account.follower_name} color={account.follower_color} size={26} />
+                  <Avatar userId={account.follower_user_id} name={account.follower_name} color={account.follower_color} size={26} />
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{account.follower_name}</span>
                 </>
               ) : <span className="muted small">Nobody</span>}
@@ -438,7 +438,7 @@ export default function AccountDetail() {
                   <button key={task.id} type="button" className="link-row" onClick={() => setOpenTask(task.id)}>
                     <span className="task-ref">{task.ref}</span>
                     <span className="grow truncate">{task.title}</span>
-                    {task.assignee_name && <Avatar name={task.assignee_name} color={task.assignee_color} size={20} />}
+                    {task.assignee_name && <Avatar userId={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={20} />}
                     <OutcomeBadge task={task} />
                     <Badge tone={task.stage === 'done' ? 'good' : due.tone}>
                       {task.stage === 'done' ? 'Done' : due.text}
@@ -475,7 +475,7 @@ export default function AccountDetail() {
                   <button key={task.id} type="button" className="link-row" onClick={() => setOpenTask(task.id)}>
                     <span className="task-ref">{task.ref}</span>
                     <span className="grow truncate">{task.title}</span>
-                    {task.assignee_name && <Avatar name={task.assignee_name} color={task.assignee_color} size={20} />}
+                    {task.assignee_name && <Avatar userId={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={20} />}
                     <OutcomeBadge task={task} />
                     <Badge tone={task.stage === 'done' ? 'good' : due.tone}>
                       {task.stage === 'done' ? 'Done' : due.text}

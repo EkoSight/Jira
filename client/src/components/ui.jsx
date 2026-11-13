@@ -1,6 +1,8 @@
 import { Children, Component, cloneElement, isValidElement, useEffect, useId, useState } from 'react';
 import { initials } from '../lib/format.js';
 import { BASE, fetchBlobUrl } from '../api/client.js';
+import { usePhotoUrl } from '../lib/photos.js';
+import { textOn } from '../../../shared/brandTheme.js';
 
 /**
  * An image that may live behind the API's bearer token.
@@ -61,11 +63,38 @@ export function CompanyLogo({ src, name = '', size = 28 }) {
   );
 }
 
-export function Avatar({ name, color = '#3b82f6', size = 26, title }) {
+// initials in white or near-black, whichever is readable on the person's colour
+const initialsColour = (color) => {
+  try { return textOn(color).text; } catch { return '#ffffff'; }
+};
+
+/**
+ * A person: their photo when they have one (pass userId), otherwise their
+ * initials on their colour. A picture that cannot load falls back to initials.
+ */
+export function Avatar({ name, color = '#3b82f6', size = 26, title, userId }) {
+  const url = usePhotoUrl(userId, size);
+  const [failed, setFailed] = useState(null);
+  if (url && failed !== url) {
+    return (
+      <img
+        className="avatar avatar-photo"
+        src={url}
+        width={size}
+        height={size}
+        style={{ width: size, height: size }}
+        alt=""
+        title={title || name}
+        aria-hidden="true"
+        decoding="async"
+        onError={() => setFailed(url)}
+      />
+    );
+  }
   return (
     <span
       className="avatar"
-      style={{ width: size, height: size, background: color, fontSize: Math.max(9, size * 0.4) }}
+      style={{ width: size, height: size, background: color, color: initialsColour(color), fontSize: Math.max(9, size * 0.4) }}
       title={title || name}
       aria-hidden="true"
     >
