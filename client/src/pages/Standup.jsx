@@ -236,7 +236,7 @@ const REASON = {
   LEAVE: 'on approved leave', LEAVE_MORNING: 'on leave this morning', LEAVE_PENDING: 'leave request pending',
   WEEKLY_OFF: 'weekly off', NOT_YET_JOINED: 'not joined yet', SUBMITTED_AFTER_REVIEW: 'arrived after the review',
   REMINDER_NOT_DELIVERED: 'the reminder was not delivered', REMINDER_NOT_SENT: 'no reminder went out',
-  FORMER_STAFF: 'former staff', IDENTITY_NOT_VERIFIED: 'Chat identity not verified',
+  FORMER_STAFF: 'former staff', IDENTITY_NOT_VERIFIED: 'Chat identity not verified', NOT_TRACKED: 'super admin — not expected',
   UNKNOWN_SENDER: 'Chat account not on the list', SHARED_ACCOUNT_NAME_NOT_MATCHED: 'shared account; name not matched',
   NAME_DOES_NOT_MATCH_ACCOUNT: 'name does not match the account', EXTERNAL_ACCOUNT_NOT_MAPPED: 'outside account not mapped',
 };
@@ -621,7 +621,7 @@ function SetupTab() {
         </div>
         <Field label="Who gets the private follow-up" hint="They need the “standup review” permission. Names stay in TaskFlow; Chat gets counts only.">
           <div className="row wrap" style={{ gap: 6 }}>
-            {(users || []).filter((u) => u.is_active !== false && ['admin', 'manager'].includes(u.role)).map((u) => (
+            {(users || []).filter((u) => u.is_active !== false && ['super_admin', 'admin', 'manager'].includes(u.role)).map((u) => (
               <button key={u.id} type="button" className={`kind-chip${form.escalateTo.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggleReviewer(u.id)}>{u.full_name}</button>
             ))}
           </div>

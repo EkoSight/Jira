@@ -15,6 +15,7 @@
     "doctor": "node src/db/doctor.js",
     "chat:check": "node src/db/chatCheck.js",
     "leave:reconcile": "node src/db/leaveReconcile.js",
+    "access:super-admin": "node src/db/superAdmin.js",
     "test": "node --env-file=.env.test --test --test-concurrency=1 \"tests/**/*.test.js\""
   },
   "dependencies": {

@@ -91,6 +91,9 @@ before(async () => {
     );
     ids[key] = rows[0].id;
   }
+  // payroll approval, reopening and salary amounts are kept for super admins;
+  // this admin closes payroll because a super admin handed those powers over
+  await query(`UPDATE users SET extra_permissions = ARRAY['payroll.approve', 'payroll.reopen', 'payroll.salary.edit'] WHERE id = $1`, [ids.admin]);
 
   await new Promise((resolve) => {
     server = createApp().listen(0, () => { baseUrl = `http://127.0.0.1:${server.address().port}`; resolve(); });

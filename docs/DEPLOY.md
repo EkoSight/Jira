@@ -209,6 +209,15 @@ sudo systemctl restart taskflow
 explicit `npm run migrate` is belt-and-braces — it surfaces a migration failure
 *before* the restart rather than during it.
 
+**Once, after the release that adds super admins (migration 032):** name the
+founders, or nobody can approve payroll:
+
+```bash
+npm run access:super-admin -- --grant <founder email> <founder email>
+```
+
+See `ACCESS.md`. `npm run doctor` warns until it is done.
+
 ### Zero-surprise checklist
 
 ```bash

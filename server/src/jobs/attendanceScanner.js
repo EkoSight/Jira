@@ -45,7 +45,7 @@ export async function runAttendanceScan(now = new Date()) {
                      AND l.day_part = 'FULL' AND $1::date BETWEEN l.start_date AND l.end_date) AS on_leave
        FROM users u
        LEFT JOIN attendance_sessions s ON s.user_id = u.id AND s.work_date = $1
-      WHERE u.is_active`,
+      WHERE u.is_active AND u.role <> 'super_admin'`,
     [today],
   );
   const profiles = await profilesFor(users.map((u) => u.id));

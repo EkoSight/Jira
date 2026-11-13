@@ -184,6 +184,7 @@ export default function Payroll() {
 const EXCLUDED_REASON = {
   JOINS_LATER: 'joins after this month',
   LEFT_EARLIER: 'left before this month',
+  NOT_TRACKED: 'super admin — attendance is not tracked, so there is no attendance-based month',
   DEACTIVATED_NO_EXIT_DATE: 'account deactivated, no exit date and no activity this month',
 };
 

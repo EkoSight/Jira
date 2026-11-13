@@ -4,7 +4,7 @@
  * reference numbers and the event stream automation reads.
  */
 import { query } from '../../db/pool.js';
-import { hasPermission } from '../../lib/permissions.js';
+import { hasPermission, isAdmin } from '../../lib/permissions.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
 import { getSettings, DEFAULT_SETTINGS } from '../settings.js';
 
@@ -211,7 +211,7 @@ export const money = {
  */
 export async function crmScope(user) {
   if (!user) return { all: false, userId: 0, departmentIds: [], own: true };
-  if (user.role === 'admin' || hasPermission(user, 'crm.view.all')) return { all: true, userId: user.id };
+  if (isAdmin(user) || hasPermission(user, 'crm.view.all')) return { all: true, userId: user.id };
   const settings = await salesSettings();
   // until an administrator switches record-level access on, everyone with CRM
   // access sees every record, as before the sales CRM

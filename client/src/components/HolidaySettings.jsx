@@ -338,7 +338,7 @@ function RequestDialog({ id, onClose, onChanged }) {
   if (!data) return <Modal title="Holiday change" onClose={onClose} size="lg"><Spinner /></Modal>;
   const { request: r, impact } = data;
   const own = r.proposed_by === user?.id;
-  const canDecide = r.status === 'PROPOSED' && can('holiday.approve') && (!own || user?.role === 'admin');
+  const canDecide = r.status === 'PROPOSED' && can('holiday.approve') && (!own || ['admin', 'super_admin'].includes(user?.role));
   const lines = impactLines(impact);
 
   return (

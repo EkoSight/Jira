@@ -22,13 +22,15 @@ import { LoadState, OfflineNote } from '../components/LoadState.jsx';
  * and then only for the teams they have been granted.
  */
 export default function Attendance() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  // super admins are not tracked: no month of their own to look at
+  const tracked = user?.role !== 'super_admin';
   const [params, setParams] = useSearchParams();
   const teamView = can('attendance.team') || can('attendance.all');
   const approver = can('attendance.approve') || can('attendance.extra.review') || can('leave.approve');
   const tabs = [
     ['today', 'Today'],
-    ['month', 'My month'],
+    ...(tracked ? [['month', 'My month']] : []),
     ['leave', 'My leave'],
     ...(teamView ? [['team', 'Team']] : []),
     ...(approver ? [['approvals', 'Approvals']] : []),
@@ -58,13 +60,15 @@ export default function Attendance() {
 
 function TodayTab() {
   const toast = useToast();
+  const { user } = useAuth();
   const [corrections, setCorrections] = useState(null);
   const load = useCallback(() => { api.corrections({ scope: 'mine' }).then((d) => setCorrections(d.corrections)).catch(toast.error); }, [toast]);
   useEffect(load, [load]);
   return (
     <div className="stack">
       <TodayAttendanceCard />
-      <section className="card">
+      {/* a super admin has no attendance to correct */}
+      {user?.role !== 'super_admin' && <section className="card">
         <div className="card-head"><h2>My correction requests</h2></div>
         <div className="card-pad">
           {!corrections ? <Spinner /> : (
@@ -74,7 +78,7 @@ function TodayTab() {
             />
           )}
         </div>
-      </section>
+      </section>}
     </div>
   );
 }

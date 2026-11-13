@@ -23,7 +23,7 @@
 import crypto from 'node:crypto';
 import { query, withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { hasPermission } from '../lib/permissions.js';
+import { hasPermission, isAdmin } from '../lib/permissions.js';
 import { notify } from './activity.js';
 import { policyAt, policyOn, policyTimeline } from './attendancePolicy.js';
 import {
@@ -272,7 +272,7 @@ async function peopleCovered(entries, from) {
   const departments = [...new Set(entries.filter((e) => scopeOf(e) === 'DEPARTMENT').map((e) => e.department_id))];
   const people = [...new Set(entries.filter((e) => scopeOf(e) === 'PERSON').map((e) => e.user_id))];
   const { rows } = await query(
-    `SELECT u.id, u.full_name, u.department_id, u.is_active FROM users u
+    `SELECT u.id, u.full_name, u.department_id, u.is_active, u.role FROM users u
        LEFT JOIN employee_work_profiles p ON p.user_id = u.id
       WHERE (u.is_active OR (p.exit_date IS NOT NULL AND p.exit_date >= $1))
         AND ($2::boolean OR u.department_id = ANY($3::int[]) OR u.id = ANY($4::int[]))
@@ -337,13 +337,15 @@ export async function computeImpact(request, { now = new Date() } = {}) {
 
   // ---- attendance: worked out from the calendar, so it follows the change at once
   const changes = [];
-  if (ids.length) {
+  // super admins are told about holidays, but their attendance is not tracked
+  const tracked = people.filter((p) => p.role !== 'super_admin').map((p) => p.id);
+  if (tracked.length) {
     const window = (list) => list.filter((h) => h.holiday_date >= from && h.holiday_date <= to);
     const [was, will] = await Promise.all([
-      buildLedgers(ids, from, to, { now, holidays: window(before) }),
-      buildLedgers(ids, from, to, { now, holidays: window(after) }),
+      buildLedgers(tracked, from, to, { now, holidays: window(before) }),
+      buildLedgers(tracked, from, to, { now, holidays: window(after) }),
     ]);
-    for (const id of ids) {
+    for (const id of tracked) {
       const a = was.get(id)?.days || [];
       const b = will.get(id)?.days || [];
       a.forEach((day, i) => {
@@ -610,7 +612,7 @@ export async function decideRequest(actor, id, { approve, note = null, now = new
   }
 
   const self = request.proposed_by === actor.id;
-  if (self && actor.role !== 'admin') throw forbidden('Someone else must approve a change you proposed');
+  if (self && !isAdmin(actor)) throw forbidden('Someone else must approve a change you proposed');
   if (self && !cleanNote) throw badRequest('Approving your own change needs a note saying why nobody else could');
 
   const impact = await computeImpact(request, { now });

@@ -48,6 +48,8 @@ export async function payrollPeople(month) {
        LEFT JOIN employee_work_profiles p ON p.user_id = u.id
       WHERE (p.joining_date IS NULL OR p.joining_date <= $2)
         AND (p.exit_date IS NULL OR p.exit_date >= $1)
+        -- super admins are not tracked, so there is no attendance-based month for them
+        AND u.role <> 'super_admin'
         AND (u.is_active
              OR p.exit_date IS NOT NULL
              OR EXISTS (SELECT 1 FROM attendance_sessions s WHERE s.user_id = u.id AND s.work_date BETWEEN $1 AND $2)
@@ -65,12 +67,13 @@ export async function payrollExclusions(month) {
   const { first, last } = monthBounds(month);
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.is_active, p.joining_date, p.exit_date,
-            CASE WHEN p.joining_date > $2 THEN 'JOINS_LATER'
+            CASE WHEN u.role = 'super_admin' AND u.is_active THEN 'NOT_TRACKED'
+                 WHEN p.joining_date > $2 THEN 'JOINS_LATER'
                  WHEN p.exit_date < $1 THEN 'LEFT_EARLIER'
                  ELSE 'DEACTIVATED_NO_EXIT_DATE' END AS reason
        FROM users u LEFT JOIN employee_work_profiles p ON p.user_id = u.id
       WHERE u.id NOT IN (SELECT user_id FROM payroll_results WHERE month = $1)
-        AND (p.joining_date > $2 OR p.exit_date < $1
+        AND ((u.role = 'super_admin' AND u.is_active) OR p.joining_date > $2 OR p.exit_date < $1
              OR (NOT u.is_active AND p.exit_date IS NULL
                  AND NOT EXISTS (SELECT 1 FROM attendance_sessions s WHERE s.user_id = u.id AND s.work_date BETWEEN $1 AND $2)
                  AND NOT EXISTS (SELECT 1 FROM leave_requests l WHERE l.user_id = u.id AND l.status IN ('APPROVED_PAID', 'APPROVED_UNPAID')

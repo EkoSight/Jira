@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 import { query, withTransaction } from '../db/pool.js';
 import { asyncHandler, badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
-import { hasPermission } from '../lib/permissions.js';
+import { hasPermission, tracksAttendance } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
 import { computeMonth, decimalHours, hhmm } from '../lib/attendanceCalc.js';
 import { sendCsv } from '../lib/csv.js';
@@ -110,6 +110,8 @@ router.get(
     res.json({
       today,
       server_time: new Date().toISOString(),
+      // false for a super admin: no check-in, check-out or reminders
+      tracked: tracksAttendance(me),
       policy: policySummary(config),
       privacy_notice: PRIVACY_NOTICE,
       gate,
@@ -286,7 +288,7 @@ const requireTeamView = requirePermission('attendance.team', 'attendance.all');
 async function visibleActive(viewer, departmentId) {
   const ids = await visibleUserIds(viewer);
   const { rows } = await query(
-    `SELECT id FROM users WHERE is_active AND ($1::int[] IS NULL OR id = ANY($1::int[]))
+    `SELECT id FROM users WHERE is_active AND role <> 'super_admin' AND ($1::int[] IS NULL OR id = ANY($1::int[]))
         AND ($2::int IS NULL OR department_id = $2) ORDER BY full_name`,
     [ids, departmentId || null],
   );

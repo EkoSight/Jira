@@ -212,7 +212,7 @@ export async function autoAssignLead(client, leadId, { actor = null, origin = 'U
     );
     // the people who can assign hear about it once
     const { rows: assigners } = await client.query(
-      `SELECT id FROM users WHERE is_active = TRUE AND (role = 'admin' OR (role = 'manager' AND NOT ('crm.assign' = ANY(revoked_permissions)))
+      `SELECT id FROM users WHERE is_active = TRUE AND (role IN ('admin', 'super_admin') OR (role = 'manager' AND NOT ('crm.assign' = ANY(revoked_permissions)))
           OR 'crm.assign' = ANY(extra_permissions))`,
     );
     for (const a of assigners) {

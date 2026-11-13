@@ -189,13 +189,14 @@ async function main() {
   // 6. is there anything to sign in with? -----------------------------------
   const { rows: counts } = await query(`
     SELECT (SELECT COUNT(*)::int FROM users)               AS users,
-           (SELECT COUNT(*)::int FROM users WHERE role = 'admin' AND is_active) AS admins,
+           (SELECT COUNT(*)::int FROM users WHERE role IN ('admin', 'super_admin') AND is_active) AS admins,
+           (SELECT COUNT(*)::int FROM users WHERE role = 'super_admin' AND is_active) AS super_admins,
            (SELECT COUNT(*)::int FROM departments)         AS departments,
            (SELECT COUNT(*)::int FROM workflow_statuses)   AS statuses,
            (SELECT COUNT(*)::int FROM blackmark_rules)     AS rules,
            (SELECT COUNT(*)::int FROM tasks)               AS tasks
   `);
-  const { users, admins, departments, statuses, rules, tasks } = counts[0];
+  const { users, admins, super_admins: superAdmins, departments, statuses, rules, tasks } = counts[0];
 
   if (admins === 0) {
     bad('no active admin account exists');
@@ -203,6 +204,12 @@ async function main() {
   }
 
   ok(`${admins} admin account(s)`, `${users} user(s) in total`);
+  if (superAdmins === 0) {
+    warn('no super admin yet: payroll approval, reopening and salary amounts are kept for super admins');
+    console.log('      Run: npm run access:super-admin -- --grant <founder email> [<founder email>]');
+  } else {
+    ok(`${superAdmins} super admin account(s)`);
+  }
   ok(`${departments} departments, ${statuses} board statuses, ${rules} black mark rules`);
   ok(`${tasks} task card(s)`);
 
@@ -231,7 +238,7 @@ async function main() {
   }
 
   const { rows: admin } = await query(
-    `SELECT email, must_change_password FROM users WHERE role = 'admin' AND is_active ORDER BY id LIMIT 1`,
+    `SELECT email, must_change_password FROM users WHERE role IN ('admin', 'super_admin') AND is_active ORDER BY id LIMIT 1`,
   );
 
   console.log('\n\u001b[32mEverything checks out.\u001b[0m\n');

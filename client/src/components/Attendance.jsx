@@ -187,7 +187,7 @@ function FieldDayDialog({ onClose, onDone }) {
 }
 
 /** The card at the top of the dashboard, and the heart of the check-in screen. */
-export function TodayAttendanceCard({ variant = 'card' }) {
+export function TodayAttendanceCard({ variant = 'card', hideWhenUntracked = false }) {
   const { today, reload } = useAttendance();
   const [correction, setCorrection] = useState(null);
   const [locationOf, setLocationOf] = useState(null);
@@ -214,6 +214,17 @@ export function TodayAttendanceCard({ variant = 'card' }) {
 
   if (!today) {
     return <section className="card card-pad att-card"><Spinner label="Checking today’s attendance" /></section>;
+  }
+  // a super admin: outside daily work tracking
+  if (today.tracked === false) {
+    if (hideWhenUntracked || variant === 'gate') return null;
+    return (
+      <section className="card card-pad att-card" aria-label="Today’s attendance">
+        <div className="att-eyebrow">Attendance · {dayName(today.today)}</div>
+        <div className="att-headline"><span className="att-dot att-dot-neutral" aria-hidden="true" />Not tracked for you</div>
+        <div className="small muted">Super admins do not check in or out and get no attendance reminders. You can still see the team’s attendance and decide requests.</div>
+      </section>
+    );
   }
 
   const tz = today.policy.timezone;

@@ -174,7 +174,7 @@ export default function Layout({ children }) {
             <Avatar name={user.full_name} color={user.avatar_color} size={30} />
             <div className="grow truncate">
               <div className="small" style={{ fontWeight: 600 }}>{user.full_name}</div>
-              <div className="small muted" style={{ textTransform: 'capitalize' }}>{user.role}</div>
+              <div className="small muted">{{ super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' }[user.role] || user.role}</div>
             </div>
             <button type="button" className="btn btn-ghost btn-icon" onClick={handleSignOut} title="Sign out">
               <Icon name="logout" />

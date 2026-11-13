@@ -107,11 +107,18 @@ deadline is visible at review time.
 |---|---|---|
 | GET | `/users` | `user.view` |
 | GET | `/users/:id` | `user.view` |
-| POST | `/users` | `user.create` |
-| PATCH | `/users/:id` | `user.edit` |
-| POST | `/users/:id/reset-password` | `user.edit` |
-| DELETE | `/users/:id` | `user.delete` (deactivates, never deletes) |
-| GET | `/users/permissions/catalogue` | signed in |
+| POST | `/users` | `user.create`; a role, or extra permissions, needs `user.permissions` and a role below the actor's (any, for a super admin) |
+| PATCH | `/users/:id` | `user.edit`; role, permissions, email, password or active status only for someone below the actor (a super admin: anyone); never one's own role or permissions; a super admin's record only by a super admin |
+| POST | `/users/:id/reset-password` | `user.edit`, and the person is below the actor (a super admin: anyone) |
+| DELETE | `/users/:id` | `user.delete`, and the person is below the actor (deactivates, never deletes) |
+| GET | `/users/permissions/catalogue` | signed in — also the roles and permissions this person may hand out (`assignableRoles`, `grantable`) and `superAdminOnly` |
+
+Roles, highest first: `super_admin`, `admin`, `manager`, `member`, `viewer`. A
+super admin has every permission, which cannot be revoked, and is outside
+attendance tracking (`/attendance/today` returns `tracked: false`; check-in and
+check-out answer 409 `NOT_TRACKED`). `payroll.approve`, `payroll.reopen` and
+`payroll.salary.edit` are kept for super admins; only a super admin can grant
+them. See `ACCESS.md`.
 
 Creating a member without a password returns `temporary_password` once — it is
 never retrievable again. Assigning the `admin` role, or any permission override,

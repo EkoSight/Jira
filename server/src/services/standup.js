@@ -93,7 +93,7 @@ export async function companyDay(date) {
  */
 export async function eligibility(date) {
   const { rows: members } = await query(
-    `SELECT m.*, u.is_active AS user_active, u.email AS user_email, p.joining_date::text AS joining_date,
+    `SELECT m.*, u.is_active AS user_active, u.email AS user_email, u.role AS user_role, p.joining_date::text AS joining_date,
             p.exit_date::text AS exit_date, p.working_days, COALESCE(m.department_id, u.department_id) AS dept
        FROM standup_members m
        LEFT JOIN users u ON u.id = m.user_id
@@ -118,6 +118,8 @@ export async function eligibility(date) {
   for (const m of members) {
     if (m.identity_status !== 'VERIFIED') { excluded.push({ member: m, reason: 'IDENTITY_NOT_VERIFIED' }); continue; }
     if (m.user_id && m.user_active === false) { excluded.push({ member: m, reason: 'FORMER_STAFF' }); continue; }
+    // the founders are outside daily work tracking: welcome to post, never expected
+    if (m.user_role === 'super_admin') { excluded.push({ member: m, reason: 'NOT_TRACKED' }); continue; }
     if (m.exit_date && m.exit_date < date) { excluded.push({ member: m, reason: 'FORMER_STAFF' }); continue; }
     if (m.joining_date && m.joining_date > date) { exempt.push({ member: m, reason: 'NOT_YET_JOINED' }); continue; }
     const mine = leave.filter((l) => l.user_id === m.user_id);

@@ -12,7 +12,7 @@
 
 import { query, withTransaction } from '../db/pool.js';
 import { badRequest, conflict, forbidden, HttpError, notFound } from '../lib/errors.js';
-import { hasPermission } from '../lib/permissions.js';
+import { hasPermission, tracksAttendance } from '../lib/permissions.js';
 import { clock, creditableIntervals } from '../lib/attendanceCalc.js';
 import { currentPolicy, policyAt, policyOn, policyTimeline } from './attendancePolicy.js';
 
@@ -353,7 +353,11 @@ const requestIdOf = (value) => {
  * Check In / Start Work. Safe to repeat: the same request id returns the
  * session it made, and a second device finds the session already open.
  */
+/** A super admin's day is not tracked: there is nothing for them to check in or out of. */
+const NOT_TRACKED = 'Attendance is not tracked for super admins, so there is nothing to check in or out of.';
+
 export async function checkIn(user, { requestId, location, userAgent }, now = new Date()) {
+  if (!tracksAttendance(user)) throw conflict(NOT_TRACKED, { code: 'NOT_TRACKED' });
   const id = requestIdOf(requestId);
   const { config } = await currentPolicy(now);
 
@@ -402,6 +406,7 @@ export async function checkIn(user, { requestId, location, userAgent }, now = ne
 
 /** Check Out / End Work. Completes the open session, even after midnight. */
 export async function checkOut(user, { requestId, location, userAgent }, now = new Date()) {
+  if (!tracksAttendance(user)) throw conflict(NOT_TRACKED, { code: 'NOT_TRACKED' });
   const id = requestIdOf(requestId);
   const { config } = await currentPolicy(now);
 
@@ -466,6 +471,8 @@ export async function attendanceGate(user, now = new Date()) {
   const today = dateIn(config.timezone, now);
   const open = { required: false, satisfied: true, today };
 
+  // super admins are outside daily work tracking: never asked to check in
+  if (!tracksAttendance(user)) return { ...open, reason: 'NOT_TRACKED' };
   if (config.enforcement !== 'REQUIRE' || !config.startDate) return { ...open, reason: 'NOT_ENFORCED' };
   if (today < config.startDate) return { ...open, reason: 'NOT_STARTED' };
 

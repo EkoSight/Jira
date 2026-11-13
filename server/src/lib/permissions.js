@@ -4,6 +4,16 @@
  * A user's effective permissions = role defaults + extra_permissions - revoked_permissions.
  * This lets an admin hand out a single extra capability (say "blackmark.waive") to a
  * team lead without inventing a new role.
+ *
+ * Roles, highest first: super_admin, admin, manager, member, viewer.
+ *
+ *   super_admin  the founders. Every permission, always (nothing can be revoked
+ *                from them, so they cannot be locked out). Not part of daily
+ *                work tracking: no attendance, check-in, check-out, reminders,
+ *                standup expectation or attendance-based payroll.
+ *   admin        runs the system day to day, without the powers kept for super
+ *                admins (SUPER_ADMIN_ONLY), and cannot create admins or touch a
+ *                super admin's account.
  */
 export const PERMISSIONS = {
   'task.view.all': 'See tasks across every department',
@@ -103,8 +113,15 @@ export const PERMISSIONS = {
 
 export const PERMISSION_KEYS = Object.keys(PERMISSIONS);
 
+/**
+ * Powers kept for super admins: money decisions. An admin does not have them,
+ * and only a super admin can hand one to anyone as an extra permission.
+ */
+export const SUPER_ADMIN_ONLY = ['payroll.approve', 'payroll.reopen', 'payroll.salary.edit'];
+
 export const ROLE_PERMISSIONS = {
-  admin: PERMISSION_KEYS,
+  super_admin: PERMISSION_KEYS,
+  admin: PERMISSION_KEYS.filter((p) => !SUPER_ADMIN_ONLY.includes(p)),
 
   manager: [
     'task.view.all',
@@ -192,8 +209,42 @@ export const ROLE_PERMISSIONS = {
 
 export const ROLES = Object.keys(ROLE_PERMISSIONS);
 
+export const ROLE_LABELS = { super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' };
+
+const RANK = { super_admin: 4, admin: 3, manager: 2, member: 1, viewer: 0 };
+const rank = (role) => RANK[role] ?? -1;
+
+export const isSuperAdmin = (user) => user?.role === 'super_admin';
+/** An administrator of either kind, for the few checks that name the role. */
+export const isAdmin = (user) => user?.role === 'admin' || user?.role === 'super_admin';
+/** Whether a person's day is tracked: attendance, check-in, reminders, the standup. */
+export const tracksAttendance = (user) => user?.role !== 'super_admin';
+
+/**
+ * Whether someone may act on another person's account: their role, their
+ * permissions, their password, their sign-in email, switching them off. Only
+ * on someone below them; a super admin on anyone, including the other super admin.
+ */
+export function canManageAccount(actor, target) {
+  if (!actor || !target) return false;
+  if (isSuperAdmin(actor)) return true;
+  return rank(actor.role) > rank(target.role);
+}
+
+/** Whether someone may give a role: only one below their own (any, for a super admin). */
+export function canAssignRole(actor, role) {
+  if (!actor || !ROLES.includes(role)) return false;
+  if (isSuperAdmin(actor)) return true;
+  return rank(role) < rank(actor.role);
+}
+
+/** Whether someone may hand out a permission as an extra: the kept powers only by a super admin. */
+export const canGrantPermission = (actor, permission) => isSuperAdmin(actor) || !SUPER_ADMIN_ONLY.includes(permission);
+
 export function effectivePermissions(user) {
   if (!user) return [];
+  // a super admin's powers cannot be revoked, so the founders can never be locked out
+  if (user.role === 'super_admin') return [...PERMISSION_KEYS];
   const base = new Set(ROLE_PERMISSIONS[user.role] || []);
   for (const p of user.extra_permissions || []) base.add(p);
   for (const p of user.revoked_permissions || []) base.delete(p);

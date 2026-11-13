@@ -201,7 +201,8 @@ router.post(
     const s = await standupSettings();
     const { rows: users } = await query(
       `SELECT u.id, u.full_name, u.email, u.job_title, u.department_id FROM users u
-        WHERE u.is_active AND NOT EXISTS (SELECT 1 FROM standup_members m WHERE m.user_id = u.id AND m.active)
+        WHERE u.is_active AND u.role <> 'super_admin'
+          AND NOT EXISTS (SELECT 1 FROM standup_members m WHERE m.user_id = u.id AND m.active)
           AND NOT EXISTS (SELECT 1 FROM standup_members m WHERE m.shared_account_id = u.id AND m.active)
         ORDER BY u.full_name`,
     );

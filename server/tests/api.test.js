@@ -610,12 +610,16 @@ test('a member cannot add people or hand out permissions', async (t) => {
 test('the last active admin cannot be demoted or deactivated', async (t) => {
   if (skipIfUnavailable(t)) return;
 
+  // nobody changes their own role, so the only admin cannot demote themselves
   const demote = await call('PATCH', `/users/${ids.admin}`, {
     token: tokens.admin,
     body: { role: 'member' },
   });
-  assert.equal(demote.status, 400);
-  assert.match(demote.body.error, /admin must remain/);
+  assert.equal(demote.status, 403);
+  assert.match(demote.body.error, /own role/);
+  // saving their own profile with the role unchanged is fine
+  const same = await call('PATCH', `/users/${ids.admin}`, { token: tokens.admin, body: { role: 'admin', job_title: 'Operations' } });
+  assert.equal(same.status, 200);
 });
 
 test('the dashboard reports overdue, critical and unassigned counts', async (t) => {

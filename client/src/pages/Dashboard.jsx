@@ -97,7 +97,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <TodayAttendanceCard />
+      <TodayAttendanceCard hideWhenUntracked />
 
       <div className="stat-grid">
         <Stat label="Open" value={summary.open} note="Backlog and to do" onClick={() => goToBoard({ stage: 'todo' })} />

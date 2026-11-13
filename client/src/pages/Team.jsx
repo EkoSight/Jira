@@ -8,7 +8,8 @@ import { WORKLOAD_STATUS, loadSummary, relativeTime } from '../lib/format.js';
 import { AwayBadge, TeamCalendar } from '../components/Availability.jsx';
 
 const ROLE_NOTE = {
-  admin: 'Full control, including permissions and rules',
+  super_admin: 'The founders: every permission, always. Not part of attendance, check-in, reminders or the standup',
+  admin: 'Runs the system, except payroll approval, reopening and salary amounts. Cannot make admins',
   manager: 'Runs a team: assigns work, adds people, waives black marks',
   member: 'Works on cards and creates their own',
   viewer: 'Read only',
@@ -16,8 +17,13 @@ const ROLE_NOTE = {
 
 const AVATAR_COLORS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#4a3aa7', '#e34948'];
 
+const RANK = { super_admin: 4, admin: 3, manager: 2, member: 1, viewer: 0 };
+/** Whether the viewer may change this person's role, permissions, password or access. */
+export const canManageAccount = (viewer, target) => viewer?.role === 'super_admin' || (RANK[viewer?.role] ?? -1) > (RANK[target?.role] ?? -1);
+const roleLabel = (role) => ({ super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' }[role] || role);
+
 function MemberDialog({ member, onClose, onSaved }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const { departments } = useRefData();
   const toast = useToast();
 
@@ -64,10 +70,12 @@ function MemberDialog({ member, onClose, onSaved }) {
         max_concurrent_tasks: Number(form.max_concurrent_tasks),
         external_user_id: form.external_user_id || null,
       };
-      if (can('user.permissions')) {
+      if (can('user.permissions') && accessEditable) {
         payload.extra_permissions = form.extra_permissions;
         payload.revoked_permissions = form.revoked_permissions;
       }
+      // the role only when it can and did change: an unchanged form never asks for more
+      if (!isNew && (!accessEditable || form.role === member.role)) delete payload.role;
 
       if (isNew) {
         const result = await api.createUser(payload);
@@ -120,6 +128,12 @@ function MemberDialog({ member, onClose, onSaved }) {
     );
   }
 
+  // their own account, or someone at or above the viewer: profile only
+  const accessEditable = isNew || (member.id !== user?.id && canManageAccount(user, member));
+  const superAdmin = form.role === 'super_admin';
+  const roles = [...new Set([...(catalogue.assignableRoles || []), form.role])].filter(Boolean);
+  const grantable = new Set(catalogue.grantable || Object.keys(catalogue.permissions || {}));
+
   const inheritedFor = (key) => {
     const roleDefaults = catalogue.rolePermissions?.[form.role];
     if (roleDefaults) return roleDefaults.includes(key);
@@ -160,10 +174,15 @@ function MemberDialog({ member, onClose, onSaved }) {
           <Field label="Job title">
             <input className="input" value={form.job_title} onChange={set('job_title')} placeholder="Agronomist" />
           </Field>
-          <Field label="Role" hint={ROLE_NOTE[form.role]}>
-            <select className="select" value={form.role} onChange={set('role')} disabled={!can('user.permissions')}>
-              {(catalogue.roles || ['admin', 'manager', 'member', 'viewer']).map((role) => (
-                <option key={role} value={role}>{role}</option>
+          <Field
+            label="Role"
+            hint={!accessEditable && !isNew
+              ? (member.id === user?.id ? 'You cannot change your own role; ask another administrator' : 'Only someone above this role can change it')
+              : ROLE_NOTE[form.role]}
+          >
+            <select className="select" value={form.role} onChange={set('role')} disabled={!can('user.permissions') || !accessEditable}>
+              {roles.map((role) => (
+                <option key={role} value={role}>{catalogue.roleLabels?.[role] || roleLabel(role)}</option>
               ))}
             </select>
           </Field>
@@ -220,11 +239,17 @@ function MemberDialog({ member, onClose, onSaved }) {
           <input className="input" value={form.external_user_id} onChange={set('external_user_id')} />
         </Field>
 
-        {can('user.permissions') && (
+        {can('user.permissions') && accessEditable && superAdmin && (
+          <div className="callout is-quiet small">
+            <Icon name="alert" />
+            <span>A super admin always has every permission; none can be taken away. They are not asked to check in or out.</span>
+          </div>
+        )}
+        {can('user.permissions') && accessEditable && !superAdmin && (
           <div className="card card-pad stack-sm">
             <div className="row-between">
               <h3>Permissions</h3>
-              <span className="small muted">Highlighted ones come with the {form.role} role</span>
+              <span className="small muted">Highlighted ones come with the {roleLabel(form.role).toLowerCase()} role{catalogue.superAdminOnly?.length && user?.role !== 'super_admin' ? ' · payroll approval, reopening and salary amounts are kept for super admins' : ''}</span>
             </div>
             <div className="perm-grid">
               {Object.entries(catalogue.permissions || {}).map(([key, description]) => {
@@ -237,6 +262,7 @@ function MemberDialog({ member, onClose, onSaved }) {
                     <input
                       type="checkbox"
                       checked={granted}
+                      disabled={!inherited && !granted && !grantable.has(key)}
                       onChange={(e) => togglePermission(key, e.target.checked, inherited)}
                     />
                     <span>
@@ -378,7 +404,7 @@ export default function Team() {
                       </div>
                     </td>
                     <td>
-                      <Badge tone={member.role === 'admin' ? 'brand' : 'neutral'}>{member.role}</Badge>
+                      <Badge tone={['admin', 'super_admin'].includes(member.role) ? 'brand' : 'neutral'}>{roleLabel(member.role)}</Badge>
                       <div className="small muted tnum">{member.permissions.length} permissions</div>
                     </td>
                     <td style={{ minWidth: 180 }}>
@@ -423,17 +449,17 @@ export default function Team() {
                             <Icon name="dashboard" size={14} />
                           </button>
                         )}
-                        {can('user.edit') && (
-                          <>
-                            <button type="button" className="btn btn-sm" onClick={() => setEditing(member)}>
-                              Edit
-                            </button>
-                            <button type="button" className="btn btn-sm" onClick={() => resetPassword(member)}>
-                              Reset password
-                            </button>
-                          </>
+                        {can('user.edit') && (member.role !== 'super_admin' || user.role === 'super_admin' || member.id === user.id) && (
+                          <button type="button" className="btn btn-sm" onClick={() => setEditing(member)}>
+                            Edit
+                          </button>
                         )}
-                        {can('user.delete') && member.is_active && member.id !== user.id && (
+                        {can('user.edit') && (member.id === user.id || canManageAccount(user, member)) && (
+                          <button type="button" className="btn btn-sm" onClick={() => resetPassword(member)}>
+                            Reset password
+                          </button>
+                        )}
+                        {can('user.delete') && member.is_active && member.id !== user.id && canManageAccount(user, member) && (
                           <ConfirmButton
                             label="Deactivate"
                             confirmLabel="Tap again"

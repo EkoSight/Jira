@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { config } from '../config.js';
 import { query, withTransaction } from '../db/pool.js';
 import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
-import { hasPermission } from '../lib/permissions.js';
+import { hasPermission, isAdmin } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
 import { recordAuditEvent } from '../services/audit.js';
 import { assertVisible, canSee, crmScope, salesSettings, scopeCondition } from '../services/sales/core.js';
@@ -393,7 +393,7 @@ router.get('/exports/opportunities', requirePermission('crm.export'), asyncHandl
   const { listOpportunities } = await import('../services/opportunities.js');
   const deals = await listOpportunities({ scope, eligibleOnly: true, pipelineId: req.query.pipeline_id ? Number(req.query.pipeline_id) : null, status: req.query.status || null });
   if (deals.length >= 10_000) throw badRequest('More than 10,000 deals match; narrow the filters');
-  const finance = hasPermission(req.currentUser, 'crm.finance') || hasPermission(req.currentUser, 'crm.view.all') || req.currentUser.role === 'admin';
+  const finance = hasPermission(req.currentUser, 'crm.finance') || hasPermission(req.currentUser, 'crm.view.all') || isAdmin(req.currentUser);
   const cols = [['id', 'Id'], ['name', 'Deal'], ['account_name', 'Organization'], ['stage_name', 'Stage'], ['status', 'Status'], ['owner_name', 'Owner'],
     ['currency', 'Currency'], ['estimated_value', 'Estimated value'], ['probability', 'Probability %'], ['expected_close', 'Expected close'],
     ['agreed_value', 'Agreed value'], ...(finance ? [['cash_received', 'Received (deal currency)']] : []), ['next_step', 'Next action'], ['next_step_due', 'Next action due']];

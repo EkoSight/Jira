@@ -24,7 +24,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { query } from '../../db/pool.js';
 import { badRequest, forbidden, notFound } from '../../lib/errors.js';
-import { hasPermission } from '../../lib/permissions.js';
+import { hasPermission, isAdmin } from '../../lib/permissions.js';
 import { notify } from '../activity.js';
 import { recordAuditEvent } from '../audit.js';
 import { dayStamp, logActivity } from '../crm.js';
@@ -399,9 +399,9 @@ export async function decideApproval(client, { approvalId, actor, decision, comm
   if (!approval) throw notFound('Approval not found');
   if (approval.status !== 'PENDING') throw badRequest(`This approval was already ${approval.status.toLowerCase()}`);
   const named = (approval.approver_ids || []).includes(actor.id);
-  if (!named && !(actor.role === 'admin')) throw forbidden('You are not an approver for this quotation');
+  if (!named && !isAdmin(actor)) throw forbidden('You are not an approver for this quotation');
   const quote = await getQuote(approval.quote_id, client);
-  if (approval.requested_by === actor.id && actor.role !== 'admin') {
+  if (approval.requested_by === actor.id && !isAdmin(actor)) {
     const need = await approvalNeeded(client, quote);
     if (!need.allowSelf) throw forbidden('You cannot approve an exception you asked for');
   }
@@ -567,7 +567,7 @@ export async function pendingApprovalsFor(user) {
        FROM crm_approvals ap JOIN crm_quotes q ON q.id = ap.quote_id JOIN opportunities o ON o.id = q.opportunity_id
        JOIN accounts a ON a.id = o.account_id LEFT JOIN users ru ON ru.id = ap.requested_by
       WHERE ap.status = 'PENDING' AND ($1 = ANY(ap.approver_ids) OR $2)
-      ORDER BY ap.requested_at`, [user.id, user.role === 'admin'],
+      ORDER BY ap.requested_at`, [user.id, isAdmin(user)],
   );
   return rows;
 }

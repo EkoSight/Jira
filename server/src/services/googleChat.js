@@ -342,7 +342,7 @@ export async function morningSummary(userId, now = new Date(), { force = false }
                   AND $2::date BETWEEN start_date AND end_date) AS on_leave`,
       [userId, today],
     );
-    checkIn = rows[0].required && !rows[0].checked_in && !rows[0].on_leave;
+    checkIn = rows[0].required && !rows[0].checked_in && !rows[0].on_leave && user.role !== 'super_admin';
   }
 
   if (!force && !tasks.length && !leaveWaiting && !correctionsWaiting && !checkIn) return null;
