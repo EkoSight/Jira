@@ -1,5 +1,6 @@
 import { query } from '../db/pool.js';
 import { getSettings } from './settings.js';
+import { deadlineClock } from './deadlines.js';
 import { dateIn, orgCalendar, statusOn } from './availability.js';
 
 const scopeClause = (scope, params) => {
@@ -23,8 +24,11 @@ const scopeClause = (scope, params) => {
 
 /** Headline counters for the dashboard tiles. */
 export async function taskSummary(scope = {}) {
-  const settings = await getSettings();
-  const params = [settings.workload.dueSoonDays];
+  // the same "overdue" and "due soon" as the board, My Tasks and Chat
+  // (shared/deadlineHealth.js): due soon is due from now to the end of the
+  // Nth working day, and deferred work is never overdue
+  const c = await deadlineClock();
+  const params = [c.now, c.endSoon];
   const where = scopeClause(scope, params);
 
   const { rows } = await query(
@@ -37,10 +41,11 @@ export async function taskSummary(scope = {}) {
        COUNT(*) FILTER (WHERE s.stage = 'done')::int                                  AS done,
        COUNT(*) FILTER (WHERE s.stage NOT IN ('done','cancelled'))::int               AS pending,
        COUNT(*) FILTER (WHERE t.priority = 'critical' AND s.stage NOT IN ('done','cancelled'))::int AS critical,
-       COUNT(*) FILTER (WHERE t.due_date < now() AND s.stage NOT IN ('done','cancelled'))::int      AS overdue,
+       COUNT(*) FILTER (WHERE t.due_date < $1 AND t.deferral_id IS NULL AND s.stage NOT IN ('done','cancelled'))::int      AS overdue,
        COUNT(*) FILTER (
-         WHERE t.due_date >= now()
-           AND t.due_date < now() + ($1 || ' days')::interval
+         WHERE t.due_date >= $1
+           AND t.due_date < $2
+           AND t.deferral_id IS NULL
            AND s.stage NOT IN ('done','cancelled')
        )::int                                                                          AS due_soon,
        COUNT(*) FILTER (WHERE t.assignee_id IS NULL AND s.stage NOT IN ('done','cancelled'))::int   AS unassigned,
@@ -73,7 +78,7 @@ export async function breakdowns(scope = {}) {
       `SELECT d.id, d.name, d.key, d.color,
               COUNT(t.id)::int                                                      AS total,
               COUNT(t.id) FILTER (WHERE s.stage NOT IN ('done','cancelled'))::int    AS pending,
-              COUNT(t.id) FILTER (WHERE t.due_date < now() AND s.stage NOT IN ('done','cancelled'))::int AS overdue,
+              COUNT(t.id) FILTER (WHERE t.due_date < now() AND t.deferral_id IS NULL AND s.stage NOT IN ('done','cancelled'))::int AS overdue,
               COUNT(t.id) FILTER (WHERE s.stage = 'done')::int                       AS done
          FROM departments d
          LEFT JOIN tasks t ON t.department_id = d.id AND ${where}
@@ -132,7 +137,7 @@ export async function workload(scope = {}) {
             COUNT(t.id) FILTER (WHERE s.stage = 'in_progress')::int                          AS active_tasks,
             COUNT(t.id) FILTER (WHERE s.stage = 'blocked')::int                              AS blocked_tasks,
             COUNT(t.id) FILTER (
-              WHERE t.due_date < now() AND s.stage NOT IN ('done','cancelled')
+              WHERE t.due_date < now() AND t.deferral_id IS NULL AND s.stage NOT IN ('done','cancelled')
             )::int                                                                           AS overdue_tasks,
             COUNT(t.id) FILTER (
               WHERE t.priority = 'critical' AND s.stage NOT IN ('done','cancelled')
@@ -250,7 +255,7 @@ export async function upcomingDeadlines({ days = 7, limit = 25, ...scope } = {})
             s.name AS status, s.stage, s.color AS status_color,
             d.name AS department, d.color AS department_color,
             u.full_name AS assignee, u.avatar_color,
-            (t.due_date < now()) AS is_overdue
+            (t.due_date < now() AND t.deferral_id IS NULL) AS is_overdue, t.review_date, t.deferral_id
        FROM tasks t
        JOIN workflow_statuses s ON s.id = t.status_id
        JOIN departments d ON d.id = t.department_id
@@ -258,6 +263,7 @@ export async function upcomingDeadlines({ days = 7, limit = 25, ...scope } = {})
       WHERE ${where}
         AND s.stage NOT IN ('done','cancelled')
         AND t.due_date IS NOT NULL
+        AND t.deferral_id IS NULL
         AND t.due_date < now() + ($1 || ' days')::interval
       ORDER BY t.due_date ASC
       LIMIT $2`,

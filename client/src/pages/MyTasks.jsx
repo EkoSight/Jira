@@ -1,36 +1,110 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
 import TaskCard from '../components/TaskCard.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import CompleteTaskDialog from '../components/CompleteTaskDialog.jsx';
+import { MY_GROUPS } from '../../../shared/deadlineHealth.js';
+import { setDeadlineCalendar } from '../lib/format.js';
 
-const GROUPS = [
-  { key: 'overdue', title: 'Overdue', tone: 'critical', note: 'Past the deadline — clear these first' },
-  { key: 'today', title: 'Due today', tone: 'warning', note: null },
-  { key: 'week', title: 'Next 7 days', tone: 'serious', note: null },
-  { key: 'later', title: 'Later', tone: 'neutral', note: null },
-  { key: 'undated', title: 'No deadline set', tone: 'neutral', note: null },
-];
-
-const bucketFor = (task) => {
-  if (!task.due_date) return 'undated';
-  const due = new Date(task.due_date);
-  const today = new Date();
-  today.setHours(23, 59, 59, 999);
-  if (due < new Date()) return 'overdue';
-  if (due <= today) return 'today';
-  const week = new Date();
-  week.setDate(week.getDate() + 7);
-  return due <= week ? 'week' : 'later';
+const TONE = { overdue: 'critical', today: 'warning', upcoming: 'serious', blocked: 'critical', review: 'warning', undated: 'warning', later: 'neutral', deferred: 'neutral' };
+const NOTE = {
+  overdue: 'Past the deadline: clear these first, or ask for a new date',
+  blocked: 'Waiting on something: say what, so it can be cleared',
+  review: 'Deferred or Backlog work that is due a look',
+  undated: 'No deadline and no review date: give each one a date',
 };
 
+/** The board link that shows exactly a group's tasks, for the same person. */
+const boardLink = (group, relation, userId) => {
+  const q = new URLSearchParams(group.filter);
+  q.set(relation === 'OWNER' ? 'assignee_id' : 'supporter_id', String(userId));
+  return `/board?${q.toString()}`;
+};
+
+function Section({ title, relation, tasks, counts, userId, onOpen, onDone, note }) {
+  const [open, setOpen] = useState({});
+  const groups = MY_GROUPS.map((g) => ({ ...g, tasks: tasks.filter((t) => t.group === g.key) })).filter((g) => g.tasks.length);
+  const total = tasks.length;
+  return (
+    <section className="stack" style={{ gap: 10 }} aria-labelledby={`mine-${relation}`}>
+      <div className="row-between wrap">
+        <h2 id={`mine-${relation}`} style={{ margin: 0 }}>{title} <span className="muted tnum">· {total}</span></h2>
+        {note && <span className="small muted">{note}</span>}
+      </div>
+      {/* the day at a glance: each count is the same as the board's with that filter */}
+      <div className="row wrap" style={{ gap: 6 }}>
+        {MY_GROUPS.filter((g) => counts?.[g.key]).map((g) => (
+          <Link key={g.key} className={`badge badge-${TONE[g.key]}`} to={boardLink(g, relation, userId)}>
+            {g.title} <strong className="tnum">{counts[g.key]}</strong>
+          </Link>
+        ))}
+      </div>
+      {groups.map((group) => {
+        const collapsed = group.collapsed && !open[group.key];
+        return (
+          <section key={group.key} className="card">
+            <div className="card-head">
+              <div className="row">
+                <h3 style={{ margin: 0 }}>{group.title}</h3>
+                <Badge tone={TONE[group.key]}>{group.tasks.length}</Badge>
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                {NOTE[group.key] && <span className="small muted">{NOTE[group.key]}</span>}
+                <Link className="small" to={boardLink(group, relation, userId)}>On the board</Link>
+                {group.collapsed && (
+                  <button type="button" className="btn btn-sm btn-ghost" aria-expanded={!collapsed} onClick={() => setOpen((o) => ({ ...o, [group.key]: !o[group.key] }))}>
+                    {collapsed ? 'Show' : 'Hide'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {!collapsed && (
+              <div className="card-pad stack-sm">
+                {group.tasks.map((task) => (
+                  <div key={task.id} className="row" style={{ alignItems: 'stretch', gap: 8 }}>
+                    <div className="grow">
+                      {relation === 'SUPPORTING' && (
+                        <div className="row small muted" style={{ gap: 5, marginBottom: 3 }}>
+                          <Icon name="team" size={12} />
+                          Supporting {task.assignee_name || 'nobody yet'}: {task.assignee_name ? 'they own the deadline' : 'this task needs an owner'}
+                        </div>
+                      )}
+                      {task.recurrence_parent_id && (
+                        <div className="row small muted" style={{ gap: 5, marginBottom: 3 }}>
+                          <Icon name="clock" size={12} />
+                          Next in the {task.recurrence} series: the previous one is closed
+                        </div>
+                      )}
+                      {task.next_action && (
+                        <div className="small" style={{ marginBottom: 3 }}><span className="muted">Next:</span> {task.next_action}</div>
+                      )}
+                      <TaskCard task={task} onOpen={() => onOpen(task.id)} onOpenParent={(parentId) => onOpen(parentId)} compact />
+                    </div>
+                    {relation === 'OWNER' && (
+                      <button type="button" className="btn btn-sm" onClick={() => onDone(task)} title="Mark done" style={{ alignSelf: 'center' }}>
+                        <Icon name="check" size={14} /> Done
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
+    </section>
+  );
+}
+
+/** My Tasks: the daily starting point. What I own, then what I support. */
 export default function MyTasks() {
   const { statuses } = useRefData();
   const { user } = useAuth();
   const toast = useToast();
-  const [tasks, setTasks] = useState([]);
+  const [data, setData] = useState({ tasks: [], counts: { OWNER: {}, SUPPORTING: {} } });
   const [loading, setLoading] = useState(true);
   const [openTask, setOpenTask] = useState(null);
 
@@ -38,7 +112,10 @@ export default function MyTasks() {
     setLoading(true);
     api
       .myTasks()
-      .then((data) => setTasks(data.tasks))
+      .then((result) => {
+        setDeadlineCalendar(result.calendar);
+        setData(result);
+      })
       .catch((err) => toast.error(err))
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -54,85 +131,34 @@ export default function MyTasks() {
     setCompleting({ task, statusId: doneStatus.id });
   };
 
-  if (loading && tasks.length === 0) return <Spinner label="Loading your work" />;
+  if (loading && data.tasks.length === 0) return <Spinner label="Loading your work" />;
 
-  const grouped = GROUPS.map((group) => ({
-    ...group,
-    tasks: tasks.filter((task) => bucketFor(task) === group.key),
-  })).filter((group) => group.tasks.length > 0);
+  const owned = data.tasks.filter((t) => t.relation === 'OWNER');
+  const supporting = data.tasks.filter((t) => t.relation === 'SUPPORTING');
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
+    <div className="stack" style={{ gap: 22 }}>
       <div>
         <h1>My tasks</h1>
         <div className="small muted">
-          {tasks.length} open item{tasks.length === 1 ? '' : 's'} you own or are supporting, ordered by deadline
+          {owned.length} you own · {supporting.length} you support. Every open task appears once, in one group.
         </div>
       </div>
 
-      {grouped.length === 0 && (
-        <EmptyState title="Nothing on your plate">
-          You have no open tasks to own or support right now.
-        </EmptyState>
+      {data.tasks.length === 0 && (
+        <EmptyState title="Nothing on your plate">You have no open tasks to own or support right now.</EmptyState>
       )}
 
-      {grouped.map((group) => (
-        <section key={group.key} className="card">
-          <div className="card-head">
-            <div className="row">
-              <h2>{group.title}</h2>
-              <Badge tone={group.tone}>{group.tasks.length}</Badge>
-            </div>
-            {group.note && <span className="small muted">{group.note}</span>}
-          </div>
-          <div className="card-pad stack-sm">
-            {group.tasks.map((task) => (
-              <div key={task.id} className="row" style={{ alignItems: 'stretch', gap: 8 }}>
-                <div className="grow">
-                  {task.assignee_id !== user.id && (
-                    <div className="row small muted" style={{ gap: 5, marginBottom: 3 }}>
-                      <Icon name="team" size={12} />
-                      Supporting {task.assignee_name || 'someone'} — they own the deadline
-                    </div>
-                  )}
-                  {/* the successor of a completed repeat looks identical to the card
-                      that was just closed, so say plainly that this is the next one */}
-                  {task.recurrence_parent_id && (
-                    <div className="row small muted" style={{ gap: 5, marginBottom: 3 }}>
-                      <Icon name="clock" size={12} />
-                      Next in the {task.recurrence} series — the previous one is closed
-                    </div>
-                  )}
-                  <TaskCard
-                    task={task}
-                    onOpen={() => setOpenTask(task.id)}
-                    onOpenParent={(parentId) => setOpenTask(parentId)}
-                    compact
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-sm"
-                  onClick={() => startComplete(task)}
-                  title="Mark done"
-                  style={{ alignSelf: 'center' }}
-                >
-                  <Icon name="check" size={14} /> Done
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
+      {owned.length > 0 && (
+        <Section title="I own" relation="OWNER" tasks={owned} counts={data.counts.OWNER} userId={user.id} onOpen={setOpenTask} onDone={startComplete} note="You carry these deadlines" />
+      )}
+      {supporting.length > 0 && (
+        <Section title="I'm supporting" relation="SUPPORTING" tasks={supporting} counts={data.counts.SUPPORTING} userId={user.id} onOpen={setOpenTask} onDone={startComplete} note="Following or tagged: the owner carries the deadline" />
+      )}
 
       {openTask && <TaskDialog taskId={openTask} onClose={() => setOpenTask(null)} onSaved={load} />}
       {completing && (
-        <CompleteTaskDialog
-          task={completing.task}
-          targetStatusId={completing.statusId}
-          onClose={() => setCompleting(null)}
-          onCompleted={load}
-        />
+        <CompleteTaskDialog task={completing.task} targetStatusId={completing.statusId} onClose={() => setCompleting(null)} onCompleted={load} />
       )}
     </div>
   );

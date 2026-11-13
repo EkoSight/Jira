@@ -50,7 +50,7 @@ async function gather(userId, { start, end, previousStart }) {
            AND t.completed_at >= $2 AND t.completed_at < $3)                       AS avg_days_late,
        (SELECT COUNT(*)::int FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
          WHERE t.assignee_id = $1 AND s.stage NOT IN ('done','cancelled')
-           AND t.is_archived = FALSE AND t.due_date < now())                       AS overdue_now,
+           AND t.is_archived = FALSE AND t.due_date < now() AND t.deferral_id IS NULL)                       AS overdue_now,
        (SELECT COUNT(*)::int FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
          WHERE t.assignee_id = $1 AND s.stage NOT IN ('done','cancelled')
            AND t.is_archived = FALSE)                                              AS open_now,
@@ -451,7 +451,7 @@ const TASK_METRIC_CLAUSES = {
   },
   overdueNow: {
     label: 'Open and already past the deadline',
-    where: `s.stage NOT IN ('done','cancelled') AND t.is_archived = FALSE AND t.due_date < now()`,
+    where: `s.stage NOT IN ('done','cancelled') AND t.is_archived = FALSE AND t.due_date < now() AND t.deferral_id IS NULL`,
     order: `t.due_date ASC`,
     currentState: true,
   },

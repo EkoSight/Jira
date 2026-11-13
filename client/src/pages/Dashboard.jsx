@@ -102,13 +102,13 @@ export default function Dashboard() {
       <TodayAttendanceCard hideWhenUntracked />
 
       <div className="stat-grid">
-        <Stat label="Open" value={summary.open} note="Backlog and to do" onClick={() => goToBoard({ stage: 'todo' })} />
+        <Stat label="Open" value={summary.open} note="Backlog and to do" onClick={() => goToBoard({ stage: 'backlog,todo' })} />
         <Stat label="In progress" value={summary.in_progress} note="Being worked on now" onClick={() => goToBoard({ stage: 'in_progress' })} />
-        <Stat label="Overdue" value={summary.overdue} note="Past the deadline" tone="critical" onClick={() => goToBoard({ overdue: 'true' })} />
-        <Stat label="Due soon" value={summary.due_soon} note="Next few days" tone="warning" onClick={() => goToBoard({ due_within_days: 3 })} />
-        <Stat label="Critical" value={summary.critical} note="Highest priority open" tone="serious" onClick={() => goToBoard({ priority: 'critical' })} />
-        <Stat label="Unassigned" value={summary.unassigned} note="Nobody owns these" onClick={() => goToBoard({ assignee_id: 'none' })} />
-        <Stat label="Done this month" value={summary.completed_this_month} note={`${summary.completed_this_week} this week`} tone="good" onClick={() => goToBoard({ stage: 'done' })} />
+        <Stat label="Overdue" value={summary.overdue} note="Past the deadline" tone="critical" onClick={() => goToBoard({ due: 'overdue' })} />
+        <Stat label="Due soon" value={summary.due_soon} note="Today and the next 3 working days" tone="warning" onClick={() => goToBoard({ due: 'soon' })} />
+        <Stat label="Critical" value={summary.critical} note="Highest priority open" tone="serious" onClick={() => goToBoard({ priority: 'critical', exclude_stage: 'done,cancelled' })} />
+        <Stat label="Unassigned" value={summary.unassigned} note="Nobody owns these" onClick={() => goToBoard({ assignee_id: 'none', exclude_stage: 'done,cancelled' })} />
+        <Stat label="Done this month" value={summary.completed_this_month} note={`${summary.completed_this_week} this week`} tone="good" onClick={() => goToBoard({ stage: 'done', show_done: '1' })} />
         <Stat label="Blocked" value={summary.blocked} note="Waiting on something" tone="serious" onClick={() => goToBoard({ stage: 'blocked' })} />
       </div>
 
@@ -117,7 +117,7 @@ export default function Dashboard() {
         <section className="card">
           <div className="card-head">
             <h2>Deadlines coming up</h2>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => goToBoard({ due_within_days: 7 })}>
+            <button type="button" className="btn btn-ghost btn-sm" onClick={() => goToBoard({ due: 'next7' })}>
               See all <Icon name="chevron" size={13} />
             </button>
           </div>

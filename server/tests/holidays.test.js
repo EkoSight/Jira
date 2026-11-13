@@ -350,6 +350,15 @@ test('a holiday added after the day: preview first, attendance follows, stored r
   await runBlackMarkScan({ now: at(FRI9, '18:00') });
   await query('UPDATE tasks SET status_id = $2, completed_at = $3 WHERE id = $1', [due.id, ids.done, at(SAT10, '10:00')]);
   await runBlackMarkScan({ now: at(SAT10, '12:00') });
+  // D2: finishing after a recorded missed deadline is not marked a second time.
+  // A "finished late" mark recorded under the old stacking rules stays exactly
+  // as it was (as on a live site), and a holiday correction handles it as before.
+  assert.equal((await marksFor(due.id)).length, 1, 'one mark for one missed deadline');
+  const { rows: [lateRule] } = await query(`SELECT id FROM blackmark_rules WHERE trigger_type = 'completed_late'`);
+  await recordBlackMark({
+    userId: users.ana.id, taskId: due.id, ruleId: lateRule.id, points: 1, reason: `Completed ${due.ref} after the deadline`,
+    occurredAt: at(SAT10, '10:00'), occurrenceKey: `rule:${lateRule.id}:task:${due.id}:late`,
+  });
   const [mark, lateMark] = await marksFor(due.id);
   assert.equal(mark.status, 'active');
   assert.equal(lateMark.reason, `Completed ${due.ref} after the deadline`);

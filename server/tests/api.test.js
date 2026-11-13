@@ -258,13 +258,13 @@ test('a deadline can be moved but never removed', async (t) => {
 
   const moved = await call('PATCH', `/tasks/${taskId}`, {
     token: tokens.admin,
-    body: { due_date: daysFromNow(9) },
+    body: { due_date: daysFromNow(9), deadline_reason: 'The supplier needs another week' },
   });
   assert.equal(moved.status, 200, 'moving it forward is normal');
 
   const backwards = await call('PATCH', `/tasks/${taskId}`, {
     token: tokens.admin,
-    body: { due_date: daysFromNow(-2) },
+    body: { due_date: daysFromNow(-2), deadline_reason: 'Trying the past' },
   });
   assert.equal(backwards.status, 400, 'but not into the past');
 
@@ -392,7 +392,7 @@ test('changing the deadline is counted and the original is kept', async (t) => {
 
   await call('PATCH', `/tasks/${ids.task}`, {
     token: tokens.admin,
-    body: { due_date: daysFromNow(10) },
+    body: { due_date: daysFromNow(10), deadline_reason: 'Waiting on the lab results' },
   });
   const detail = await call('GET', `/tasks/${ids.task}`, { token: tokens.admin });
   assert.equal(detail.body.task.due_date_changes, 1);
@@ -432,6 +432,9 @@ test('black marks are recorded once per rule and task, however often the scan ru
     },
   });
   await makeOverdue(overdue.body.task.id, 5);
+  // the deadline was moved into the past: treat the rule as in force for a while
+  // (a new rule applies only from when it is saved)
+  await query(`UPDATE blackmark_rules SET effective_from = now() - interval '30 days' WHERE id = $1`, [rule.body.rule.id]);
 
   const first = await runBlackMarkScan();
   const second = await runBlackMarkScan();
@@ -473,9 +476,12 @@ test('a rule scoped to critical work ignores lower priorities', async (t) => {
   });
   await makeOverdue(criticalTask.body.task.id, 2);
 
+  // a rule that has been in force for a while (a new one applies from when it is saved)
+  await query(`UPDATE blackmark_rules SET effective_from = now() - interval '30 days' WHERE name = 'Critical only'`);
   const after = await runBlackMarkScan();
-  assert.equal(after.created.length, 2, 'both the general and the critical rule fire');
-  assert.ok(after.created.some((mark) => Number(mark.points) === 5));
+  // D2: overlapping rules never add up; the most specific one applies
+  assert.equal(after.created.length, 1, 'one mark for one missed deadline');
+  assert.equal(Number(after.created[0].points), 5, 'from the rule for critical work');
 });
 
 test('a grace period holds the mark back until it expires', async (t) => {
@@ -897,6 +903,7 @@ test('the follower can see and move the task, but the owner keeps the black mark
     body: { name: 'Owner accountability', trigger_type: 'deadline_missed', points: 1, grace_hours: 0 },
   });
 
+  await query(`UPDATE blackmark_rules SET effective_from = now() - interval '30 days' WHERE effective_from IS NOT NULL`);
   const scan = await runBlackMarkScan();
   const mark = scan.created.find((m) => m.task_id === taskId);
   assert.ok(mark, 'the missed deadline is recorded');

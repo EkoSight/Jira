@@ -4292,3 +4292,24 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .look-swatch.is-active { border-color: var(--brand-ink); box-shadow: 0 0 0 1px var(--brand-ink); }
 .look-swatch:focus-within, .kind-chip:focus-within { outline: 2px solid var(--brand-ink); outline-offset: 2px; }
 .brand-logo-sample.is-dark .muted { color: #c3c2b7; }
+
+/* ---------------------------------------------------------------- no missed tasks */
+
+.chip-pair { display: inline-flex; align-items: center; border: 1px solid var(--border); border-radius: 999px; padding: 0 2px; }
+.chip-pair .btn { height: 26px; }
+.link-button { background: none; border: 0; padding: 0; color: var(--brand-ink); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.link-button:hover { text-decoration: underline; }
+.link-button:focus-visible { outline: 2px solid var(--brand-ink); outline-offset: 2px; border-radius: 3px; }
+.review-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.review-row:last-child { border-bottom: 0; }
+.review-fields { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.review-fields label { display: flex; flex-direction: column; gap: 3px; min-width: 160px; }
+.review-fields label.grow { flex: 1 1 220px; }
+.review-footer { border-top: 1px solid var(--border); background: var(--surface-2); }
+.deadline-panel { margin-top: 12px; }
+.deadline-panel table.data td, .deadline-panel table.data th { padding: 6px 8px; }
+@media (max-width: 640px) {
+  .review-row { flex-direction: column; }
+  .review-row .select { width: 100%; }
+  .review-fields label { min-width: 0; flex: 1 1 100%; }
+}

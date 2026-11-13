@@ -366,6 +366,33 @@ export const DEFAULT_SETTINGS = {
     },
   },
 
+  // task reminders: one planned engine for every task (CRM follow-ups keep their own)
+  reminders: {
+    // TEST until an administrator has looked at the delivery log and switched it
+    // to LIVE: in TEST, messages for the administrator who switched it on are
+    // sent, labelled TEST, and everyone else's are recorded as "would send".
+    // LIVE also retires the old due-soon notice. OFF plans nothing.
+    mode: 'TEST',
+    testRecipientId: null,
+    // D5: one reminder this many hours before the deadline, if still open
+    beforeDueHours: 2,
+    // a notice to the owner at the deadline
+    atDue: true,
+    // after the grace period, a notice to the fallback person (reporting manager,
+    // then the department's managers)
+    managerNotice: true,
+    // D6: nothing is sent between these times (India time); it waits for the
+    // next morning summary
+    quietStart: '20:00',
+    quietEnd: '08:30',
+    // a morning summary the server could not send on time is still sent until
+    // this time the same day, marked late
+    catchUpUntil: '18:00',
+    // the weekly backlog review, on the first working day of the week
+    weeklyBacklog: true,
+    // the coverage check runs after the morning messages have had time to go
+    coverageTime: '11:00',
+  },
   googleChat: {
     // off until an admin has sent a test message and switched it on
     enabled: false,

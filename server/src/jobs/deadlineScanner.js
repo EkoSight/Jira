@@ -12,6 +12,9 @@ let timer = null;
 /** Warns assignees about deadlines that land inside the "due soon" window. */
 async function sendDueSoonReminders() {
   const settings = await getSettings();
+  // retired once the planned task reminders are live (services/taskReminders.js):
+  // they remind once, before the deadline, at a sensible hour, with the details
+  if (settings.reminders?.mode === 'LIVE') return;
   const days = settings.workload.dueSoonDays;
 
   await query(

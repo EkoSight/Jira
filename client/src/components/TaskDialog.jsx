@@ -13,6 +13,7 @@ import {
 import CompleteTaskDialog from './CompleteTaskDialog.jsx';
 import DiscussionPanel from './DiscussionPanel.jsx';
 import CompletionRecord from './CompletionRecord.jsx';
+import TaskDeadlinePanel from './TaskDeadlinePanel.jsx';
 import TaskOverview from './TaskOverview.jsx';
 import { AvailabilityWarning, useAwayOn } from './Availability.jsx';
 import { STATUS_META as AWAY_META } from '../lib/availability.js';
@@ -341,6 +342,8 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const [saving, setSaving] = useState(false);
   const [detail, setDetail] = useState(null);
   const [form, setForm] = useState(() => blankTask(defaults));
+  // why the deadline is moving: every move needs one (D1), and it is kept in the history
+  const [deadlineReason, setDeadlineReason] = useState('');
   const [checklistDraft, setChecklistDraft] = useState('');
   // an existing card opens on its overview; the form is only for creating, or
   // for deliberately editing the task's details
@@ -455,6 +458,8 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const canReassign = isNew ? can('task.create') : Boolean(detail?.can_edit || detail?.can_reassign);
   const handOverOnly = !isNew && !canEdit && canReassign;
   const task = detail?.task;
+  const dueMoved = !isNew && Boolean(task?.due_date) && Boolean(form.due_date)
+    && Math.abs(new Date(fromDateTimeLocal(form.due_date)).getTime() - new Date(task.due_date).getTime()) >= 60_000;
 
   const payload = () => {
     const data = {
@@ -473,17 +478,23 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     };
     if (form.status_id) data.status_id = Number(form.status_id);
     if (form.account_id) data.account_id = Number(form.account_id);
+    if (dueMoved) data.deadline_reason = deadlineReason.trim();
     return data;
   };
 
   const save = async () => {
     if (!form.title.trim() || form.title.trim().length < 3) return toast.error('Give the task a title first');
     if (!form.department_id) return toast.error('Pick a department');
+    if (dueMoved && deadlineReason.trim().length < 5) return toast.error('Say why the deadline is moving (a few words): it is kept in the task\'s history');
     if (isNew && !form.assignee_id) return toast.error('Select a task owner before creating the task');
     if (isNew && !form.due_date && !autoDeadline) {
       return toast.error('Set a deadline — every task needs a date it is expected by');
     }
-    if (form.due_date && new Date(form.due_date).getTime() < Date.now() - 60_000) {
+    // only a deadline that is being set or changed has to be in the future: an
+    // overdue task can still be saved with its deadline as it is
+    const dueChanged = isNew || !task?.due_date
+      || Math.abs(new Date(fromDateTimeLocal(form.due_date)).getTime() - new Date(task.due_date).getTime()) >= 60_000;
+    if (dueChanged && form.due_date && new Date(form.due_date).getTime() < Date.now() - 60_000) {
       return toast.error('That deadline has already passed — pick a date and time in the future');
     }
 
@@ -545,8 +556,11 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
               }
             : payload();
 
-          const { task: updated } = await api.updateTask(activeId, body);
-          toast.success(handOverOnly ? 'Task handed over' : 'Saved');
+          const { task: updated, deadline_request: request } = await api.updateTask(activeId, body);
+          toast.success(handOverOnly ? 'Task handed over'
+            : request?.status === 'PENDING' ? `Saved. The new deadline is waiting for approval${request.why ? `: ${request.why}` : ''}`
+              : 'Saved');
+          setDeadlineReason('');
           setDetail((current) => ({ ...current, task: updated }));
           onSaved?.(updated);
           reload();
@@ -827,6 +841,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
               onPostUpdate={() => setTab('discussion')}
             >
               {workSections}
+              <TaskDeadlinePanel task={detail?.task} onChanged={() => { reload(); onSaved?.(); }} />
             </TaskOverview>
           )}
 
@@ -987,6 +1002,14 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                     min={minDeadline}
                   />
                 </Field>
+                {dueMoved && (
+                  <Field
+                    label="Why is the deadline moving? *"
+                    hint="Kept in the task's history. You can move your own deadline once, before it passes; otherwise the reporter or your manager approves it first."
+                  >
+                    <input className="input" value={deadlineReason} onChange={(e) => setDeadlineReason(e.target.value)} placeholder="For example: the supplier delivers on Friday" />
+                  </Field>
+                )}
 
                 <Field label="Type">
                   <select className="select" value={form.task_type} onChange={set('task_type')} disabled={!canEdit}>

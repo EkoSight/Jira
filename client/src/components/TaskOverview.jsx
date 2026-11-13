@@ -153,7 +153,7 @@ export default function TaskOverview({
           ) : <span className="muted">None set</span>}
         </Fact>
         <Fact label="Progress">
-          <div className="task-progress" aria-label={`${progress}% done`}>
+          <div className="task-progress" role="img" aria-label={`${progress}% done`}>
             <span style={{ width: `${progress}%` }} />
           </div>
           <div className="small muted tnum">

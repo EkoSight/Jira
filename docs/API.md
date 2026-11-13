@@ -977,3 +977,65 @@ at most 10 MB, JPEG, PNG or WebP. HEIC → 400 `HEIC`; a picture under 32 px →
 Outside the API prefix: `GET /manifest.webmanifest` follows the branding name,
 colour and icons. The face-detection engine is served from
 `/vendor/mediapipe/`, pre-compressed.
+
+## Deadline health and saved views
+
+See `DEADLINES_REMINDERS.md`. Deadline health comes from `shared/deadlineHealth.js`, in the organisation's time zone.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/tasks` | as before, plus `due=` `overdue`, `today`, `tomorrow`, `soon`, `next7`, `next30`, `upcoming`, `later`, `none`, `review`, `review_later` or `range` (with `due_from`, `due_to` as YYYY-MM-DD); `supporter_id`; `exclude_stage` (comma list); `stage` (comma list); `assignee_id=inactive`; `sort=overdue_age`; `hide_done=true`. Replies `{ tasks, total, shown, truncated, counts: { by_status, by_stage, by_health }, calendar }`; each task carries `health { code, text, tone }` and `group`. `due_within_days` no longer includes overdue work |
+| GET | `/tasks/mine` | signed in — owned, followed and tagged open tasks, each with `relation` (OWNER or SUPPORTING) and one `group`; `counts[relation][group]` equal the board's with that group's filter |
+| PATCH | `/tasks/:id` | as before; a changed `due_date` needs `deadline_reason` and follows D1. The reply's `deadline_request` says APPROVED or PENDING (with why). An unchanged deadline is not a move |
+| GET / POST / DELETE | `/task-views`, `/task-views/:id` | signed in — `{ name, query, department_id? }`; sharing with a department needs to manage it |
+
+## Deadline changes, deferrals, blocks and the overdue review
+
+Under `/task-review`.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/overdue` | signed in — your overdue tasks and those you can approve (`mine` per task) |
+| GET | `/waiting` | signed in — deadline changes, deferrals and blocks waiting for your decision, and your own waiting requests |
+| POST | `/preview` | signed in — `{ items: [{ task_id, action: NEW_DATE/BLOCKED/DONE/DEFER, due?, reason?, review_date?, next_action?, dependency_text?, evidence?, evidence_url? }] }` → what each would do; writes nothing |
+| POST | `/apply` | the same body; each item applied or asked for, with its result |
+| GET | `/task/:id` | can see the task — `{ changes, blocks, can_approve }` |
+| POST | `/task/:id/defer` | `{ reason, next_action, review_date, dependency_text?, dependency_task_id? }` |
+| POST | `/task/:id/resume` | `{ due, reason }` — a new deadline, approved under D1; ends the deferral when approved |
+| POST | `/task/:id/block` | `{ reason, dependency_text? }` |
+| POST | `/changes/:id/approve`, `/decline`, `/withdraw` | an approver (never the owner); decline needs `note`; withdraw is the requester's |
+| POST | `/blocks/:id/accept`, `/decline`, `/clear` | an approver; clear also the owner, follower or reporter |
+
+## Task reminders
+
+Under `/reminders`. Mode, timing and records: `settings.manage`, except where marked.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET / PUT | `/settings` | `{ mode: OFF/TEST/LIVE, beforeDueHours, atDue, managerNotice, quietStart, quietEnd, catchUpUntil, weeklyBacklog, coverageTime }`. TEST sends only to the administrator who set it; LIVE retires the old due-soon notice. Audited |
+| GET | `/preview?date=` | who would get what (default tomorrow), and whether it would go |
+| GET | `/preview/summary/:userId` | a person's summary as it would be now, sent to nobody |
+| GET | `/log?user_id=&days=` | your own; anyone's with `settings.manage` — summaries and reminders with their state and reason |
+| POST | `/ack` | signed in — `{ task_id }`: "Got it" (opening the task does the same) |
+| GET | `/task/:id` | can see the task — its reminders |
+| GET | `/connections` | who is connected to Chat, who is not, last message status, departments without a summary space |
+| GET | `/coverage?refresh=1` | today's coverage check (stored; `refresh` recomputes); `/coverage/history` the last 30 |
+| GET | `/audit?days=14` | read only — per person: summaries sent, bell only, skipped, failed (old skipped-as-sent rows read as skipped), reminders sent, seen, failed, would send |
+| POST | `/test` | `{ task_id, kind }` — a sample reminder to yourself, labelled TEST |
+
+## Black marks: fairness
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/blackmarks/rules` | as before, plus `repeat_unit: 'working days'` and `effective_from` |
+| POST / PATCH | `/blackmarks/rules`, `/blackmarks/rules/:id` | as before; a new rule, new terms or switching a rule back on applies from now (`restarted` says so) |
+| GET | `/blackmarks/rules/report` | `blackmark.view` — the live rules, overlaps, and what one late task costs before and now |
+| POST | `/blackmarks/rules/:id/backfill/preview` | `blackmark.rules` — marks the rule would give earlier work; writes nothing but the preview record |
+| POST | `/blackmarks/backfills/:id/apply` | `blackmark.rules` — `{ fingerprint, note }`; applies exactly the preview, or 409 if anything changed |
+| GET | `/blackmarks/backfills` | `blackmark.rules` — previews and approvals |
+| POST | `/blackmarks/:id/appeal` | the mark's own person — `{ reason, evidence_url? }`; one open appeal per mark |
+| GET | `/blackmarks/appeals?status=` | yours; everyone's with `blackmark.waive` |
+| POST | `/blackmarks/appeals/:id/decide` | `blackmark.waive`, not your own — `{ decision: WAIVE/UPHOLD, reason }` |
+| POST | `/blackmarks/appeals/:id/withdraw` | the person who appealed |
+| GET | `/blackmarks/recheck` | as before; each mark now carries `reasons` and `reason_words` |
+| GET | `/blackmarks/review` | as before, plus `tasks_missed` and `mark_events` per member |

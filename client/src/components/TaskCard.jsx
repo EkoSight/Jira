@@ -1,9 +1,10 @@
 import { Avatar, Badge, Icon } from './ui.jsx';
-import { dueLabel, PRIORITY_LABEL, PRIORITY_TONE } from '../lib/format.js';
+import { dueLabel, PRIORITY_LABEL, PRIORITY_TONE, taskHealth } from '../lib/format.js';
 
 export default function TaskCard({ task, onOpen, onOpenParent, draggable, onDragStart, onDragEnd, compact }) {
   const done = task.stage === 'done' || task.stage === 'cancelled';
-  const due = dueLabel(task.due_date, { done });
+  // the same words as My Tasks and Google Chat: overdue at the due time, in the organisation's time zone
+  const due = done ? dueLabel(task.due_date, { done }) : taskHealth(task);
   const checklist = task.checklist_total > 0;
   const isSubtask = Boolean(task.parent_task_id);
   const isParent = task.subtask_total > 0;
@@ -71,7 +72,7 @@ export default function TaskCard({ task, onOpen, onOpenParent, draggable, onDrag
 
       <div className="task-card-meta">
         <Badge tone={PRIORITY_TONE[task.priority]}>{PRIORITY_LABEL[task.priority]}</Badge>
-        {task.due_date && (
+        {(task.due_date || !done) && (
           <Badge tone={due.tone === 'neutral' ? 'neutral' : due.tone}>
             <Icon name={due.tone === 'critical' ? 'alert' : 'clock'} size={11} />
             {due.text}

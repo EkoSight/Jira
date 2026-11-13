@@ -22,6 +22,10 @@ import {
   addMessage, canRaiseReview, createThread, listMessages, listThreads,
 } from '../services/threads.js';
 import { checkAssignment } from '../services/availability.js';
+import { clientCalendar, deadlineClock, withHealth } from '../services/deadlines.js';
+import { acknowledgeTaskReminders, replanTask } from '../services/taskReminders.js';
+import { requestNewDeadline } from '../services/deadlineChanges.js';
+import { MY_GROUPS, applyDueFilter, healthOf } from '../../../shared/deadlineHealth.js';
 import {
   OUTCOME_STATUSES, completionContext, isDealTask, planDealCompletion, recordDealCompletion,
   recordProgress,
@@ -40,7 +44,7 @@ const TASK_SELECT = `
          p.ref AS parent_ref, p.title AS parent_title,
          acc.name AS account_name, acc.type AS account_type,
          opp.name AS opportunity_name,
-         (t.due_date IS NOT NULL AND t.due_date < now() AND s.stage NOT IN ('done','cancelled')) AS is_overdue,
+         (t.due_date IS NOT NULL AND t.due_date < now() AND t.deferral_id IS NULL AND s.stage NOT IN ('done','cancelled')) AS is_overdue,
          -- comments live in discussion threads now; counting the old table here
          -- would freeze every card's badge at its pre-upgrade number
          (SELECT COUNT(*)::int
@@ -188,81 +192,156 @@ const dealOutcomeInput = z.object({
 
 // ---------------------------------------------------------------- list
 
+const STAGE_LIST = ['backlog', 'todo', 'in_progress', 'blocked', 'review', 'done', 'cancelled'];
+const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
+const time = (v) => (v ? new Date(v).getTime() : Infinity);
+
+/**
+ * The task list's filters, as SQL. Everything except the deadline filters:
+ * those come from the shared definition (shared/deadlineHealth.js) and are
+ * applied to the rows this narrows down, so the board, My Tasks, the
+ * dashboard and Chat cannot disagree about what "overdue" or "today" means.
+ */
+function listFilters(user, q) {
+  const params = [];
+  const filters = [visibilityClause(user, params)];
+  const push = (value) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  if (q.archived === 'true') filters.push('t.is_archived = TRUE');
+  else filters.push('t.is_archived = FALSE');
+  if (q.department_id) filters.push(`t.department_id = ${push(Number(q.department_id))}`);
+  if (q.status_id) filters.push(`t.status_id = ${push(Number(q.status_id))}`);
+  if (q.stage) {
+    const stages = String(q.stage).split(',').filter((x) => STAGE_LIST.includes(x));
+    if (stages.length) filters.push(`s.stage = ANY(${push(stages)}::text[])`);
+  }
+  if (q.priority) filters.push(`t.priority = ANY(${push(String(q.priority).split(','))})`);
+  if (q.assignee_id === 'none') filters.push('t.assignee_id IS NULL');
+  else if (q.assignee_id === 'inactive') filters.push('t.assignee_id IN (SELECT id FROM users WHERE is_active = FALSE)');
+  else if (q.assignee_id) filters.push(`t.assignee_id = ${push(Number(q.assignee_id))}`);
+  // supporting: following or tagged, and not the owner
+  if (q.supporter_id) {
+    const sid = push(Number(q.supporter_id));
+    filters.push(`(t.follower_id = ${sid} OR EXISTS (SELECT 1 FROM task_collaborators tc2 WHERE tc2.task_id = t.id AND tc2.user_id = ${sid}))
+                  AND t.assignee_id IS DISTINCT FROM ${sid}`);
+  }
+  if (q.task_type) filters.push(`t.task_type = ${push(q.task_type)}`);
+  if (q.account_id) filters.push(`t.account_id = ${push(Number(q.account_id))}`);
+  if (q.tag) filters.push(`${push(q.tag)} = ANY(t.tags)`);
+  if (q.open === 'true') filters.push(`s.stage NOT IN ('done','cancelled')`);
+  // "due within N days" from now: never the overdue ones (they have their own filter)
+  if (q.due_within_days) {
+    filters.push(
+      `t.due_date IS NOT NULL AND t.deferral_id IS NULL AND t.due_date >= now()
+       AND t.due_date < now() + (${push(Number(q.due_within_days))} || ' days')::interval
+       AND s.stage NOT IN ('done','cancelled')`,
+    );
+  }
+  if (q.search) {
+    const term = push(`%${q.search}%`);
+    filters.push(`(t.title ILIKE ${term} OR t.description ILIKE ${term} OR t.ref ILIKE ${term})`);
+  }
+  return { where: filters.join(' AND '), params };
+}
+
+/** The board's sort orders, applied in one place for the rows and the counts. */
+function sortRows(rows, sort, c) {
+  const by = {
+    position: (a, b) => Number(a.position) - Number(b.position) || b.id - a.id,
+    due_date: (a, b) => time(a.due_date) - time(b.due_date) || a.id - b.id,
+    // the longest overdue first, then everything else by its deadline
+    overdue_age: (a, b) => {
+      const ao = healthOf(a, c).code === 'OVERDUE';
+      const bo = healthOf(b, c).code === 'OVERDUE';
+      if (ao !== bo) return ao ? -1 : 1;
+      return time(a.due_date) - time(b.due_date) || a.id - b.id;
+    },
+    priority: (a, b) => (PRIORITY_RANK[a.priority] ?? 9) - (PRIORITY_RANK[b.priority] ?? 9) || time(a.due_date) - time(b.due_date),
+    created: (a, b) => new Date(b.created_at) - new Date(a.created_at),
+    updated: (a, b) => new Date(b.updated_at) - new Date(a.updated_at),
+  };
+  return [...rows].sort(by[sort] || by.position);
+}
+
+/** Full rows for these ids, in this order, with their deadline health. */
+async function fullRows(ids, c) {
+  if (!ids.length) return [];
+  const { rows } = await query(`${TASK_SELECT} WHERE t.id = ANY($1::int[])`, [ids]);
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return withHealth(ids.map((id) => byId.get(id)).filter(Boolean), c);
+}
+
 router.get(
   '/',
   asyncHandler(async (req, res) => {
-    const params = [];
-    const filters = [visibilityClause(req.currentUser, params)];
+    const q = { ...req.query };
+    // older links: ?overdue=true is the Overdue filter
+    if (q.overdue === 'true' && !q.due) q.due = 'overdue';
+    const { where, params } = listFilters(req.currentUser, q);
+    const c = await deadlineClock();
 
-    const push = (value) => {
-      params.push(value);
-      return `$${params.length}`;
-    };
-
-    if (req.query.archived === 'true') filters.push('t.is_archived = TRUE');
-    else filters.push('t.is_archived = FALSE');
-
-    if (req.query.department_id) filters.push(`t.department_id = ${push(Number(req.query.department_id))}`);
-    if (req.query.status_id) filters.push(`t.status_id = ${push(Number(req.query.status_id))}`);
-    if (req.query.stage) filters.push(`s.stage = ${push(req.query.stage)}`);
-    if (req.query.priority) {
-      const list = String(req.query.priority).split(',');
-      filters.push(`t.priority = ANY(${push(list)})`);
-    }
-    if (req.query.assignee_id === 'none') filters.push('t.assignee_id IS NULL');
-    else if (req.query.assignee_id) filters.push(`t.assignee_id = ${push(Number(req.query.assignee_id))}`);
-    if (req.query.task_type) filters.push(`t.task_type = ${push(req.query.task_type)}`);
-    if (req.query.account_id) filters.push(`t.account_id = ${push(Number(req.query.account_id))}`);
-    if (req.query.tag) filters.push(`${push(req.query.tag)} = ANY(t.tags)`);
-    if (req.query.overdue === 'true') {
-      filters.push(`t.due_date < now() AND s.stage NOT IN ('done','cancelled')`);
-    }
-    if (req.query.due_within_days) {
-      filters.push(
-        `t.due_date IS NOT NULL AND t.due_date < now() + (${push(Number(req.query.due_within_days))} || ' days')::interval
-         AND s.stage NOT IN ('done','cancelled')`,
-      );
-    }
-    if (req.query.open === 'true') filters.push(`s.stage NOT IN ('done','cancelled')`);
-    if (req.query.search) {
-      const term = push(`%${req.query.search}%`);
-      filters.push(`(t.title ILIKE ${term} OR t.description ILIKE ${term} OR t.ref ILIKE ${term})`);
-    }
-
-    const sortMap = {
-      position: 't.position ASC, t.id DESC',
-      due_date: 't.due_date ASC NULLS LAST',
-      priority: `CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, t.due_date ASC NULLS LAST`,
-      created: 't.created_at DESC',
-      updated: 't.updated_at DESC',
-    };
-    const orderBy = sortMap[req.query.sort] || sortMap.position;
-    const limit = Math.min(Number(req.query.limit) || 500, 1000);
-
-    const { rows } = await query(
-      `${TASK_SELECT} WHERE ${filters.join(' AND ')} ORDER BY ${orderBy} LIMIT ${limit}`,
+    // every matching task, lightly, so the counts cover the whole set and not
+    // just the rows sent back
+    const { rows: light } = await query(
+      `SELECT t.id, t.status_id, s.stage, t.due_date, t.review_date, t.deferral_id, t.priority, t.position, t.created_at, t.updated_at
+         FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
+        WHERE ${where}`,
       params,
     );
-    res.json({ tasks: rows });
+    const matching = sortRows(applyDueFilter(light, q, c), q.sort, c);
+
+    const byStatus = {};
+    const byStage = {};
+    const byHealth = {};
+    for (const t of matching) {
+      byStatus[t.status_id] = (byStatus[t.status_id] || 0) + 1;
+      byStage[t.stage] = (byStage[t.stage] || 0) + 1;
+      const code = healthOf(t, c).code;
+      byHealth[code] = (byHealth[code] || 0) + 1;
+    }
+    // Done can stay collapsed: counted, not sent
+    const sendable = q.hide_done === 'true' ? matching.filter((t) => t.stage !== 'done' && t.stage !== 'cancelled') : matching;
+    const limit = Math.min(Number(q.limit) || 500, 1000);
+    const page = sendable.slice(0, limit);
+
+    res.json({
+      tasks: await fullRows(page.map((t) => t.id), c),
+      total: matching.length,
+      shown: page.length,
+      truncated: sendable.length > page.length,
+      counts: { by_status: byStatus, by_stage: byStage, by_health: byHealth },
+      calendar: clientCalendar(c),
+    });
   }),
 );
 
+/**
+ * My Tasks: what a person owns and what they support (following or tagged),
+ * each task once, in exactly one group. The counts are the same as the
+ * board's with the group's filter, for the same person.
+ */
 router.get(
   '/mine',
   asyncHandler(async (req, res) => {
-    // work someone is on includes tasks they follow — the follower works on it too,
-    // so it belongs on their list even though the owner carries the deadline
+    const me = req.currentUser.id;
+    const c = await deadlineClock();
     const { rows } = await query(
-      `${TASK_SELECT}
-        WHERE (t.assignee_id = $1 OR t.follower_id = $1)
+      `SELECT t.id, (t.assignee_id = $1) AS owns
+         FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
+        WHERE (t.assignee_id = $1 OR t.follower_id = $1
+               OR EXISTS (SELECT 1 FROM task_collaborators tc WHERE tc.task_id = t.id AND tc.user_id = $1))
           AND t.is_archived = FALSE
-          AND s.stage NOT IN ('done','cancelled')
-        ORDER BY (t.assignee_id = $1) DESC,
-                 t.due_date ASC NULLS LAST,
-                 CASE t.priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END`,
-      [req.currentUser.id],
+          AND s.stage NOT IN ('done','cancelled')`,
+      [me],
     );
-    res.json({ tasks: rows });
+    const owns = new Map(rows.map((r) => [r.id, r.owns]));
+    const tasks = sortRows(await fullRows(rows.map((r) => r.id), c), 'due_date', c)
+      .map((t) => ({ ...t, relation: owns.get(t.id) ? 'OWNER' : 'SUPPORTING' }));
+    const counts = { OWNER: {}, SUPPORTING: {} };
+    for (const t of tasks) counts[t.relation][t.group] = (counts[t.relation][t.group] || 0) + 1;
+    res.json({ tasks, counts, groups: MY_GROUPS, calendar: clientCalendar(c) });
   }),
 );
 
@@ -350,8 +429,11 @@ router.get(
       threads.map(async (thread) => ({ ...thread, messages: await listMessages(thread.id) })),
     );
 
+    // opening the task is seeing it: any reminders sent to this person about it are acknowledged
+    await acknowledgeTaskReminders(task.id, req.currentUser.id).catch(() => {});
+    const [withHealthTask] = withHealth([task], await deadlineClock());
     res.json({
-      task,
+      task: withHealthTask,
       comments: comments.rows,
       threads: withMessages,
       can_raise_review: canRaiseReview(req.currentUser),
@@ -499,7 +581,9 @@ router.post(
       return created;
     });
 
-    const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [task.id]);
+    // its reminders: before the deadline, at it, and after the grace period
+    await replanTask(task.id);
+    const rows = withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [task.id])).rows, await deadlineClock());
     res.status(201).json({
       task: rows[0],
       // never a refusal — a manager may have good reason — but always said
@@ -563,6 +647,17 @@ router.patch(
       throw forbidden('You do not have permission to reassign tasks');
     }
 
+    // The task dialog sends the deadline with every save. The same instant (to
+    // the minute the form can show) is not a move: it is not counted as one,
+    // and an unchanged deadline that has passed does not stop the rest of the
+    // edit being saved. Before, the text was compared with a date object, so
+    // every save counted as a move and an overdue task could only be saved by
+    // pushing its deadline into the future.
+    if (data.due_date && existing.due_date
+        && Math.abs(new Date(data.due_date).getTime() - new Date(existing.due_date).getTime()) < 60_000) {
+      delete data.due_date;
+    }
+
     // a deadline can be changed or set, but never removed, and the replacement has
     // to be as usable as one given at creation. Editing anything else on a task
     // that predates the rule leaves its missing deadline alone.
@@ -576,6 +671,17 @@ router.patch(
         maxHorizonDays: settings.deadlines?.maxHorizonDays,
       });
     }
+
+    // D1: a new deadline goes through the deadline-change record: applied when
+    // the owner moves it once before it passes, or an approver moves it;
+    // otherwise asked for, and the deadline stays as it is until approved. A
+    // reason is always needed. CRM follow-ups keep their own reschedule flow.
+    let pendingDeadline = null;
+    if (data.due_date !== undefined && !existing.followup_kind) {
+      pendingDeadline = { toDue: data.due_date, reason: req.body?.deadline_reason };
+      delete data.due_date;
+    }
+    let deadlineRequest = null;
 
     // Finishing deal work says what happened, with evidence and the deal's next
     // step. Checked before anything is written, so a refusal changes nothing.
@@ -594,6 +700,7 @@ router.patch(
     }
 
     const updated = await withTransaction(async (client) => {
+      if (pendingDeadline) deadlineRequest = await requestNewDeadline(client, existing, req.currentUser, pendingDeadline);
       const fields = [];
       const params = [];
       const set = (column, value) => {
@@ -614,7 +721,7 @@ router.patch(
       }
 
       // deadline changes are counted — repeated pushes are visible at review time
-      if (data.due_date !== undefined && String(data.due_date) !== String(existing.due_date)) {
+      if (data.due_date !== undefined && new Date(data.due_date).getTime() !== new Date(existing.due_date).getTime()) {
         fields.push('due_date_changes = due_date_changes + 1');
         if (!existing.original_due_date && existing.due_date) {
           set('original_due_date', existing.due_date);
@@ -744,9 +851,12 @@ router.patch(
       );
     }
 
-    const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
+    // the task changed: its reminders are planned afresh (an old time or owner is cancelled)
+    await replanTask(id);
+    const rows = withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [id])).rows, await deadlineClock());
     res.json({
       task: rows[0],
+      deadline_request: deadlineRequest,
       availability_warning: rows[0].stage === 'done' ? null
         : await checkAssignment(rows[0].assignee_id, rows[0].due_date).catch(() => null),
       next_occurrence: updated.spawnedNext
@@ -848,7 +958,9 @@ router.post(
       );
     }
 
-    const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
+    // the task changed: its reminders are planned afresh (an old time or owner is cancelled)
+    await replanTask(id);
+    const rows = withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [id])).rows, await deadlineClock());
     res.json({
       task: rows[0],
       availability_warning: rows[0].stage === 'done' ? null
@@ -945,7 +1057,7 @@ router.post(
     await withTransaction((client) => recordProgress(client, {
       task, note, evidenceUrl, actor: req.currentUser,
     }));
-    const { rows: fresh } = await query(`${TASK_SELECT} WHERE t.id = $1`, [id]);
+    const fresh = withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [id])).rows, await deadlineClock());
     res.status(201).json({ task: fresh[0] });
   }),
 );

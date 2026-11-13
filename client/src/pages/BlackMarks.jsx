@@ -183,8 +183,61 @@ function MarkSourceDialog({ markId, onClose, onOpenTask }) {
   );
 }
 
+/** Appeals: your own, or (for someone who may waive marks) everyone's waiting for a decision. */
+function Appeals({ onOpenSource }) {
+  const toast = useToast();
+  const [data, setData] = useState(null);
+  const load = () => api.get('/blackmarks/appeals').then(setData).catch((err) => toast.error(err));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []);
+  const decide = async (appeal, decision) => {
+    const reason = window.prompt(decision === 'WAIVE' ? 'Why is the mark waived? The person will see this.' : 'Why does the mark stand? The person will see this.');
+    if (!reason || reason.trim().length < 5) return;
+    try { await api.post(`/blackmarks/appeals/${appeal.id}/decide`, { decision, reason: reason.trim() }); toast.success(decision === 'WAIVE' ? 'Mark waived' : 'Mark upheld'); load(); } catch (err) { toast.error(err); }
+  };
+  const withdraw = async (appeal) => {
+    try { await api.post(`/blackmarks/appeals/${appeal.id}/withdraw`, {}); load(); } catch (err) { toast.error(err); }
+  };
+  if (!data) return <Spinner />;
+  return (
+    <section className="card">
+      <div className="card-head"><h2>Appeals</h2><span className="small muted">{data.can_decide ? 'Decide with a reason; nobody decides their own' : 'Your appeals and their decisions'}</span></div>
+      {data.appeals.length === 0 ? <EmptyState title="No appeals">To appeal one of your marks, use Appeal on it under All marks.</EmptyState> : (
+        <div className="table-wrap">
+          <table className="data">
+            <thead><tr><th>Member</th><th>Mark</th><th>Appeal</th><th>Status</th><th /></tr></thead>
+            <tbody>
+              {data.appeals.map((a) => (
+                <tr key={a.id}>
+                  <td>{a.full_name}</td>
+                  <td className="small"><span className="task-ref">{a.task_ref || '—'}</span> {a.mark_reason} · {a.points} pt</td>
+                  <td className="small">{a.reason}{a.evidence_url ? <> · <a href={a.evidence_url} target="_blank" rel="noreferrer">evidence</a></> : null}</td>
+                  <td className="small">
+                    <Badge tone={a.status === 'OPEN' ? 'warning' : a.status === 'WAIVED' ? 'good' : 'neutral'}>{a.status.toLowerCase()}</Badge>
+                    {a.decided_by_name && <div className="muted">{a.decided_by_name}: {a.decision_reason}</div>}
+                  </td>
+                  <td className="nowrap">
+                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpenSource(a.mark_id)}>Source</button>
+                    {a.status === 'OPEN' && data.can_decide && (
+                      <>
+                        <button type="button" className="btn btn-sm" onClick={() => decide(a, 'WAIVE')}>Waive the mark</button>
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => decide(a, 'UPHOLD')}>Uphold</button>
+                      </>
+                    )}
+                    {a.status === 'OPEN' && !data.can_decide && <button type="button" className="btn btn-sm btn-ghost" onClick={() => withdraw(a)}>Withdraw</button>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export default function BlackMarks() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const { departments } = useRefData();
   const toast = useToast();
 
@@ -284,12 +337,12 @@ export default function BlackMarks() {
       </div>
 
       <div className="filters">
-        <select className="select" value={month} onChange={(e) => setMonth(e.target.value)}>
+        <select className="select" aria-label="Month" value={month} onChange={(e) => setMonth(e.target.value)}>
           {months.map((m) => (
             <option key={m} value={m}>{monthLabel(m)}</option>
           ))}
         </select>
-        <select className="select" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+        <select className="select" aria-label="Department" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
           <option value="">All departments</option>
           {departments.map((d) => (
             <option key={d.id} value={d.id}>{d.name}</option>
@@ -334,7 +387,8 @@ export default function BlackMarks() {
         {[
           ['review', 'Monthly review'],
           ['marks', `All marks (${marks.length})`],
-          ...(can('blackmark.waive') ? [['recheck', 'Check against the calendar']] : []),
+          ['appeals', 'Appeals'],
+          ...(can('blackmark.waive') ? [['recheck', 'Marks to recheck']] : []),
         ].map(([key, label]) => (
           <button key={key} type="button" className={`tab ${tab === key ? 'active' : ''}`} onClick={() => setTab(key)}>
             {label}
@@ -355,9 +409,9 @@ export default function BlackMarks() {
               <thead>
                 <tr>
                   <th>Member</th>
-                  <th className="num">Missed</th>
-                  <th className="num">Marks</th>
-                  <th className="num">Points</th>
+                  <th className="num" title="Different tasks with a deadline mark">Tasks missed</th>
+                  <th className="num" title="Each mark recorded (one task can have more, e.g. an escalation)">Mark events</th>
+                  <th className="num" title="Weighted points">Points</th>
                   <th>Standing</th>
                 </tr>
               </thead>
@@ -384,9 +438,9 @@ export default function BlackMarks() {
                       </td>
                       <td className="num tnum">
                         {member.over_limit ? (
-                          <strong style={{ color: 'var(--critical-text)' }}>{member.missed_deadlines}</strong>
+                          <strong style={{ color: 'var(--critical-text)' }}>{member.tasks_missed ?? member.missed_deadlines}</strong>
                         ) : (
-                          member.missed_deadlines
+                          member.tasks_missed ?? member.missed_deadlines
                         )}
                       </td>
                       <td className="num tnum">
@@ -480,6 +534,23 @@ export default function BlackMarks() {
                     </td>
                     <td className="nowrap">
                       <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSource(mark.id)}>Source</button>
+                      {mark.user_id === user?.id && mark.status === 'active' && (
+                        <button
+                          type="button"
+                          className="btn btn-sm"
+                          onClick={async () => {
+                            const reason = window.prompt('Why should this mark not stand? Say what happened (at least a sentence).');
+                            if (!reason || reason.trim().length < 10) return;
+                            const evidence = window.prompt('A link to evidence, if you have one (optional)') || null;
+                            try {
+                              await api.post(`/blackmarks/${mark.id}/appeal`, { reason: reason.trim(), evidence_url: evidence });
+                              toast.success('Appeal sent: someone who reviews marks will decide');
+                            } catch (err) { toast.error(err); }
+                          }}
+                        >
+                          Appeal
+                        </button>
+                      )}
                       {can('blackmark.waive') && (
                         mark.status === 'active' ? (
                           <button type="button" className="btn btn-sm" onClick={() => waive(mark)}>Waive</button>
@@ -509,26 +580,30 @@ export default function BlackMarks() {
         </div>
       )}
 
+      {tab === 'appeals' && <Appeals onOpenSource={setSource} />}
+
       {tab === 'recheck' && (
         <section className="card">
-          <div className="card-head"><h2>Marks the calendar no longer supports</h2></div>
+          <div className="card-head"><h2>Marks that would not be given today</h2></div>
           <div className="card-pad small muted" style={{ paddingTop: 0 }}>
-            Active marks whose deadline, judged against today’s holidays, approved leave and weekly days off, was not missed. This often
-            means leave or a holiday was approved after the mark. Nothing changes here: open the source, then waive it if that is right.
+            Active marks the rules and calendar in force would not give now: leave or a holiday approved since, two marks for one miss under
+            the old overlapping rules, someone else owning the task at its deadline, an approved deferral or an accepted block.
+            Nothing changes here and nothing is waived automatically: open the source, then waive it if that is right.
           </div>
           {recheck === null ? <Spinner /> : recheck.length === 0 ? (
             <EmptyState title="Nothing to recheck">Every active mark still stands against the calendar.</EmptyState>
           ) : (
             <div className="table-wrap">
               <table className="data">
-                <thead><tr><th>Member</th><th>Task</th><th>Deadline</th><th>In force now</th><th /></tr></thead>
+                <thead><tr><th>Member</th><th>Task</th><th>Why</th><th>Deadline</th><th>In force now</th><th /></tr></thead>
                 <tbody>
                   {recheck.map((m) => (
                     <tr key={m.mark_id}>
                       <td>{m.full_name}</td>
                       <td><span className="task-ref">{m.task_ref}</span> <span className="small">{m.rule_name}</span></td>
+                      <td className="small">{(m.reason_words || []).map((w) => <div key={w}>{w}</div>)}</td>
                       <td className="small nowrap">{formatDate(m.due, { withTime: true })}</td>
-                      <td className="small">{formatDate(m.effective_due, { withTime: true })}<div className="muted">moved past {shiftWords(m.because)}</div></td>
+                      <td className="small">{formatDate(m.effective_due, { withTime: true })}{m.because?.length > 0 && <div className="muted">moved past {shiftWords(m.because)}</div>}</td>
                       <td className="nowrap">
                         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSource(m.mark_id)}>Source</button>
                         <button

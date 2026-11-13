@@ -25,6 +25,21 @@ const ruleMatches = (rule, task) => {
   return true;
 };
 
+/** How specific a rule is: a priority or department filter beats none; both beat one. */
+export const ruleSpecificity = (rule) => (rule.priorities?.length ? 1 : 0) + (rule.department_ids?.length ? 1 : 0);
+
+/**
+ * D2: of the active rules of one kind that match a task, the one that applies:
+ * the most specific; between equally specific rules the narrower list, then
+ * the oldest. Points are never added up across overlapping rules.
+ */
+export function pickRule(rules, task, trigger = 'deadline_missed') {
+  const matching = rules.filter((r) => r.trigger_type === trigger && ruleMatches(r, task));
+  const width = (r) => (r.priorities?.length || 99) + (r.department_ids?.length || 99);
+  matching.sort((a, b) => ruleSpecificity(b) - ruleSpecificity(a) || width(a) - width(b) || a.id - b.id);
+  return matching[0] || null;
+}
+
 const ruleSnapshot = (rule) => ({
   id: rule.id, name: rule.name, trigger_type: rule.trigger_type, points: Number(rule.points),
   grace_hours: rule.grace_hours ?? 0, repeat_every_days: rule.repeat_every_days ?? null,
@@ -186,70 +201,190 @@ export async function markCalendar(userIds, { from, to, now = new Date(), holida
 
 /**
  * Every mark the rules call for on one task under a calendar, without writing
- * anything. Each carries its occurrence key and the evidence it rests on.
+ * anything. Each carries its occurrence key, the person it belongs to and the
+ * evidence it rests on.
+ *
+ * Fairness (no-missed-tasks brief, problems 14–17):
+ *   - D2: of the matching rules of one kind, only the most specific applies;
+ *     overlapping rules never add up. "Delivered late" applies only when no
+ *     missed-deadline mark was recorded for the task.
+ *   - The mark belongs to whoever owned the task at its effective deadline
+ *     (ctx.ownerAt), not to whoever owns it when the scan runs. Escalation
+ *     stops once the task changes hands (ctx.reassignedAfter).
+ *   - No marks while a deferral is approved, while an accepted block covers
+ *     the deadline (ctx.blocks), or for a deactivated owner (ctx.inactive).
+ *   - A rule applies from its effective_from onwards; earlier work only
+ *     through a previewed, approved backfill (ctx.backfill).
+ * Without ctx it judges against the current owner, as before.
  */
-export function evaluateTask(task, rules, cal, now) {
+export function evaluateTask(task, rules, cal, now, ctx = {}) {
   const out = [];
-  if (task.stage === 'cancelled' || !task.assignee_id || !task.due_date) return out;
+  if (task.stage === 'cancelled' || !task.due_date) return out;
+  if (task.deferral_id) return out;
+  const due = new Date(task.due_date);
+  const ownerAt = ctx.ownerAt || (() => task.assignee_id);
+  let owner = ownerAt(due);
+  if (!owner) return out;
+  let { at: effectiveDue, shifted } = cal.effectiveDeadline(owner, task.due_date);
+  const atDeadline = ownerAt(effectiveDue);
+  if (atDeadline && atDeadline !== owner) {
+    owner = atDeadline;
+    ({ at: effectiveDue, shifted } = cal.effectiveDeadline(owner, task.due_date));
+  }
+  if (!owner || ctx.inactive?.has(owner)) return out;
   const isDone = task.stage === 'done';
-  const { at: effectiveDue, shifted } = cal.effectiveDeadline(task.assignee_id, task.due_date);
+  const blocked = (instant) => (ctx.blocks || []).some((b) => new Date(b.recorded_at) <= instant
+    && (!b.cleared_at || new Date(b.cleared_at) > effectiveDue));
+  const applies = (rule, instant) => {
+    if (ctx.backfill) return rule.effective_from && instant < new Date(rule.effective_from);
+    return !rule.effective_from || instant >= new Date(rule.effective_from);
+  };
   const evidenceBase = (rule, deadline) => ({
     basis: 'TASK_DEADLINE',
     task_id: task.id,
     task_ref: task.ref,
-    due: new Date(task.due_date).toISOString(),
+    due: due.toISOString(),
     effective_due: effectiveDue.toISOString(),
     deadline_with_grace: deadline.toISOString(),
     shifted_past: shifted,
+    owner_at_deadline: owner,
     rule: ruleSnapshot(rule),
-    attendance_policy_id: cal.policyIdOn(dateIn(cal.timezone, new Date(task.due_date))),
-    calendar: 'weekly days, approved holidays and approved leave of the assignee',
+    precedence: { applied: rule.id, overlapping: rules.filter((r) => r.trigger_type === rule.trigger_type && r.id !== rule.id && ruleMatches(r, task)).map((r) => r.id) },
+    attendance_policy_id: cal.policyIdOn(dateIn(cal.timezone, due)),
+    calendar: 'weekly days, approved holidays and approved leave of the owner at the deadline',
   });
 
-  for (const rule of rules) {
-    if (!ruleMatches(rule, task)) continue;
-    const deadline = new Date(effectiveDue.getTime() + (rule.grace_hours || 0) * HOUR_MS);
+  // D2: one rule per kind, the most specific
+  const missedRule = pickRule(rules, task, 'deadline_missed');
+  const lateRule = pickRule(rules, task, 'completed_late');
+  const escalationRule = pickRule(rules, task, 'overdue_escalation');
+  let missedNow = false;
 
-    if (rule.trigger_type === 'deadline_missed') {
-      if (isDone || now.getTime() <= deadline.getTime()) continue;
+  if (missedRule) {
+    const deadline = new Date(effectiveDue.getTime() + (missedRule.grace_hours || 0) * HOUR_MS);
+    const passed = now.getTime() > deadline.getTime();
+    if (!isDone && passed && !blocked(deadline) && applies(missedRule, deadline) && !ctx.missedRecorded) {
+      missedNow = true;
       out.push({
-        rule, points: Number(rule.points), occurredAt: deadline,
+        rule: missedRule, userId: owner, points: Number(missedRule.points), occurredAt: deadline,
         reason: `Missed deadline on ${task.ref} — ${task.title}`,
-        occurrenceKey: `rule:${rule.id}:task:${task.id}:missed`,
-        evidence: evidenceBase(rule, deadline),
+        occurrenceKey: `rule:${missedRule.id}:task:${task.id}:missed`,
+        evidence: evidenceBase(missedRule, deadline),
       });
     }
+  }
 
-    if (rule.trigger_type === 'completed_late') {
-      if (!isDone || !task.completed_at) continue;
-      const completedAt = new Date(task.completed_at);
-      if (completedAt.getTime() <= deadline.getTime()) continue;
+  if (lateRule && isDone && task.completed_at && !ctx.missedRecorded && !ctx.lateRecorded && !missedNow) {
+    const deadline = new Date(effectiveDue.getTime() + (lateRule.grace_hours || 0) * HOUR_MS);
+    const completedAt = new Date(task.completed_at);
+    if (completedAt.getTime() > deadline.getTime() && !blocked(deadline) && applies(lateRule, completedAt)) {
       out.push({
-        rule, points: Number(rule.points), occurredAt: completedAt,
+        rule: lateRule, userId: owner, points: Number(lateRule.points), occurredAt: completedAt,
         reason: `Completed ${task.ref} after the deadline`,
-        occurrenceKey: `rule:${rule.id}:task:${task.id}:late`,
-        evidence: { ...evidenceBase(rule, deadline), completed_at: completedAt.toISOString() },
+        occurrenceKey: `rule:${lateRule.id}:task:${task.id}:late`,
+        evidence: { ...evidenceBase(lateRule, deadline), completed_at: completedAt.toISOString() },
       });
     }
+  }
 
-    if (rule.trigger_type === 'overdue_escalation') {
-      if (isDone || now.getTime() <= deadline.getTime()) continue;
-      const every = Math.max(1, rule.repeat_every_days || 1);
-      let instants = cal.cycleInstants(task.assignee_id, deadline, every, now);
-      const points = Number(rule.points);
-      if (rule.max_points_per_task != null && points > 0) instants = instants.slice(0, Math.floor(Number(rule.max_points_per_task) / points));
+  if (escalationRule && !isDone) {
+    const deadline = new Date(effectiveDue.getTime() + (escalationRule.grace_hours || 0) * HOUR_MS);
+    if (now.getTime() > deadline.getTime()) {
+      const every = Math.max(1, escalationRule.repeat_every_days || 1);
+      // the escalation follows the person who owned the task at its deadline, and stops when it changes hands
+      const handedOver = ctx.reassignedAfter ? ctx.reassignedAfter(effectiveDue) : null;
+      const until = handedOver && handedOver < now ? handedOver : now;
+      let instants = cal.cycleInstants(owner, deadline, every, until).filter((at) => !blocked(at) && applies(escalationRule, at));
+      const points = Number(escalationRule.points);
+      if (escalationRule.max_points_per_task != null && points > 0) instants = instants.slice(0, Math.floor(Number(escalationRule.max_points_per_task) / points));
       instants.forEach((at, i) => {
         const cycle = i + 1;
         out.push({
-          rule, points, occurredAt: at, cycle,
+          rule: escalationRule, userId: owner, points, occurredAt: at, cycle,
           reason: `${task.ref} still overdue after ${cycle * every} working day(s)`,
-          occurrenceKey: `rule:${rule.id}:task:${task.id}:overdue:${cycle}`,
-          evidence: { ...evidenceBase(rule, deadline), cycle, counting: 'working days of the assignee', every_working_days: every },
+          occurrenceKey: `rule:${escalationRule.id}:task:${task.id}:overdue:${cycle}`,
+          evidence: { ...evidenceBase(escalationRule, deadline), cycle, counting: 'working days of the owner', every_working_days: every },
         });
       });
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------- who owned it when
+
+/**
+ * Owner history for tasks (task_owner_changes, filled by a trigger on every
+ * change and backfilled from the activity log), as two functions per task.
+ */
+export async function ownershipFor(tasks, runner = { query }) {
+  const ids = tasks.map((t) => t.id);
+  const byTask = new Map();
+  if (ids.length) {
+    const { rows } = await runner.query(
+      'SELECT task_id, from_user_id, to_user_id, changed_at FROM task_owner_changes WHERE task_id = ANY($1::int[]) ORDER BY changed_at, id',
+      [ids],
+    );
+    for (const r of rows) byTask.set(r.task_id, [...(byTask.get(r.task_id) || []), r]);
+  }
+  const fns = new Map();
+  for (const t of tasks) {
+    const changes = byTask.get(t.id) || [];
+    fns.set(t.id, {
+      ownerAt: (instant) => {
+        const at = new Date(instant).getTime();
+        let owner;
+        for (const c of changes) if (new Date(c.changed_at).getTime() <= at) owner = c.to_user_id;
+        if (owner !== undefined) return owner;
+        const next = changes.find((c) => new Date(c.changed_at).getTime() > at);
+        return next ? next.from_user_id : t.assignee_id;
+      },
+      reassignedAfter: (instant) => {
+        const at = new Date(instant).getTime();
+        const next = changes.find((c) => new Date(c.changed_at).getTime() > at && c.from_user_id !== c.to_user_id);
+        return next ? new Date(next.changed_at) : null;
+      },
+      people: [...new Set([t.assignee_id, ...changes.flatMap((c) => [c.from_user_id, c.to_user_id])].filter(Boolean))],
+    });
+  }
+  return fns;
+}
+
+/** Everything evaluateTask needs to be fair, for a set of tasks. */
+export async function fairnessContext(tasks, runner = { query }) {
+  const ids = tasks.map((t) => t.id);
+  const owners = await ownershipFor(tasks, runner);
+  const people = [...new Set([...owners.values()].flatMap((o) => o.people))];
+  const [missed, blocks, inactive] = await Promise.all([
+    ids.length ? runner.query(
+      `SELECT DISTINCT bm.task_id, r.trigger_type FROM black_marks bm JOIN blackmark_rules r ON r.id = bm.rule_id
+        WHERE bm.task_id = ANY($1::int[]) AND r.trigger_type IN ('deadline_missed', 'completed_late')`,
+      [ids],
+    ) : { rows: [] },
+    ids.length ? runner.query(
+      `SELECT task_id, recorded_at, decided_at, cleared_at FROM task_blocks
+        WHERE task_id = ANY($1::int[]) AND (status = 'ACCEPTED' OR (status = 'CLEARED' AND decided_at IS NOT NULL))`,
+      [ids],
+    ) : { rows: [] },
+    people.length ? runner.query('SELECT id FROM users WHERE id = ANY($1::int[]) AND is_active = FALSE', [people]) : { rows: [] },
+  ]);
+  const missedSet = new Set(missed.rows.filter((r) => r.trigger_type === 'deadline_missed').map((r) => r.task_id));
+  // one "delivered late" mark per task, whichever rule recorded it
+  const lateSet = new Set(missed.rows.filter((r) => r.trigger_type === 'completed_late').map((r) => r.task_id));
+  const blocksBy = new Map();
+  for (const b of blocks.rows) blocksBy.set(b.task_id, [...(blocksBy.get(b.task_id) || []), b]);
+  const inactiveSet = new Set(inactive.rows.map((r) => r.id));
+  return {
+    people,
+    for: (task) => ({
+      ownerAt: owners.get(task.id)?.ownerAt,
+      reassignedAfter: owners.get(task.id)?.reassignedAfter,
+      missedRecorded: missedSet.has(task.id),
+      lateRecorded: lateSet.has(task.id),
+      blocks: blocksBy.get(task.id) || [],
+      inactive: inactiveSet,
+    }),
+  };
 }
 
 /** The marks rules that depend on a deadline. */
@@ -281,14 +416,33 @@ export function markEligible(mark, task, cal, now) {
 }
 
 /**
- * Active automatic marks that the calendar in force no longer supports — a
- * holiday or leave approved after the mark was recorded, for example. Listed
- * for someone who can waive marks to look at; nothing is changed here.
+ * Active automatic marks that would not be recorded today, for someone who can
+ * waive marks to look at, each with why. Nothing is changed here; nothing is
+ * waived automatically.
+ *   CALENDAR          a holiday or leave approved after the mark moved the deadline in force
+ *   STACKED           another missed-deadline mark on the same task comes from the rule that applies (D2)
+ *   LATE_AFTER_MISSED a "delivered late" mark on a task that already has a missed-deadline mark
+ *   WRONG_OWNER       someone else owned the task at its effective deadline
+ *   DEFERRED          the task now has an approved deferral
+ *   BLOCKED           an accepted block covered the deadline
+ *   INACTIVE_OWNER    the person's account is switched off
  */
+export const RECHECK_WORDS = {
+  CALENDAR: 'The calendar now moves the deadline in force (a holiday or leave approved since)',
+  STACKED: 'A second missed-deadline mark for the same miss, from a rule that no longer applies (one rule per miss now)',
+  LATE_AFTER_MISSED: 'Marked "delivered late" on top of a missed deadline for the same task',
+  WRONG_OWNER: 'Someone else owned the task at its deadline',
+  DEFERRED: 'The task has an approved deferral',
+  BLOCKED: 'An accepted block covered the deadline',
+  INACTIVE_OWNER: 'The person\'s account is switched off',
+};
+
 export async function marksToRecheck({ now = new Date(), userIds = null } = {}) {
   const { rows: marks } = await query(
     `SELECT bm.*, r.trigger_type, r.grace_hours AS rule_grace_hours, r.repeat_every_days AS rule_repeat_every_days,
-            r.name AS rule_name, t.ref AS task_ref, t.title AS task_title, t.due_date, t.completed_at, s.stage, u.full_name
+            r.priorities AS rule_priorities, r.department_ids AS rule_department_ids, r.id AS rule_row_id,
+            r.name AS rule_name, t.ref AS task_ref, t.title AS task_title, t.due_date, t.completed_at, t.priority, t.department_id,
+            t.deferral_id, t.assignee_id, s.stage, u.full_name, u.is_active AS user_active
        FROM black_marks bm
        JOIN blackmark_rules r ON r.id = bm.rule_id
        JOIN tasks t ON t.id = bm.task_id
@@ -301,16 +455,35 @@ export async function marksToRecheck({ now = new Date(), userIds = null } = {}) 
     [DEADLINE_TRIGGERS, userIds],
   );
   if (!marks.length) return [];
-  const cal = await calendarForTasks(marks.map((m) => ({ assignee_id: m.user_id, due_date: m.due_date })), now);
+  const taskRows = [...new Map(marks.map((m) => [m.task_id, { id: m.task_id, assignee_id: m.assignee_id, due_date: m.due_date }])).values()];
+  const fair = await fairnessContext(taskRows);
+  const cal = await calendarForTasks([...marks.map((m) => ({ assignee_id: m.user_id, due_date: m.due_date })), ...fair.people.map((id) => ({ assignee_id: id, due_date: null }))], now);
+  const byTask = new Map();
+  for (const m of marks) byTask.set(m.task_id, [...(byTask.get(m.task_id) || []), m]);
   const out = [];
   for (const mark of marks) {
-    const task = { due_date: mark.due_date, completed_at: mark.completed_at, stage: mark.stage };
-    if (markEligible(mark, task, cal, now)) continue;
+    const reasons = [];
+    const task = { id: mark.task_id, due_date: mark.due_date, completed_at: mark.completed_at, stage: mark.stage, priority: mark.priority, department_id: mark.department_id };
+    if (!markEligible(mark, task, cal, now)) reasons.push('CALENDAR');
+    const siblings = byTask.get(mark.task_id) || [];
+    if (mark.trigger_type === 'deadline_missed') {
+      const missedRules = siblings.filter((x) => x.trigger_type === 'deadline_missed').map((x) => ({ id: x.rule_row_id, trigger_type: 'deadline_missed', priorities: x.rule_priorities, department_ids: x.rule_department_ids }));
+      if (missedRules.length > 1 && pickRule(missedRules, task)?.id !== mark.rule_row_id) reasons.push('STACKED');
+    }
+    if (mark.trigger_type === 'completed_late' && siblings.some((x) => x.trigger_type === 'deadline_missed')) reasons.push('LATE_AFTER_MISSED');
+    const ctx = fair.for(task);
+    const effective = cal.effectiveDeadline(mark.user_id, mark.due_date).at;
+    const owner = ctx.ownerAt ? ctx.ownerAt(effective) : mark.assignee_id;
+    if (owner && owner !== mark.user_id) reasons.push('WRONG_OWNER');
+    if (mark.deferral_id) reasons.push('DEFERRED');
+    if ((ctx.blocks || []).some((b) => new Date(b.recorded_at) <= new Date(mark.occurred_at) && (!b.cleared_at || new Date(b.cleared_at) > effective))) reasons.push('BLOCKED');
+    if (!mark.user_active) reasons.push('INACTIVE_OWNER');
+    if (!reasons.length) continue;
     const { at, shifted } = cal.effectiveDeadline(mark.user_id, mark.due_date);
     out.push({
       mark_id: mark.id, user_id: mark.user_id, full_name: mark.full_name, task_id: mark.task_id, task_ref: mark.task_ref,
-      task_title: mark.task_title, rule_name: mark.rule_name, points: Number(mark.points), occurred_at: mark.occurred_at,
-      due: mark.due_date, effective_due: at.toISOString(), because: shifted,
+      task_title: mark.task_title, rule_name: mark.rule_name, trigger_type: mark.trigger_type, points: Number(mark.points), occurred_at: mark.occurred_at,
+      due: mark.due_date, effective_due: at.toISOString(), because: shifted, reasons, reason_words: reasons.map((r) => RECHECK_WORDS[r]),
     });
   }
   return out;
@@ -323,7 +496,6 @@ const SCAN_TASKS = `
     JOIN departments d ON d.id = t.department_id
     LEFT JOIN users u ON u.id = t.assignee_id
    WHERE t.is_archived = FALSE
-     AND t.assignee_id IS NOT NULL
      AND t.due_date IS NOT NULL`;
 
 /** The tasks a scan or a preview looks at. */
@@ -352,9 +524,12 @@ export async function calendarForTasks(tasks, now, options = {}) {
  * Evaluates every active rule against the current task set.
  * Safe to call as often as you like — nothing is double counted.
  *
- * Deadlines are judged against the assignee's own calendar: one falling on a
- * weekly off, an approved holiday or approved leave is in force from the same
- * time on their next working day, and an escalation counts their working days.
+ * Deadlines are judged against the calendar of the person who owned the task
+ * at its deadline: one falling on a weekly off, an approved holiday or
+ * approved leave is in force from the same time on their next working day,
+ * and an escalation counts their working days. See evaluateTask for the
+ * fairness rules (precedence, owner at the deadline, deferrals, blocks,
+ * deactivated people, rules applying from a date).
  *
  * @returns {Promise<{scanned:number, created:Array}>}
  */
@@ -369,18 +544,20 @@ export async function runBlackMarkScan({ now = new Date(), taskId = null } = {})
   const tasks = await scanTasks({ taskId });
   const created = [];
   if (!tasks.length) return { scanned: 0, created };
-  const cal = await calendarForTasks(tasks, now);
+  const fair = await fairnessContext(tasks);
+  // the calendar of everyone who owned one of these tasks, not just the owners now
+  const cal = await calendarForTasks([...tasks, ...fair.people.map((id) => ({ assignee_id: id, due_date: null }))], now);
 
   for (const task of tasks) {
     if (task.stage === 'cancelled') continue;
-    for (const occurrence of evaluateTask(task, rules, cal, now)) {
+    for (const occurrence of evaluateTask(task, rules, cal, now, fair.for(task))) {
       const { rule } = occurrence;
       if (rule.trigger_type === 'overdue_escalation' && rule.max_points_per_task != null) {
         const existing = await pointsAlreadyOnTask(task.id, rule.id);
         if (existing + Number(rule.points) > Number(rule.max_points_per_task)) continue;
       }
       const mark = await recordBlackMark({
-        userId: task.assignee_id,
+        userId: occurrence.userId || task.assignee_id,
         taskId: task.id,
         ruleId: rule.id,
         points: occurrence.points,
@@ -419,9 +596,11 @@ export async function handleTaskReopened({ task, actorId }) {
     `SELECT * FROM blackmark_rules WHERE is_active = TRUE AND trigger_type = 'task_reopened'`,
   );
   const created = [];
-  for (const rule of rules) {
-    if (!ruleMatches(rule, task)) continue;
+  // D2: one mark per reopening, from the most specific matching rule
+  const picked = pickRule(rules, task, 'task_reopened');
+  for (const rule of picked ? [picked] : []) {
     if (!task.assignee_id) continue;
+    if (rule.effective_from && new Date() < new Date(rule.effective_from)) continue;
     const { rows } = await query(
       `SELECT COUNT(*)::int AS n FROM task_activity
         WHERE task_id = $1 AND action = 'reopened'`,
@@ -476,7 +655,10 @@ export async function monthlyReview({ month, departmentId = null, now = new Date
             COUNT(bm.id) FILTER (WHERE bm.status = 'waived')     AS waived_count,
             COUNT(DISTINCT bm.task_id) FILTER (
               WHERE bm.status = 'active' AND r.trigger_type IN ('deadline_missed', 'completed_late')
-            )                                                    AS missed_deadlines
+            )                                                    AS missed_deadlines,
+            COUNT(DISTINCT bm.task_id) FILTER (
+              WHERE bm.status = 'active' AND r.trigger_type IN ('deadline_missed', 'completed_late', 'overdue_escalation')
+            )                                                    AS tasks_missed
        FROM users u
        LEFT JOIN departments d ON d.id = u.department_id
        LEFT JOIN black_marks bm
@@ -496,6 +678,9 @@ export async function monthlyReview({ month, departmentId = null, now = new Date
     mark_count: Number(r.mark_count),
     waived_count: Number(r.waived_count),
     missed_deadlines: Number(r.missed_deadlines),
+    // three counts kept apart: tasks missed, mark events, weighted points
+    tasks_missed: Number(r.tasks_missed),
+    mark_events: Number(r.mark_count),
     total_points: Number(r.total_points),
     over_limit: Number(r.missed_deadlines) > limit,
     severity:

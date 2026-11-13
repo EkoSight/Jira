@@ -18,12 +18,10 @@
 
 import { query, withTransaction } from '../db/pool.js';
 import { config } from '../config.js';
-import { effectivePermissions } from '../lib/permissions.js';
 import { ChatError, chatConfig, chatLink, chatText, sendChatMessage } from '../lib/googleChat.js';
 import { getSettings } from './settings.js';
-import { currentPolicy } from './attendancePolicy.js';
-import { dateIn, visibleUserIds } from './attendance.js';
 import { runStandup, submitFromChat } from './standup.js';
+import { departmentSummary, personalSummary, queueSummaries as queueTaskSummaries } from './taskSummaries.js';
 
 const RETRY_MINUTES = [1, 5, 30, 120];
 const MAX_ATTEMPTS = RETRY_MINUTES.length + 1;
@@ -280,141 +278,17 @@ export function alertMessage(n) {
 }
 
 /**
- * Today for one person. Returns null when there is nothing worth saying, so an
- * empty morning does not ping anyone.
+ * Today for one person, and the department's morning: built in
+ * services/taskSummaries.js with the shared deadline definition (sections for
+ * overdue, today, upcoming, blocked, review due, needs a date, supporting,
+ * covering and decisions). Null when there is nothing to say.
  */
 export async function morningSummary(userId, now = new Date(), { force = false } = {}) {
-  const { rows: users } = await query(
-    'SELECT id, full_name, role, extra_permissions, revoked_permissions, department_id FROM users WHERE id = $1 AND is_active',
-    [userId],
-  );
-  const user = users[0];
-  if (!user) return null;
-  const settings = await getSettings();
-  const tz = settings.organisation?.timezone || 'Asia/Kolkata';
-  const today = dateIn(tz, now);
-
-  const { rows: tasks } = await query(
-    `SELECT t.id, t.ref, t.title, t.due_date, (t.due_date < $2) AS overdue
-       FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
-      WHERE t.assignee_id = $1 AND NOT t.is_archived AND s.stage NOT IN ('done', 'cancelled')
-        AND t.due_date IS NOT NULL
-        AND (t.due_date < $2 OR (t.due_date AT TIME ZONE $3)::date = $4::date)
-      ORDER BY t.due_date`,
-    [userId, now, tz, today],
-  );
-  const overdue = tasks.filter((t) => t.overdue);
-  const dueToday = tasks.filter((t) => !t.overdue);
-
-  // decisions waiting on this person, for the teams they are authorised to review
-  const perms = effectivePermissions(user);
-  let leaveWaiting = 0;
-  let correctionsWaiting = 0;
-  if (perms.includes('leave.approve') || perms.includes('attendance.approve')) {
-    const ids = await visibleUserIds(user);
-    if (perms.includes('leave.approve')) {
-      const { rows } = await query(
-        `SELECT COUNT(*)::int AS n FROM leave_requests WHERE status IN ('SUBMITTED', 'EMERGENCY_REVIEW', 'NOTICE_EXCEPTION')
-            AND user_id <> $1 AND ($2::int[] IS NULL OR user_id = ANY($2::int[]))`,
-        [userId, ids],
-      );
-      leaveWaiting = rows[0].n;
-    }
-    if (perms.includes('attendance.approve')) {
-      const { rows } = await query(
-        `SELECT COUNT(*)::int AS n FROM attendance_corrections WHERE status = 'PENDING'
-            AND user_id <> $1 AND ($2::int[] IS NULL OR user_id = ANY($2::int[]))`,
-        [userId, ids],
-      );
-      correctionsWaiting = rows[0].n;
-    }
-  }
-
-  // a check-in nudge only once attendance has started, and only if not done
-  let checkIn = false;
-  const policy = (await currentPolicy()).config;
-  if (policy.startDate && today >= policy.startDate && policy.workingDays.includes(new Date(`${today}T00:00:00Z`).getUTCDay())) {
-    const { rows } = await query(
-      `SELECT
-         EXISTS (SELECT 1 FROM attendance_sessions WHERE user_id = $1 AND work_date = $2) AS checked_in,
-         COALESCE((SELECT attendance_required FROM employee_work_profiles WHERE user_id = $1), TRUE) AS required,
-         EXISTS (SELECT 1 FROM leave_requests WHERE user_id = $1 AND status IN ('APPROVED_PAID', 'APPROVED_UNPAID')
-                  AND $2::date BETWEEN start_date AND end_date) AS on_leave`,
-      [userId, today],
-    );
-    checkIn = rows[0].required && !rows[0].checked_in && !rows[0].on_leave && user.role !== 'super_admin';
-  }
-
-  if (!force && !tasks.length && !leaveWaiting && !correctionsWaiting && !checkIn) return null;
-
-  const first = user.full_name.split(' ')[0];
-  const lines = [`*Good morning, ${chatText(first)}* — ${new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long' }).format(now)}`];
-  if (checkIn) lines.push(`\n⏱ Remember to *Check In / Start Work*: ${app('/')}`);
-  if (overdue.length) {
-    lines.push(`\n*Overdue (${overdue.length})*`);
-    lines.push(...overdue.slice(0, 6).map(taskLine));
-    if (overdue.length > 6) lines.push(`…and ${overdue.length - 6} more: ${app('/my-tasks')}`);
-  }
-  if (dueToday.length) {
-    lines.push(`\n*Due today (${dueToday.length})*`);
-    lines.push(...dueToday.slice(0, 6).map(taskLine));
-    if (dueToday.length > 6) lines.push(`…and ${dueToday.length - 6} more: ${app('/my-tasks')}`);
-  }
-  if (leaveWaiting || correctionsWaiting) {
-    const parts = [];
-    if (leaveWaiting) parts.push(`${leaveWaiting} leave request${leaveWaiting === 1 ? '' : 's'}`);
-    if (correctionsWaiting) parts.push(`${correctionsWaiting} attendance correction${correctionsWaiting === 1 ? '' : 's'}`);
-    lines.push(`\n*Waiting for your decision:* ${parts.join(' and ')} — ${chatLink(app('/attendance?tab=approvals'), 'review')}`);
-  }
-  if (lines.length === 1) lines.push('\nNothing due today, nothing overdue, and nothing waiting for you.');
-  return { text: lines.join('\n') };
+  return personalSummary(userId, { now, force });
 }
 
-/**
- * The department's morning in one message. Who is away is shown by name and
- * dates only — never the reason, which may be medical or personal.
- */
 export async function teamSummary(departmentId, now = new Date()) {
-  const settings = await getSettings();
-  const tz = settings.organisation?.timezone || 'Asia/Kolkata';
-  const today = dateIn(tz, now);
-  const { rows: dept } = await query('SELECT name FROM departments WHERE id = $1', [departmentId]);
-  if (!dept[0]) return null;
-
-  const { rows: away } = await query(
-    `SELECT u.full_name, a.status, a.day_part, a.end_date
-       FROM user_availability a JOIN users u ON u.id = a.user_id
-      WHERE a.cancelled_at IS NULL AND u.is_active AND u.department_id = $1 AND $2::date BETWEEN a.start_date AND a.end_date
-      ORDER BY u.full_name`,
-    [departmentId, today],
-  );
-  const { rows: tasks } = await query(
-    `SELECT t.id, t.ref, t.title, t.due_date, (t.due_date < $2) AS overdue, u.full_name AS owner
-       FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id LEFT JOIN users u ON u.id = t.assignee_id
-      WHERE t.department_id = $1 AND NOT t.is_archived AND s.stage NOT IN ('done', 'cancelled')
-        AND t.due_date IS NOT NULL AND (t.due_date < $2 OR (t.due_date AT TIME ZONE $3)::date = $4::date)
-      ORDER BY t.due_date`,
-    [departmentId, now, tz, today],
-  );
-  const overdue = tasks.filter((t) => t.overdue);
-  const dueToday = tasks.filter((t) => !t.overdue);
-  const awayText = (a) => (a.status === 'HALF_DAY'
-    ? `${chatText(a.full_name)} (half day, ${a.day_part === 'MORNING' ? 'morning' : 'afternoon'})`
-    : `${chatText(a.full_name)}${a.end_date > today ? ` (back after ${new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short' }).format(new Date(`${a.end_date}T00:00:00Z`))})` : ''}`);
-  const line = (t) => `${taskLine(t)}${t.owner ? ` · ${chatText(t.owner)}` : ' · *unassigned*'}`;
-
-  const lines = [`*${chatText(dept[0].name)} — ${new Intl.DateTimeFormat('en-GB', { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long' }).format(now)}*`];
-  lines.push(away.length ? `\n*Away today:* ${away.map(awayText).join(', ')}` : '\nEveryone is in today.');
-  if (dueToday.length) {
-    lines.push(`\n*Due today (${dueToday.length})*`, ...dueToday.slice(0, 8).map(line));
-    if (dueToday.length > 8) lines.push(`…and ${dueToday.length - 8} more`);
-  }
-  if (overdue.length) {
-    lines.push(`\n*Overdue (${overdue.length})*`, ...overdue.slice(0, 8).map(line));
-    if (overdue.length > 8) lines.push(`…and ${overdue.length - 8} more: ${app('/board?overdue=true')}`);
-  }
-  if (!dueToday.length && !overdue.length) lines.push('Nothing due today and nothing overdue.');
-  return { text: lines.join('\n') };
+  return departmentSummary(departmentId, { now });
 }
 
 // ---------------------------------------------------------------- queueing
@@ -468,63 +342,55 @@ export async function dispatchNotifications() {
   return { queued };
 }
 
-const pastTime = (now, hhmm, tz) => {
-  const local = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
-  return local >= hhmm;
-};
 
-/** The morning messages, once per person and per space each working day. */
+/**
+ * The morning messages, once per person and per space each working day,
+ * respecting holidays, leave and days off, with a per-recipient log
+ * (services/taskSummaries.js).
+ */
 export async function queueSummaries(now = new Date()) {
-  const settings = await getSettings();
-  const chat = settings.googleChat || {};
-  if (!chat.enabled) return { queued: 0 };
-  const tz = settings.organisation?.timezone || 'Asia/Kolkata';
-  const today = dateIn(tz, now);
-  const workingDays = settings.organisation?.workingDays || [1, 2, 3, 4, 5, 6];
-  if (!workingDays.includes(new Date(`${today}T00:00:00Z`).getUTCDay())) return { queued: 0 };
-  // a summary queued late in the day would be noise; only the morning counts
-  const tooLate = pastTime(now, '13:00', tz);
-  let queued = 0;
-
-  if (pastTime(now, chat.morningSummaryTime || '08:45', tz) && !tooLate) {
-    const { rows } = await query(
-      `SELECT sp.space_name, sp.user_id FROM chat_spaces sp JOIN users u ON u.id = sp.user_id AND u.is_active
-         LEFT JOIN chat_preferences p ON p.user_id = sp.user_id
-        WHERE sp.kind = 'DM' AND sp.active AND COALESCE(p.morning_summary, TRUE)
-          AND NOT EXISTS (SELECT 1 FROM chat_outbox o WHERE o.dedupe_key = 'digest:' || sp.user_id || ':' || $1)`,
-      [today],
-    );
-    for (const row of rows) {
-      const payload = await morningSummary(row.user_id, now);
-      // record that today was considered, even when there was nothing to say
-      if (!payload) {
-        await query(
-          `INSERT INTO chat_outbox (dedupe_key, space_name, user_id, kind, payload, status, sent_at)
-           VALUES ($1, $2, $3, 'DIGEST', '{"skipped":true}', 'SENT', now()) ON CONFLICT (dedupe_key) DO NOTHING`,
-          [`digest:${row.user_id}:${today}`, row.space_name, row.user_id],
-        );
-        continue;
-      }
-      if (await enqueue({ dedupeKey: `digest:${row.user_id}:${today}`, spaceName: row.space_name, userId: row.user_id, kind: 'DIGEST', payload })) queued += 1;
-    }
-  }
-
-  if (pastTime(now, chat.teamSummaryTime || '09:15', tz) && !tooLate) {
-    const { rows } = await query(
-      `SELECT space_name, department_id FROM chat_spaces
-        WHERE kind = 'SPACE' AND active AND team_summary AND department_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM chat_outbox o WHERE o.dedupe_key = 'team:' || space_name || ':' || $1)`,
-      [today],
-    );
-    for (const row of rows) {
-      const payload = await teamSummary(row.department_id, now);
-      if (payload && await enqueue({ dedupeKey: `team:${row.space_name}:${today}`, spaceName: row.space_name, kind: 'TEAM_SUMMARY', payload })) queued += 1;
-    }
-  }
-  return { queued };
+  return queueTaskSummaries(now);
 }
 
 // ---------------------------------------------------------------- delivery
+
+/**
+ * Why a queued message no longer applies, or null. A reminder or a "due soon"
+ * alert about a task that has since been finished, handed to someone else or
+ * re-dated would be wrong by the time a retry delivers it.
+ */
+async function staleReason(row) {
+  if (row.kind === 'TASK_REMINDER') {
+    const id = Number(String(row.dedupe_key).match(/^task-reminder:(\d+)$/)?.[1]);
+    if (!id) return null;
+    const { rows } = await query(
+      `SELECT r.user_id, r.role, r.due_at, t.assignee_id, t.due_date, t.is_archived, t.deferral_id, s.stage
+         FROM task_reminders r JOIN tasks t ON t.id = r.task_id JOIN workflow_statuses s ON s.id = t.status_id WHERE r.id = $1`,
+      [id],
+    );
+    const r = rows[0];
+    if (!r) return null;
+    if (r.is_archived || ['done', 'cancelled'].includes(r.stage)) return 'The task was finished before this could be sent';
+    if (r.deferral_id) return 'The task was deferred before this could be sent';
+    if (r.role === 'OWNER' && r.assignee_id !== r.user_id) return 'The task was handed to someone else before this could be sent';
+    if (new Date(r.due_date).getTime() !== new Date(r.due_at).getTime()) return 'The deadline changed before this could be sent';
+    return null;
+  }
+  if (row.kind === 'ALERT' && row.notification_id) {
+    const { rows } = await query(
+      `SELECT n.type, n.user_id, t.assignee_id, t.follower_id, t.is_archived, s.stage
+         FROM notifications n JOIN tasks t ON t.id = n.task_id JOIN workflow_statuses s ON s.id = t.status_id WHERE n.id = $1`,
+      [row.notification_id],
+    );
+    const n = rows[0];
+    if (!n) return null;
+    const closed = n.is_archived || ['done', 'cancelled'].includes(n.stage);
+    if (['due_soon', 'assigned'].includes(n.type) && closed) return 'The task was finished before this could be sent';
+    if (['due_soon', 'assigned'].includes(n.type) && n.assignee_id !== n.user_id) return 'The task was handed to someone else before this could be sent';
+    if (n.type === 'follower' && n.follower_id !== n.user_id) return 'They no longer follow the task';
+  }
+  return null;
+}
 
 /** Sends what is due. Failures wait and retry; a removed app stops trying. */
 export async function deliverOutbox({ limit = 50 } = {}) {
@@ -539,6 +405,12 @@ export async function deliverOutbox({ limit = 50 } = {}) {
   let sent = 0;
   let failed = 0;
   for (const row of rows) {
+    // a message about a task that has moved on since it was queued is not sent
+    const stale = await staleReason(row).catch(() => null);
+    if (stale) {
+      await query(`UPDATE chat_outbox SET status = 'CANCELLED', last_error = $2 WHERE id = $1`, [row.id, stale]);
+      continue;
+    }
     try {
       const result = await sendChatMessage(row.space_name, row.payload);
       await query(

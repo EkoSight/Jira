@@ -21,6 +21,7 @@ const NAV = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
+  { to: '/review', label: 'Overdue review', icon: 'alert' },
   { to: '/attendance', label: 'Attendance', icon: 'clock' },
   { to: '/standup', label: 'Daily standup', icon: 'list' },
   { to: '/goals', label: 'Goals', icon: 'target', permission: 'okr.view', module: 'okr' },

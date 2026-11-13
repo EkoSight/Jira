@@ -8,6 +8,7 @@ import Login, { ForcePasswordChange } from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Board from './pages/Board.jsx';
 import MyTasks from './pages/MyTasks.jsx';
+import Review from './pages/Review.jsx';
 import Team from './pages/Team.jsx';
 import BlackMarks from './pages/BlackMarks.jsx';
 import Settings from './pages/Settings.jsx';
@@ -46,6 +47,7 @@ function Shell() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/board" element={<Board />} />
         <Route path="/my-tasks" element={<MyTasks />} />
+        <Route path="/review" element={<Review />} />
         <Route
           path="/team"
           element={

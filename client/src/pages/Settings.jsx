@@ -1,9 +1,10 @@
+import TaskReminderSettings, { DeliveryLog } from '../components/TaskReminderSettings.jsx';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
-import { PRIORITIES } from '../lib/format.js';
+import { PRIORITIES, formatDate } from '../lib/format.js';
 import AttendanceSettings from '../components/AttendanceSettings.jsx';
 import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
 import ProfilePhoto from '../components/ProfilePhoto.jsx';
@@ -27,7 +28,7 @@ const STAGES = [
 const TRIGGERS = [
   ['deadline_missed', 'A deadline passes and the task is not done'],
   ['completed_late', 'The task is finished, but after the deadline'],
-  ['overdue_escalation', 'The task stays overdue — repeats every N days'],
+  ['overdue_escalation', 'The task stays overdue — repeats every N working days'],
   ['task_reopened', 'A task marked done has to be reopened'],
   ['manual', 'Only raised by hand'],
 ];
@@ -340,6 +341,23 @@ function RulesTab() {
 
   useEffect(load, []);
 
+  const [report, setReport] = useState(null);
+  const [backfill, setBackfill] = useState(null);
+  useEffect(() => { api.get('/blackmarks/rules/report').then(setReport).catch(() => {}); }, [rules]);
+  const previewBackfill = async (rule) => {
+    try { setBackfill(await api.post(`/blackmarks/rules/${rule.id}/backfill/preview`, {})); } catch (err) { toast.error(err); }
+  };
+  const applyBackfill = async () => {
+    const note = window.prompt(`Apply "${backfill.rule.name}" to earlier work: ${backfill.occurrences} mark(s) for ${backfill.people} person(s), ${backfill.points} point(s). Why? (recorded with your approval)`);
+    if (!note || note.trim().length < 5) return;
+    try {
+      const r = await api.post(`/blackmarks/backfills/${backfill.id}/apply`, { fingerprint: backfill.fingerprint, note: note.trim() });
+      toast.success(`${r.created} mark(s) recorded`);
+      setBackfill(null);
+      load();
+    } catch (err) { toast.error(err); }
+  };
+
   const save = async (form) => {
     try {
       const payload = {
@@ -355,9 +373,8 @@ function RulesTab() {
         severity: form.severity || 'normal',
         is_active: form.is_active !== false,
       };
-      if (form.id) await api.updateRule(form.id, payload);
-      else await api.createRule(payload);
-      toast.success('Rule saved');
+      const result = form.id ? await api.updateRule(form.id, payload) : await api.createRule(payload);
+      toast.success(!form.id || result?.restarted ? 'Rule saved: it applies to deadlines from now on (earlier work only if you preview and approve it)' : 'Rule saved');
       setEditing(undefined);
       load();
     } catch (err) {
@@ -383,6 +400,39 @@ function RulesTab() {
 
       {rules.length === 0 && <EmptyState title="No rules yet">Add one to start tracking missed deadlines.</EmptyState>}
 
+      {report && report.rules.length > 0 && (
+        <div className="card card-pad stack-sm">
+          <strong>How the rules combine</strong>
+          <div className="small muted">{report.precedence}</div>
+          {report.overlaps.length > 0 && <div className="small">Overlapping rules (only the most specific applies now): {report.overlaps.map((p) => p.join(' + ')).join('; ')}</div>}
+          <table className="data small">
+            <thead><tr><th>Priority</th><th>{report.examples[0]?.scenario}</th><th className="num">Before</th><th className="num">Now</th></tr></thead>
+            <tbody>
+              {report.examples.map((e) => (
+                <tr key={e.priority}><td>{e.priority}</td><td className="muted">one task</td><td className="num tnum">{e.points_before}</td><td className="num tnum">{e.points_now}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {backfill && (
+        <div className="card card-pad stack-sm" role="region" aria-label="Apply to earlier work">
+          <strong>Apply “{backfill.rule.name}” to work before {formatDate(backfill.rule.effective_from)}?</strong>
+          <div className="small">{backfill.occurrences} mark(s) for {backfill.people} person(s), {backfill.points} point(s). Nothing is recorded until you approve this exact list.</div>
+          {backfill.preview.length > 0 && (
+            <table className="data small">
+              <thead><tr><th>Person</th><th>Task</th><th>When</th><th className="num">Points</th></tr></thead>
+              <tbody>{backfill.preview.slice(0, 50).map((p) => <tr key={p.key}><td>{p.person}</td><td>{p.task_ref} {p.task_title}</td><td>{formatDate(p.occurred_at)}</td><td className="num tnum">{p.points}</td></tr>)}</tbody>
+            </table>
+          )}
+          <div className="row" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm btn-primary" disabled={!backfill.occurrences} onClick={applyBackfill}>Approve and record</button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setBackfill(null)}>Close</button>
+          </div>
+        </div>
+      )}
+
       <div className="stack-sm">
         {rules.map((rule) => (
           <div key={rule.id} className="card card-pad">
@@ -397,7 +447,8 @@ function RulesTab() {
                 <div className="small muted" style={{ marginTop: 4 }}>
                   {TRIGGERS.find(([key]) => key === rule.trigger_type)?.[1]}
                   {rule.grace_hours > 0 && ` · ${rule.grace_hours}h grace`}
-                  {rule.repeat_every_days && ` · repeats every ${rule.repeat_every_days} days`}
+                  {rule.repeat_every_days && ` · repeats every ${rule.repeat_every_days} working days of the owner`}
+                  {rule.effective_from && ` · applies to deadlines from ${formatDate(rule.effective_from)}`}
                   {rule.max_points_per_task && ` · capped at ${rule.max_points_per_task} per task`}
                   {rule.priorities?.length > 0 && ` · only ${rule.priorities.join(', ')}`}
                   {rule.department_ids?.length > 0 &&
@@ -410,6 +461,9 @@ function RulesTab() {
               {can('blackmark.rules') && (
                 <div className="row" style={{ gap: 4 }}>
                   <button type="button" className="btn btn-sm" onClick={() => setEditing(rule)}>Edit</button>
+                  {rule.effective_from && rule.trigger_type !== 'manual' && rule.trigger_type !== 'task_reopened' && (
+                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => previewBackfill(rule)}>Earlier work…</button>
+                  )}
                   <ConfirmButton
                     label="Delete"
                     confirmLabel="Tap again"
@@ -469,7 +523,7 @@ function RulesTab() {
 
               {form.trigger_type === 'overdue_escalation' && (
                 <div className="grid-2">
-                  <Field label="Repeat every (days)">
+                  <Field label="Repeat every (working days)" hint="Counted on the owner's own working days: days off, holidays and leave are skipped">
                     <input type="number" min="1" className="input" value={form.repeat_every_days || ''} onChange={(e) => set('repeat_every_days', e.target.value)} />
                   </Field>
                   <Field label="Maximum points per task">
@@ -679,6 +733,7 @@ const TABS = [
   ['thresholds', 'Thresholds'],
   ['attendance', 'Attendance & pay', 'attendance.policy'],
   ['chat', 'Google Chat', 'settings.manage'],
+  ['reminders', 'Reminders', 'settings.manage'],
   ['branding', 'Branding', 'settings.manage'],
   ['account', 'My account'],
 ];
@@ -711,6 +766,10 @@ function AccountTab() {
       <SuperAdminClaim />
       <ProfilePhoto />
       <LookSettings />
+      <section className="card">
+        <div className="card-head"><h2>My reminders</h2><span className="small muted">The last 14 days: what was meant to reach you, and what happened</span></div>
+        <div className="card-pad"><DeliveryLog /></div>
+      </section>
       <div className="card card-pad stack-sm">
         <h3>{user.full_name}</h3>
         <div className="small muted">{user.email} · {{ super_admin: 'Super admin', admin: 'Admin', manager: 'Manager', member: 'Member', viewer: 'Viewer' }[user.role] || user.role}</div>
@@ -776,6 +835,7 @@ export default function Settings() {
       {tab === 'thresholds' && <ThresholdsTab onChanged={refresh} />}
       {tab === 'attendance' && <AttendanceSettings />}
       {tab === 'chat' && <GoogleChatSettings />}
+      {tab === 'reminders' && <TaskReminderSettings />}
       {tab === 'branding' && <BrandingSettings />}
       {tab === 'account' && <AccountTab />}
     </div>

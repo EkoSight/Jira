@@ -1,3 +1,5 @@
+import { clock, healthLabel } from '../../../shared/deadlineHealth.js';
+
 export const PRIORITIES = [
   { value: 'critical', label: 'Critical', tone: 'critical' },
   { value: 'high', label: 'High', tone: 'serious' },
@@ -55,7 +57,6 @@ export function loadSummary(load) {
   return `${max > 0 ? `${load.open_tasks} of ${max} tasks` : `${load.open_tasks} open task${plural}`}${unsizedNote}`;
 }
 
-const dayMs = 86400000;
 
 export const initials = (name = '') =>
   name
@@ -70,7 +71,10 @@ export function formatDate(value, { withTime = false } = {}) {
   if (!value) return '—';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '—';
+  // in the organisation's time zone, like the deadline labels next to it: a
+  // device in another zone shows the same dates and times as everyone else
   return date.toLocaleDateString(undefined, {
+    timeZone: calendar.timezone,
     day: 'numeric',
     month: 'short',
     year: date.getFullYear() === new Date().getFullYear() ? undefined : 'numeric',
@@ -78,26 +82,34 @@ export function formatDate(value, { withTime = false } = {}) {
   });
 }
 
-/** "3 days late", "due today", "in 5 days" — the phrasing the board leans on. */
+// ---------------------------------------------------------------- deadline health
+//
+// One definition, shared with the server (shared/deadlineHealth.js), in the
+// organisation's time zone rather than this device's: a task due at 10:00 is
+// overdue at 15:00 on the board, in My Tasks and in Google Chat alike.
+
+let calendar = { timezone: 'Asia/Kolkata', workingDays: [1, 2, 3, 4, 5, 6], dueSoonDays: 3 };
+
+/** The organisation's calendar, as the server reports it with task lists. */
+export function setDeadlineCalendar(next) {
+  if (next?.timezone) calendar = { ...calendar, ...next };
+}
+
+export const deadlineClock = (now = new Date()) => clock(now, calendar);
+
+/** A task's deadline health: the server's when it sent one, otherwise worked out the same way. */
+export function taskHealth(task) {
+  if (task?.health?.code) return task.health;
+  const h = healthLabel({ stage: task?.stage || 'todo', ...task }, deadlineClock());
+  return { code: h.code, text: h.text, tone: h.tone, overdue_ms: h.overdueMs, review_due: h.reviewDue, deferred: h.deferred };
+}
+
+/** The deadline in words and its tone, for places that only have the date. */
 export function dueLabel(dueDate, { done = false } = {}) {
   if (!dueDate) return { text: 'No deadline', tone: 'neutral' };
-
-  const due = new Date(dueDate);
-  const startOfToday = new Date();
-  startOfToday.setHours(0, 0, 0, 0);
-  const dueDay = new Date(due);
-  dueDay.setHours(0, 0, 0, 0);
-  const days = Math.round((dueDay - startOfToday) / dayMs);
-
   if (done) return { text: formatDate(dueDate), tone: 'neutral' };
-  if (days < 0) {
-    const late = Math.abs(days);
-    return { text: `${late} day${late === 1 ? '' : 's'} late`, tone: 'critical' };
-  }
-  if (days === 0) return { text: 'Due today', tone: 'warning' };
-  if (days === 1) return { text: 'Due tomorrow', tone: 'warning' };
-  if (days <= 3) return { text: `In ${days} days`, tone: 'serious' };
-  return { text: formatDate(dueDate), tone: 'neutral' };
+  const h = healthLabel({ stage: 'todo', due_date: dueDate }, deadlineClock());
+  return { text: h.text, tone: h.tone };
 }
 
 export function relativeTime(value) {

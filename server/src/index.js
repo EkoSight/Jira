@@ -5,6 +5,7 @@ import { startDeadlineScanner, stopDeadlineScanner } from './jobs/deadlineScanne
 import { startChatWorker, stopChatWorker } from './jobs/chatWorker.js';
 import { startMarketingWorker, stopMarketingWorker } from './jobs/marketingWorker.js';
 import { startSalesWorker, stopSalesWorker } from './jobs/salesWorker.js';
+import { startReminderWorker, stopReminderWorker } from './jobs/reminderWorker.js';
 import { salesSettings } from './services/sales/core.js';
 import { closePool } from './db/pool.js';
 import { reportStartupFailure } from './lib/dbErrors.js';
@@ -56,6 +57,7 @@ async function main() {
     startChatWorker();
     startMarketingWorker();
     startSalesWorker();
+    startReminderWorker();
   }
 
   const shutdown = async (signal) => {
@@ -64,6 +66,7 @@ async function main() {
     stopChatWorker();
     stopMarketingWorker();
     stopSalesWorker();
+    stopReminderWorker();
     server.close(async () => {
       await closePool();
       process.exit(0);
