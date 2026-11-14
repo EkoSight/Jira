@@ -1,3 +1,4 @@
+import RemindMe from '../components/workspace/RemindMe.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
@@ -216,6 +217,7 @@ export default function SalesLead() {
           <div className="small muted lead-place">{locationLine(lead)}</div>
         </div>
         <div className="row wrap" style={{ gap: 6 }}>
+          <RemindMe entityType="LEAD" entityId={lead.id} />
           {data.can.edit && <button type="button" className="btn btn-sm" onClick={() => setDialog('edit')}>Edit</button>}
           {data.can.edit && inTaskflow && lead.status !== 'CONVERTED' && <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog('convert')}>Convert to deal</button>}
           {lead.converted_opportunity_id && <Link className="btn btn-sm" to={`/accounts/${lead.converted_account_id}?deal=${lead.converted_opportunity_id}`}>Open the deal</Link>}

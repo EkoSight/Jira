@@ -1,3 +1,4 @@
+import RemindMe from './workspace/RemindMe.jsx';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
@@ -782,6 +783,10 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
   const workSections = !isNew && detail ? (
     <>
+      <div className="row wrap" style={{ gap: 6 }}>
+        <RemindMe entityType="TASK" entityId={activeId} label="Remind me" />
+        <span className="small muted">A private reminder for you; it does not change the deadline.</span>
+      </div>
       {sections.filter((sec) => sec.count > 0 || openedSections[sec.key]).map((sec) => (
         <div key={sec.key}>{sec.node}</div>
       ))}

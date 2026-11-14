@@ -11,6 +11,10 @@ import { followUpFailedChats, hhmm, reminderSettings, replanSweep, sendDueTaskRe
 import { queueBacklogReviews } from '../services/taskSummaries.js';
 import { coverageReport } from '../services/coverage.js';
 import { deadlineClock } from '../services/deadlines.js';
+import { planSweep, sendDueOccurrences } from '../services/workspace/reminders.js';
+// the planners register themselves with the workspace reminder engine
+import '../services/workspace/personal.js';
+import '../services/workspace/rules.js';
 
 const SWEEP_EVERY_MS = 10 * 60 * 1000;
 let timer = null;
@@ -32,8 +36,10 @@ export async function runReminderTick({ now = new Date(), force = false } = {}) 
   if (force || Date.now() - lastSweep > SWEEP_EVERY_MS) {
     lastSweep = Date.now();
     await step('planned', () => replanSweep({ now }), out);
+    await step('workspacePlanned', () => planSweep({ now }), out);
   }
   await step('sent', () => sendDueTaskReminders(now), out);
+  await step('workspaceSent', () => sendDueOccurrences(now), out);
   await step('fallbacks', () => followUpFailedChats(now), out);
   await step('backlog', () => queueBacklogReviews(now), out);
   const c = await deadlineClock(now);

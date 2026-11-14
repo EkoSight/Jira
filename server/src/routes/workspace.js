@@ -23,6 +23,11 @@ import { decisionsFor } from '../services/workspace/decisions.js';
 import { waitingFor } from '../services/workspace/waiting.js';
 import { listOpportunities } from '../services/opportunities.js';
 import { crmScope } from '../services/sales/core.js';
+import { RULES, cancelMine, effectivePref, occurrencesFor, replanMine, replanRecord, rulePrefs } from '../services/workspace/reminders.js';
+import { addPersonalReminder, cancelPersonalReminder, changePersonalReminder, myPersonalReminders } from '../services/workspace/personal.js';
+import { ENTITY_TYPES } from '../services/workspace/access.js';
+import '../services/workspace/rules.js';
+import { chatRoute, reminderSettings } from '../services/taskReminders.js';
 import { widgetAccess } from '../../../shared/workspaceWidgets.js';
 
 const router = Router();
@@ -173,6 +178,105 @@ router.get('/widgets/deals', asyncHandler(async (req, res) => {
     scope: team ? 'team' : 'mine',
     ...page(list, req),
   });
+}));
+
+// ---------------------------------------------------------------- my reminders (private to the caller)
+
+/**
+ * Every reminder rule that can reach the caller, old and new: the workspace
+ * rules (with their default, the caller's choice, channels and time) and the
+ * engines that already existed (task reminders, daily summary, CRM
+ * follow-ups, goal alerts), which keep their own settings.
+ */
+router.get('/reminders', asyncHandler(async (req, res) => {
+  const user = req.currentUser;
+  const [settings, prefs, ts, route, ws] = await Promise.all([
+    getSettings(), rulePrefs([user.id]), reminderSettings(), chatRoute(user.id), workspaceSettings(),
+  ]);
+  const mine = prefs.get(user.id) || {};
+  const crm = settings.crm?.enabled !== false && hasPermission(user, 'crm.view');
+  const rules = Object.entries(RULES).filter(([, r]) => r.entity !== 'DEAL' && r.entity !== 'APPLICATION' ? true : crm).map(([key, r]) => {
+    const p = effectivePref(mine, key);
+    return {
+      key, group: r.group, label: r.label, description: r.description, opt_in: Boolean(r.optIn), personal: Boolean(r.personal),
+      default: { enabled: r.defaults.enabled, at: r.defaults.at }, enabled: p.enabled, at: p.at, chat: p.chat, chosen: p.chosen, relative: Boolean(r.relative),
+    };
+  });
+  const { rows: chatPref } = await query('SELECT instant, morning_summary FROM chat_preferences WHERE user_id = $1', [user.id]);
+  const { rows: crmPref } = await query('SELECT offsets, channels FROM crm_reminder_prefs WHERE user_id = $1', [user.id]);
+  const existing = [
+    { key: 'TASK_REMINDERS', label: 'Task deadlines', description: `Before a task's deadline (${ts.beforeDueHours} h), at the deadline, and to your fallback person after the grace period.`, choice: ts.mode === 'LIVE' ? 'On for everyone' : ts.mode === 'TEST' ? 'In test mode' : 'Off', manage: '/settings?tab=account' },
+    { key: 'DAILY_SUMMARY', label: 'Morning summary', description: 'Your open work each working morning, in Google Chat.', choice: chatPref[0]?.morning_summary === false ? 'Off' : 'On', manage: '/settings?tab=account' },
+    ...(crm ? [{ key: 'CRM_FOLLOWUPS', label: 'CRM follow-ups', description: 'Before a follow-up is due, and the daily follow-up digest.', choice: crmPref[0] ? `${crmPref[0].offsets.join(', ')} min before · ${crmPref[0].channels.map((c) => (c === 'CHAT' ? 'Google Chat' : 'in-app')).join(' and ')}` : '15 min before · in-app', manage: '/settings?tab=account' }] : []),
+    ...(settings.okr?.enabled !== false && hasPermission(user, 'okr.view') ? [{ key: 'OKR_ALERTS', label: 'Goal and key result alerts', description: 'When one of your key results goes quiet or falls behind.', choice: 'As set for the company', manage: '/goals' }] : []),
+  ];
+  res.json({
+    rules, existing,
+    personal: await myPersonalReminders(user),
+    channels: { app: true, chat: route.ok, chat_why: route.ok ? null : route.why, email: false, push: false },
+    mode: ws.reminderMode,
+    timezone: user.timezone || ws.timezone, timezone_is_personal: Boolean(user.timezone), company_timezone: ws.timezone,
+  });
+}));
+
+router.put('/reminders/rules/:key', asyncHandler(async (req, res) => {
+  const key = req.params.key;
+  const rule = RULES[key];
+  if (!rule || rule.personal) throw badRequest('There is no such rule to change');
+  const body = z.object({
+    enabled: z.boolean(),
+    at_time: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'Use HH:MM').nullable().optional(),
+    chat: z.boolean().nullable().optional(),
+  }).parse(req.body || {});
+  if (body.at_time && rule.relative) throw badRequest('This reminder is set relative to the meeting, not to a time of day');
+  await query(
+    `INSERT INTO reminder_rule_prefs (user_id, rule_key, enabled, at_time, chat) VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_id, rule_key) DO UPDATE SET enabled = EXCLUDED.enabled, at_time = EXCLUDED.at_time, chat = EXCLUDED.chat, updated_at = now()`,
+    [req.currentUser.id, key, body.enabled, body.at_time ?? null, body.chat ?? null],
+  );
+  // off: only my pending reminders of this rule are cancelled. On: planned afresh (at most one current each)
+  const cancelled = await cancelMine(req.currentUser.id, key);
+  const replanned = await replanMine(req.currentUser.id, key);
+  res.json({ ok: true, cancelled, replanned, note: 'Only your own reminders change. The records and everyone else\'s reminders stay as they are.' });
+}));
+
+const personalInput = z.object({
+  entity_type: z.enum(ENTITY_TYPES),
+  entity_id: z.number().int().positive(),
+  remind_at: z.string().min(10),
+  note: z.string().max(500).nullable().optional(),
+});
+router.get('/reminders/personal', asyncHandler(async (req, res) => {
+  const type = ENTITY_TYPES.includes(req.query.entity_type) ? req.query.entity_type : null;
+  res.json({ reminders: await myPersonalReminders(req.currentUser, { entityType: type, entityId: type ? Number(req.query.entity_id) || null : null }) });
+}));
+router.post('/reminders/personal', asyncHandler(async (req, res) => {
+  res.status(201).json({ reminder: await addPersonalReminder(req.currentUser, personalInput.parse(req.body || {})) });
+}));
+router.put('/reminders/personal/:id', asyncHandler(async (req, res) => {
+  const body = z.object({ remind_at: z.string().min(10), note: z.string().max(500).nullable().optional() }).parse(req.body || {});
+  res.json({ reminder: await changePersonalReminder(req.currentUser, Number(req.params.id), body) });
+}));
+router.post('/reminders/personal/:id/cancel', asyncHandler(async (req, res) => {
+  res.json(await cancelPersonalReminder(req.currentUser, Number(req.params.id)));
+}));
+
+router.get('/reminders/log', asyncHandler(async (req, res) => {
+  res.json({ occurrences: await occurrencesFor(req.currentUser.id, { days: Math.min(60, Math.max(1, Number(req.query.days) || 14)) }) });
+}));
+
+/** D4: an optional personal timezone; empty means the company calendar's. */
+router.get('/timezones', asyncHandler(async (req, res) => {
+  res.json({ timezones: Intl.supportedValuesOf('timeZone'), company: (await workspaceSettings()).timezone });
+}));
+router.put('/me/timezone', asyncHandler(async (req, res) => {
+  const { timezone } = z.object({ timezone: z.string().max(64).nullable() }).parse(req.body || {});
+  if (timezone && !Intl.supportedValuesOf('timeZone').includes(timezone)) throw badRequest('Choose a timezone from the list');
+  await query('UPDATE users SET timezone = $2 WHERE id = $1', [req.currentUser.id, timezone || null]);
+  // dated reminders move to the new local time
+  const { rows } = await query(`SELECT DISTINCT entity_type, entity_id FROM reminder_occurrences WHERE recipient_id = $1 AND status = 'PENDING'`, [req.currentUser.id]);
+  for (const r of rows) await replanRecord(r.entity_type, r.entity_id);
+  res.json({ timezone: timezone || null, replanned: rows.length });
 }));
 
 // ---------------------------------------------------------------- templates and rollout (settings.manage)

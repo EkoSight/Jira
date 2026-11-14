@@ -5,6 +5,7 @@ import { useAuth, useOnlineStatus, useRefData, useTheme } from '../state/AppStat
 import { BrandLockup, BrandMark, introOnce } from './BrandMark.jsx';
 import { Avatar, Icon, Modal, PageErrorBoundary } from './ui.jsx';
 import TaskDialog from './TaskDialog.jsx';
+import BellItem from './workspace/BellItem.jsx';
 import { AttendanceGate, SignOutReminder } from './Attendance.jsx';
 import { useAttendance } from '../state/attendance.jsx';
 import {
@@ -321,7 +322,9 @@ export default function Layout({ children }) {
           {notifications.notifications.length === 0 ? (
             <div className="empty small">Nothing yet — assignments and deadline warnings land here.</div>
           ) : (
-            notifications.notifications.map((n) => (
+            notifications.notifications.map((n) => (n.entity_type || n.available === false ? (
+              <BellItem key={n.id} n={n} onChanged={loadNotifications} onClose={() => setShowNotifications(false)} />
+            ) : (
               <button
                 key={n.id}
                 type="button"
@@ -383,8 +386,9 @@ export default function Layout({ children }) {
                 </div>
                 <span className="small muted">{new Date(n.created_at).toLocaleDateString()}</span>
               </button>
-            ))
+            )))
           )}
+          {notifications.snoozed > 0 && <div className="small muted" style={{ paddingTop: 8 }}>{notifications.snoozed} snoozed by you: they come back at the time you chose.</div>}
         </Modal>
       )}
 

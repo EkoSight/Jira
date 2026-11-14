@@ -13,6 +13,7 @@ import BrandingSettings from '../components/BrandingSettings.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
 import WorkspaceSettings from '../components/WorkspaceSettings.jsx';
+import MyReminders from '../components/workspace/MyReminders.jsx';
 import ReminderSettings from '../components/ReminderSettings.jsx';
 import { FollowUpReminderDefaults } from '../components/sales/FollowUpSettings.jsx';
 import { PhoneAppCard } from '../components/sales/PhoneCall.jsx';
@@ -770,8 +771,9 @@ function AccountTab() {
       <ProfilePhoto />
       <LookSettings />
       <PhoneAppCard />
+      <MyReminders />
       <section className="card">
-        <div className="card-head"><h2>My reminders</h2><span className="small muted">The last 14 days: what was meant to reach you, and what happened</span></div>
+        <div className="card-head"><h2>Task reminders sent to me</h2><span className="small muted">The last 14 days: what was meant to reach you, and what happened</span></div>
         <div className="card-pad"><DeliveryLog /></div>
       </section>
       <div className="card card-pad stack-sm">

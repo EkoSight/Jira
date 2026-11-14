@@ -4464,3 +4464,4 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .ws-att { display: flex; align-items: center; }
 .ws-att > .ws-row { flex: 1; min-width: 0; }
 .ws-snooze { margin-right: 10px; flex: none; }
+.ws-bell-done { background: var(--surface-2); }
