@@ -1,0 +1,19 @@
+node_modules/
+# written from the environment by scripts/write-config.mjs; holds the company's address
+capacitor.config.json
+# signing: never in the repository
+*.jks
+*.keystore
+keystore.properties
+# build output
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
+android/app/release/
+android/capacitor-cordova-android-plugins/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+android/app/src/main/res/xml/config.xml
+build/

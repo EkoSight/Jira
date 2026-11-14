@@ -70,7 +70,9 @@ router.post('/recordings', upload.single('file'), asyncHandler(async (req, res) 
     fs.rm(req.file.path, { force: true }, () => {});
     throw badRequest('Say which call the recording is for');
   }
-  const out = await deviceRecording(req.deviceCtx, { callId, logKey, filePath: req.file.path, originalName: req.file.originalname });
+  // a recording the person shared into the app ("Which call is this?") rather than one the app picked up
+  const source = req.body?.source === 'SHARED' ? 'SHARED' : 'DEVICE_SYNC';
+  const out = await deviceRecording(req.deviceCtx, { callId, logKey, filePath: req.file.path, originalName: req.file.originalname, source });
   res.status(out.duplicate ? 200 : 201).json(out);
 }));
 

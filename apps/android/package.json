@@ -1,0 +1,20 @@
+{
+  "name": "taskflow-android",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The TaskFlow Android app for company phones: the TaskFlow web client in a thin Android shell, plus the TaskFlowPhone plugin (dialling on the work SIM, the call log, recordings). See README.md.",
+  "scripts": {
+    "config": "node scripts/write-config.mjs",
+    "sync": "node scripts/write-config.mjs && cap sync android",
+    "test:java": "node scripts/test-java.mjs",
+    "build:release": "node scripts/write-config.mjs && cap sync android && cd android && ./gradlew assembleRelease",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.5.3",
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3"
+  }
+}

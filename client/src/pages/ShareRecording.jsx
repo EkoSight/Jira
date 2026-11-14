@@ -8,6 +8,17 @@ import { exactTime } from '../lib/crmWork.js';
 import { phoneLabel } from '../lib/sales.js';
 import { lengthWords, suggestCall } from '../lib/phoneCalls.js';
 import { dropShared, readShared } from '../lib/sharedFiles.js';
+import { phoneBridge } from '../lib/phoneBridge.js';
+
+/**
+ * In the Android app the shared file stays on the phone, and the app sends it
+ * to the call chosen here; in the installed web app the browser holds it.
+ */
+async function readFromApp(bridge) {
+  const s = await bridge.sharedRecording();
+  if (!s?.waiting) return null;
+  return { file: { name: s.name, size: s.size }, lastModified: s.lastModified || null, inApp: true };
+}
 
 const sizeWords = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 
@@ -21,6 +32,7 @@ const sizeWords = (bytes) => (bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).to
 export default function ShareRecording() {
   const [params] = useSearchParams();
   const sharedId = params.get('shared');
+  const bridge = params.get('native') === '1' ? phoneBridge() : null;
   const navigate = useNavigate();
   const toast = useToast();
   const [shared, setShared] = useState(undefined);
@@ -31,14 +43,14 @@ export default function ShareRecording() {
 
   useEffect(() => {
     let cancelled = false;
-    readShared(sharedId).then((s) => { if (!cancelled) setShared(s); }).catch(() => { if (!cancelled) setShared(null); });
+    (bridge ? readFromApp(bridge) : readShared(sharedId)).then((s) => { if (!cancelled) setShared(s); }).catch(() => { if (!cancelled) setShared(null); });
     api.sales.get('/calls/recent', { hours: 24 }).then((r) => { if (!cancelled) setCalls(r.calls); }).catch(() => { if (!cancelled) setCalls([]); });
     return () => { cancelled = true; };
-  }, [sharedId]);
+  }, [sharedId, bridge]);
 
   // a local preview, so the person can check it is the right call before sending it
   useEffect(() => {
-    if (!shared?.file) return undefined;
+    if (!shared?.file || shared.inApp) return undefined;
     const url = URL.createObjectURL(shared.file);
     setPreview(url);
     return () => URL.revokeObjectURL(url);
@@ -58,15 +70,15 @@ export default function ShareRecording() {
 
   const call = calls.find((c) => c.id === chosen);
   const cancel = async () => {
-    await dropShared(sharedId).catch(() => {});
+    await (shared.inApp ? Promise.resolve(bridge.dropShared()) : dropShared(sharedId)).catch(() => {});
     navigate('/sales');
   };
   const attach = async () => {
     if (!call || busy) return;
     setBusy(true);
     try {
-      const r = await uploadRecording(call.id, shared.file, 'SHARED');
-      await dropShared(sharedId).catch(() => {});
+      const r = shared.inApp ? await bridge.attachShared({ callId: call.id }) : await uploadRecording(call.id, shared.file, 'SHARED');
+      if (!shared.inApp) await dropShared(sharedId).catch(() => {});
       toast.success(r.duplicate ? `That recording was already on call #${call.id}` : `Attached to call #${call.id}: ${lengthWords(r.recording?.length_sec)}`);
       navigate(call.lead_id ? `/sales/leads/${call.lead_id}` : call.account_id ? `/accounts/${call.account_id}` : '/sales');
     } catch (err) {
@@ -98,7 +110,8 @@ export default function ShareRecording() {
         {calls.length === 0 ? (
           <div className="card-pad small muted">No calls in the last 24 hours. A recording can only go on a call made from TaskFlow or picked up from the phone.</div>
         ) : (
-          <ul className="plain-list share-call-list" role="radiogroup" aria-label="Calls">
+          <div role="radiogroup" aria-labelledby="share-calls-title">
+          <ul className="plain-list share-call-list">
             {calls.map((c) => {
               const taken = c.has_recording;
               const blocked = c.no_recording || c.do_not_record;
@@ -123,6 +136,7 @@ export default function ShareRecording() {
               );
             })}
           </ul>
+          </div>
         )}
       </section>
       <div className="row wrap" style={{ gap: 8 }}>

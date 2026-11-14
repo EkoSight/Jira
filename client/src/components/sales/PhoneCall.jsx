@@ -96,6 +96,19 @@ export function CallSessionProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // in the Android app, a recording shared from the phone app opens "Which call is this?"
+  useEffect(() => {
+    const bridge = phoneBridge();
+    if (!bridge || !user || !can('crm.activity.log')) return undefined;
+    const open = () => { if (location.pathname !== '/sales/share-recording') navigate('/sales/share-recording?native=1'); };
+    Promise.resolve(bridge.sharedRecording?.()).then((s) => { if (s?.waiting) open(); }).catch(() => {});
+    let handle = null;
+    let gone = false;
+    Promise.resolve(bridge.addListener?.('sharedRecording', open)).then((h) => { if (gone) h?.remove?.(); else handle = h; }).catch(() => {});
+    return () => { gone = true; handle?.remove?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   // calls dialled with no connection are sent once it is back
   const flush = useCallback(async () => {
     const queue = readJson(localStorage, QUEUE_KEY, []);
@@ -129,6 +142,8 @@ export function CallSessionProvider({ children }) {
       }
     };
     document.addEventListener('visibilitychange', onChange);
+    // the phone may have closed the page during a long call: opened again, the person is back
+    if (session.hiddenAt && document.visibilityState === 'visible') onChange();
     return () => document.removeEventListener('visibilitychange', onChange);
   }, [session, save]);
 

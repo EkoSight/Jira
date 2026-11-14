@@ -737,3 +737,27 @@ test('the call length of an AMR recording is counted from its frames; migration 
   const again = (await query('SELECT id, provider, direction, status, duration_sec, outcome, notes, started_at, recording_ref FROM crm_calls ORDER BY id')).rows;
   assert.deepEqual(again, snapshot);
 });
+
+test('B: a recording shared into the app goes on the call the person chose, marked as shared', async (t) => {
+  if (skip(t)) return;
+  await recordingsOn();
+  const lead = await newLead();
+  const dev = await phone('isha', 'share-phone-0001');
+  const s = ok(await start(lead, tokens.isha, { via: 'ANDROID_APP' }), 201);
+  ok(await api('POST', '/device/call-log', { device: dev.token, body: { entries: [{ log_id: 'S1', number: lead.phone, type: 'OUTGOING', started_at: new Date().toISOString(), duration_sec: 8, call_id: s.call.id }] } }));
+  const up = ok(await api('POST', '/device/recordings', { device: dev.token, form: fileForm(wav(4), 'shared.wav', { call_id: s.call.id, source: 'SHARED' }) }), 201);
+  assert.equal(up.recording.source, 'SHARED');
+  assert.equal(up.recording.call_id, s.call.id);
+  // anything else from the app is its own pick-up; and a call that is not this person's is refused
+  const other = await newLead({ owner_user_id: ids.ravi });
+  const r = ok(await start(other, tokens.ravi), 201);
+  assert.equal((await api('POST', '/device/recordings', { device: dev.token, form: fileForm(wav(2), 'x.wav', { call_id: r.call.id, source: 'SHARED' }) })).status, 404);
+});
+
+test('the phone-number rules match the shared answers the Android app is tested against', () => {
+  const file = path.join(path.dirname(new URL(import.meta.url).pathname), '../../shared/callingVectors.json');
+  const vectors = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const v of vectors.normalise) assert.equal(normalizePhone(v.input), v.expected, `normalise ${JSON.stringify(v.input)}`);
+  for (const v of vectors.hash.cases) assert.equal(hashNumber(vectors.hash.salt, v.number), v.expected);
+  assert.ok(vectors.hash.cases.length >= 8);
+});

@@ -201,7 +201,7 @@ export default function SalesLead() {
     <div className="stack">
       <div className="row-between wrap">
         <div className="stack-xs">
-          <div className="small"><Link to="/sales?tab=leads" className="btn-link">Leads</Link> / {lead.ref}</div>
+          <div className="small"><Link to="/sales?tab=leads" className="btn-link crumb-link">Leads</Link> / {lead.ref}</div>
           <h1 className="row wrap" style={{ gap: 8 }}>{lead.display_name}</h1>
           <div className="row wrap" style={{ gap: 6 }}>
             <CategoryBadge category={lead.category} /><CallStatusBadge lead={lead} /><LeadStatusBadge status={lead.status} />

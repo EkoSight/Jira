@@ -1,0 +1,86 @@
+{
+  "about": "Shared answers for the phone-number rules: the server (normalizePhone, hashNumber) and the Android app (Numbers.java) are both tested against them. Made-up numbers.",
+  "normalise": [
+    {
+      "input": "98110 00001",
+      "expected": "919811000001"
+    },
+    {
+      "input": "+91 98110-00002",
+      "expected": "919811000002"
+    },
+    {
+      "input": "09811000003",
+      "expected": "919811000003"
+    },
+    {
+      "input": "0091 98110 00004",
+      "expected": "919811000004"
+    },
+    {
+      "input": "919811000005",
+      "expected": "919811000005"
+    },
+    {
+      "input": "(011) 4000 5000",
+      "expected": "911140005000"
+    },
+    {
+      "input": "12345",
+      "expected": null
+    },
+    {
+      "input": "",
+      "expected": null
+    },
+    {
+      "input": "  +44 20 7946 0000 ",
+      "expected": "442079460000"
+    },
+    {
+      "input": "०९८११०००००६",
+      "expected": null
+    },
+    {
+      "input": "98110000077",
+      "expected": "98110000077"
+    }
+  ],
+  "hash": {
+    "salt": "a3f1c0de5a1t0000000000000000000000000000000000000000000000000001",
+    "cases": [
+      {
+        "number": "919811000001",
+        "expected": "a8ad7a482aae6b43a8df55d6675a77eff7215fd988638ca5bad4d67be773d1e6"
+      },
+      {
+        "number": "919811000002",
+        "expected": "1e62c62a0aa84d18e81adc11b28bb7477cb3ce5c8d175eff945cf2273a020f64"
+      },
+      {
+        "number": "919811000003",
+        "expected": "007da2387eae6e40977d2da2509018684fb78439bb7542de87b5a0ddc2daeca2"
+      },
+      {
+        "number": "919811000004",
+        "expected": "c74729c3a093c329cb90627cce42f9a2719e954af20cf26e77403167033a630d"
+      },
+      {
+        "number": "919811000005",
+        "expected": "511d7e46fe711b246495defca3eb8629ff7db31ba2fe1737111662542314686c"
+      },
+      {
+        "number": "911140005000",
+        "expected": "00432a93211666fa27f3c6a349f4d9e45d2633d5a73a9a6d0744b3d7a5b84808"
+      },
+      {
+        "number": "442079460000",
+        "expected": "3e27bf2985e176590b8bb3193cb43df7337d9a5831905751e150de7a937abaec"
+      },
+      {
+        "number": "98110000077",
+        "expected": "5c918a75bdb40c6c2026ba8ddac6914a33385d306acfe1e8e086b93c5eb805cb"
+      }
+    ]
+  }
+}

@@ -12,7 +12,6 @@ import { brandOf } from '../lib/phoneCalls.js';
 const PERMISSIONS = [
   ['phone', 'Phone calls', 'Dial on the company SIM when you tap Call, and know when the call ends.'],
   ['callLog', 'Call history', 'Read the time and length of calls with leads and customers. Every other call is checked on the phone and never sent.'],
-  ['audio', 'Audio files', 'Find the recording of a call with a lead in the folder you choose, and remove the phone’s copy once TaskFlow has it. No other file is touched.'],
   ['notifications', 'Notifications', 'Tell you when the phone needs attention, for example when recordings stop arriving.'],
 ];
 
@@ -69,6 +68,7 @@ export default function PhoneSetup() {
   const [busy, setBusy] = useState(null);
   const [lang, setLang] = useState('en');
   const [agree, setAgree] = useState(false);
+  const [update, setUpdate] = useState(null);
 
   const load = useCallback(async () => {
     if (!bridge) return;
@@ -83,6 +83,11 @@ export default function PhoneSetup() {
     }
   }, [bridge]);
   useEffect(() => { load(); }, [load]);
+  // a newer version of the app, when TaskFlow offers one
+  useEffect(() => {
+    if (!bridge || !state?.status?.configured) return;
+    Promise.resolve(bridge.appUpdate()).then(setUpdate).catch(() => {});
+  }, [bridge, state?.status?.configured]);
 
   if (!bridge) {
     return (
@@ -112,6 +117,8 @@ export default function PhoneSetup() {
     setBusy(key);
     try {
       const r = await fn();
+      // TaskFlow's phone list shows each step as soon as it is done
+      if (key !== 'register' && key !== 'signout' && state.status.configured) await Promise.resolve(bridge.heartbeat()).catch(() => {});
       if (done) toast.success(typeof done === 'function' ? done(r) : done);
       await load();
     } catch (err) {
@@ -129,14 +136,13 @@ export default function PhoneSetup() {
     await bridge.configure({ apiBase: `${window.location.origin}${BASE}`, token: r.token, deviceId: r.device.id, userId: user.id, userName: user.full_name, recordingMode: r.recording_mode });
     return r;
   }, 'This phone now logs your calls with leads and customers');
-  const acknowledge = () => run('policy', async () => {
-    await api.sales.post('/calling/policy/ack', { version: policy.policy.version, device_id: status.deviceId || null });
-    await bridge.heartbeat().catch(() => {});
-  }, 'Thank you');
-  const confirm = (key, value) => run(`setup-${key}`, async () => {
-    await bridge.saveSetup({ setup: { ...setup, [key]: value } });
-    await bridge.heartbeat().catch(() => {});
-  });
+  const acknowledge = () => run('policy', () => api.sales.post('/calling/policy/ack', { version: policy.policy.version, device_id: status.deviceId || null }), 'Thank you');
+  const confirm = (key, value) => {
+    // the tick shows at once; the phone and TaskFlow are told just after
+    const next = { ...setup, [key]: value };
+    setState((st) => ({ ...st, status: { ...st.status, setup: next } }));
+    return run(`setup-${key}`, () => bridge.saveSetup({ setup: next }));
+  };
 
   return (
     <div className="stack page-narrow phone-setup">
@@ -147,6 +153,13 @@ export default function PhoneSetup() {
           {info.diallerLabel ? ` · phone app: ${info.diallerLabel}` : ''}
         </p>
       </div>
+
+      {update?.newer && update.url && (
+        <div className="mkt-callout small row wrap" style={{ gap: 8 }}>
+          <span className="grow">A newer version of the TaskFlow app is ready: {update.latest} (this phone has {update.current}).{update.notes ? ` ${update.notes}` : ''}</span>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => bridge.openUrl({ url: update.url })}>Download it</button>
+        </div>
+      )}
 
       <ol className="setup-steps plain-list">
         <Step done={mine} title="Use this phone for my calls"
@@ -230,7 +243,7 @@ export default function PhoneSetup() {
 
         {needsFolder && (
           <Step done={Boolean(status.folder)} title="The recordings folder" state={status.folder ? <Badge tone="good">{status.folder.name}</Badge> : null}>
-            <p className="small">Choose the folder where this phone saves call recordings. TaskFlow looks only there, only for recordings of calls with leads and customers.</p>
+            <p className="small">Choose the folder where this phone saves call recordings. TaskFlow looks only there, only for recordings of calls with leads and customers, and asks for no access to the phone’s other files.</p>
             {mode.folder_hint && <p className="small muted">On this phone it is usually: {mode.folder_hint}</p>}
             <div><button type="button" className="btn btn-sm" disabled={!mine || busy === 'folder'} onClick={() => run('folder', () => bridge.pickRecordingsFolder(), (r) => `Folder chosen: ${r.name}`)}>{status.folder ? 'Choose another folder' : 'Choose the folder'}</button></div>
           </Step>

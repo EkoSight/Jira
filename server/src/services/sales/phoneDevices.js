@@ -459,7 +459,7 @@ export async function checkMissingRecordings(ctx) {
 }
 
 /** A recording file sent by the app for one of its calls. */
-export async function deviceRecording(ctx, { callId = null, logKey = null, filePath, originalName }) {
+export async function deviceRecording(ctx, { callId = null, logKey = null, filePath, originalName, source = 'DEVICE_SYNC' }) {
   let call = null;
   if (callId) call = (await query('SELECT id, agent_user_id, device_id, started_at FROM crm_calls WHERE id = $1', [callId])).rows[0];
   else if (logKey) call = (await query('SELECT id, agent_user_id, device_id, started_at FROM crm_calls WHERE device_log_key = $1', [`${ctx.device.id}:${logKey}`])).rows[0];
@@ -471,7 +471,7 @@ export async function deviceRecording(ctx, { callId = null, logKey = null, fileP
     await fsp.rm(filePath, { force: true }).catch(() => {});
     throw conflict('This phone was signed out before that call', { code: 'SIGNED_OUT' });
   }
-  return storeRecording({ callId: call.id, filePath, originalName, source: 'DEVICE_SYNC', userId: ctx.user.id, deviceId: ctx.device.id });
+  return storeRecording({ callId: call.id, filePath, originalName, source: source === 'SHARED' ? 'SHARED' : 'DEVICE_SYNC', userId: ctx.user.id, deviceId: ctx.device.id });
 }
 
 // ---------------------------------------------------------------- administrators

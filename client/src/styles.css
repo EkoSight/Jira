@@ -4145,6 +4145,8 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .has-live-call .page { padding-bottom: calc(84px + var(--live-call-h, 200px) + env(safe-area-inset-bottom)); }
   .has-live-call .toasts { bottom: calc(76px + var(--live-call-h, 200px) + env(safe-area-inset-bottom)); }
 }
+/* a link inside a line of text is underlined, so it is not told apart by colour alone */
+.crumb-link { text-decoration: underline; text-underline-offset: 2px; }
 /* sharing a recording from the phone: "Which call is this?" */
 .share-call-list { display: grid; }
 .share-call {
@@ -4157,11 +4159,13 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .share-call.is-disabled { cursor: not-allowed; color: var(--ink-muted); }
 /* phone setup in the Android app */
 .setup-steps { display: grid; gap: 10px; }
+/* on the page itself (no card colour), so small grey text and badges keep their contrast in dark mode */
 .setup-step {
-  display: flex; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--surface);
+  display: flex; gap: 12px; padding: 14px; border: 1px solid var(--border-strong); border-radius: var(--radius);
 }
 .setup-step.is-done { border-color: color-mix(in srgb, var(--good) 40%, var(--border)); }
+/* hints in a step: the secondary ink, which keeps its contrast on every background in both themes */
+.setup-step .muted { color: var(--ink-2); }
 .setup-step-mark {
   flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
   border: 2px solid var(--border-strong); color: var(--on-brand);
