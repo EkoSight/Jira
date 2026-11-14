@@ -76,10 +76,15 @@ router.post('/leads/:id/call-status', asyncHandler(async (req, res) => {
     rating: z.number().int().min(1).max(5).nullable().optional(), log_call: z.boolean().optional(), duration_sec: z.number().int().min(0).max(36000).nullable().optional(),
     // one per submission: the same id again returns the first result instead of a second call
     request_id: z.string().min(8).max(80).nullable().optional(),
+    // the call started from TaskFlow this describes; and where its length came from
+    call_id: z.number().int().positive().nullable().optional(), duration_source: z.enum(['TYPED', 'ESTIMATED']).optional(),
+    // "Asked not to be called again", and "and no WhatsApp or SMS"
+    opt_out: z.object({ calls: z.literal(true), messages: z.boolean().optional() }).nullable().optional(),
   }).parse(req.body);
   res.json(await setCallStatus(lead.id, {
     statusId: d.status_id, note: d.note ?? null, lostReason: d.lost_reason ?? null, callbackAt: d.callback_at || null, callbackKind: d.callback_kind || 'CALLBACK',
     rating: d.rating ?? undefined, logCall: d.log_call !== false, durationSec: d.duration_sec ?? null, requestId: d.request_id ?? null,
+    callId: d.call_id ?? null, durationSource: d.duration_source || 'TYPED', optOut: d.opt_out ?? null,
   }, { actor: req.currentUser }));
 }));
 

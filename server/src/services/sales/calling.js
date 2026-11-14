@@ -23,6 +23,8 @@ import { recordAuditEvent } from '../audit.js';
 import { reassignLead, autoAssignLead } from './assignment.js';
 import { recordManualCall } from './comms.js';
 import { claimSubmission, settleSubmission } from './callRecords.js';
+import { describeCall, pendingCallFor } from './phoneCalls.js';
+import { optOutOfCalls } from './callingCare.js';
 import { cancelReminders } from './followupReminders.js';
 import { createFollowUp } from './followups.js';
 import { LEAD_SELECT, cancelLeadFollowUps, decorateLead, getLead, logLeadActivity } from './leads.js';
@@ -255,6 +257,7 @@ export async function saveLeadField(id, data, actor) {
  */
 export async function setCallStatus(leadId, {
   statusId, note = null, lostReason = null, callbackAt = null, callbackKind = 'CALLBACK', rating, logCall = true, durationSec = null, requestId = null,
+  callId = null, durationSource = 'TYPED', optOut = null,
 }, { actor, source = 'USER', client: outer = null }) {
   const run = async (client) => {
     // the same submission twice (a double tap, a retry after a dropped answer,
@@ -278,28 +281,40 @@ export async function setCallStatus(leadId, {
     if (!lead.owner_user_id && actor?.id) {
       await reassignLead(client, leadId, { toUserId: actor.id, reason: 'Took it from the call queue', actor });
     }
-    const dialled = logCall && status.outcome !== 'NONE';
+    // a started call on this lead that nobody described yet is the call being described
+    if (!callId && logCall && actor?.id && status.outcome !== 'NONE') callId = await pendingCallFor(client, { actorId: actor.id, leadId });
+    const dialled = (logCall || Boolean(callId)) && status.outcome !== 'NONE';
     let call = null;
     let closedFollowUps = [];
+    // a call started from TaskFlow is filled in; the phone may have counted it already
+    let counted = false;
     if (dialled) {
       const callOutcome = status.outcome === 'NOT_CONNECTED' ? (status.key === 'busy' ? 'BUSY' : 'NO_ANSWER') : 'CONNECTED';
-      ({ call } = await recordManualCall(client, {
-        lead_id: leadId, phone: lead.phone, direction: 'OUTBOUND', notes: text, duration_sec: durationSec,
-        outcome: callOutcome, request_id: requestId, recorded_via: 'OUTCOME_FORM', count_on_lead: false,
-      }, actor));
+      if (callId) {
+        call = await describeCall(client, callId, { actor, outcome: callOutcome, notes: text, durationSec, durationSource, leadId });
+        const { rows: flag } = await client.query('UPDATE crm_calls SET attempt_counted = TRUE WHERE id = $1 AND attempt_counted = FALSE RETURNING id', [call.id]);
+        counted = flag.length > 0;
+      } else {
+        ({ call } = await recordManualCall(client, {
+          lead_id: leadId, phone: lead.phone, direction: 'OUTBOUND', notes: text, duration_sec: durationSec,
+          outcome: callOutcome, request_id: requestId, recorded_via: 'OUTCOME_FORM', count_on_lead: false,
+        }, actor));
+        counted = true;
+      }
       // the call a due callback asked for has now happened: close it, linked to
       // this call, so the same lead does not come straight back to the top
       closedFollowUps = await closeDueCallFollowUps(client, leadId, { call, outcome: callOutcome, note: text, actor, ownerId: lead.owner_user_id });
     } else if (text) {
       await logLeadActivity(client, leadId, { type: 'NOTE', subject: 'Note', body: text, actorId: actor?.id ?? null });
     }
-    const attempts = lead.call_attempts + (dialled ? 1 : 0);
+    const attempts = lead.call_attempts + (dialled && counted ? 1 : 0);
     const keepLifecycle = status.outcome === 'NOT_CONNECTED' && ['QUALIFYING', 'QUALIFIED', 'NURTURE'].includes(lead.status);
     const lifecycle = keepLifecycle ? lead.status : status.lifecycle;
     const closed = CLOSED.includes(lifecycle);
     let retryAt = null;
     let exhausted = false;
-    if (!closed && status.retry_after_minutes && !callbackAt) {
+    const stopCalls = optOut?.calls === true;
+    if (!closed && status.retry_after_minutes && !callbackAt && !stopCalls) {
       if (status.max_attempts && attempts >= status.max_attempts) exhausted = true;
       else retryAt = new Date(Date.now() + status.retry_after_minutes * 60_000);
     }
@@ -330,8 +345,17 @@ export async function setCallStatus(leadId, {
       type: 'lead.call_status_changed', entityType: 'LEAD', entityId: leadId, actorId: actor?.id ?? null,
       payload: { status: status.key, label: status.label, lifecycle, attempts },
     });
+    // "Asked not to be called again": the number is opted out, and nothing comes back to call
+    let optedOut = null;
+    if (stopCalls) {
+      if (!lead.phone_normalized) throw badRequest('This lead has no phone number to opt out');
+      optedOut = await optOutOfCalls(client, {
+        phone: lead.phone_normalized, reason: 'Asked not to be called again', source: 'CALL_OUTCOME', actorId: actor?.id ?? null,
+        callId: call?.id ?? null, leadId, messages: optOut.messages === true,
+      });
+    }
     let callback = null;
-    if (callbackAt && !closed) {
+    if (callbackAt && !closed && !stopCalls) {
       callback = await createFollowUp(client, {
         leadId, kind: callbackKind, dueAt: callbackAt, assigneeId: lead.owner_user_id || actor?.id, notes: text, actor,
         title: null,
@@ -339,7 +363,7 @@ export async function setCallStatus(leadId, {
     }
     await refreshScore(client, leadId);
     const result = {
-      exhausted, attempts, callback,
+      exhausted, attempts, callback, opted_out: optedOut,
       call: call ? { id: call.id, started_at: call.started_at, outcome: call.outcome } : null,
       closed_followups: closedFollowUps.map((t) => ({ id: t.id, title: t.title })),
     };
@@ -394,6 +418,7 @@ export async function closeDueCallFollowUps(client, leadId, { call, outcome, not
 export async function callQueue(userId, { limit = 40 } = {}) {
   const settings = await salesSettings();
   const newFirst = settings.calling?.newLeadsFirst !== false;
+  const cap = Math.max(0, Math.round(Number(settings.calls?.dailyAttemptCap) || 0));
   const open = OPEN_LEAD_STATUSES.map((s) => `'${s}'`).join(',');
   const { rows } = await query(
     `WITH q AS (
@@ -410,7 +435,13 @@ export async function callQueue(userId, { limit = 40 } = {}) {
               AND (t.assignee_id = $1 OR (t.assignee_id IS NULL AND l.owner_user_id = $1))
             ORDER BY t.due_date LIMIT 1) fu ON TRUE
         WHERE l.is_archived = FALSE AND l.merged_into_id IS NULL AND l.destination = 'TASKFLOW' AND l.status IN (${open})
-          AND (l.owner_user_id = $1 OR fu.task_id IS NOT NULL))
+          AND (l.owner_user_id = $1 OR fu.task_id IS NOT NULL)
+          -- a number that asked not to be called never comes up
+          AND NOT EXISTS (SELECT 1 FROM crm_optouts oo WHERE oo.channel = 'CALL' AND oo.address = l.phone_normalized AND oo.lifted_at IS NULL)
+          -- the daily limit: only a callback the lead asked for comes up once it is reached
+          AND (fu.task_id IS NOT NULL OR ${cap} = 0 OR (
+            SELECT COUNT(*) FROM crm_calls cc WHERE cc.lead_id = l.id AND cc.direction = 'OUTBOUND' AND cc.voided_at IS NULL
+               AND COALESCE(cc.dialled_at, cc.started_at, cc.created_at) >= date_trunc('day', now() AT TIME ZONE $2) AT TIME ZONE $2) < ${cap}))
      SELECT x.*, q.bucket, q.task_id, q.callback_due, q.callback_title,
             (SELECT a.body FROM crm_lead_activities a WHERE a.lead_id = x.id AND a.body IS NOT NULL AND a.type IN ('CALL', 'NOTE', 'CALL_STATUS', 'IMPORT_NOTE')
               ORDER BY a.occurred_at DESC, a.id DESC LIMIT 1) AS last_note
@@ -420,7 +451,7 @@ export async function callQueue(userId, { limit = 40 } = {}) {
                CASE WHEN q.bucket = ${newFirst ? 2 : 3} THEN extract(epoch FROM x.captured_at) END DESC,
                CASE WHEN q.bucket = ${newFirst ? 3 : 2} THEN extract(epoch FROM x.retry_at) END ASC, x.id
       LIMIT ${Math.min(Math.max(Number(limit) || 40, 1), 200)}`,
-    [userId],
+    [userId, settings.calendar?.timezone || 'Asia/Kolkata'],
   );
   const { rows: counts } = await query(
     `SELECT COUNT(*) FILTER (WHERE l.status = 'NEW' AND l.call_attempts = 0 AND l.last_called_at IS NULL)::int AS new,

@@ -361,6 +361,9 @@ export async function getLead(id, { client = null } = {}) {
   return decorateLead(rows[0], await salesSettings());
 }
 
+// a lead whose number asked not to be called is never put up to be called
+const NOT_OPTED_OUT = `NOT EXISTS (SELECT 1 FROM crm_optouts oo WHERE oo.channel = 'CALL' AND oo.address = l.phone_normalized AND oo.lifted_at IS NULL)`;
+
 export const LEAD_VIEWS = ['open', 'mine', 'team', 'unassigned', 'new', 'overdue', 'stale', 'retry', 'retry_later', 'nurture', 'won', 'converted', 'disqualified',
   'needs_classification', 'telecrm', 'archived', 'all',
   // the work queue's groups (My Day), each one exactly this list
@@ -396,7 +399,7 @@ export async function listLeads(filters = {}, scope = { all: true }) {
                        AND t.completed_at IS NULL AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL AND t.due_date < now()))`); break;
     case 'stale': where.push(openSql, `COALESCE(l.last_contacted_at, l.captured_at) < now() - (${push(staleDays)} || ' days')::interval`); break;
     // "Retry due" means due now; ones scheduled for later are their own view
-    case 'retry': where.push(openSql, 'l.retry_at IS NOT NULL', 'l.retry_at <= now()'); break;
+    case 'retry': where.push(openSql, 'l.retry_at IS NOT NULL', 'l.retry_at <= now()', NOT_OPTED_OUT); break;
     case 'retry_later': where.push(openSql, 'l.retry_at > now()'); break;
     case 'fu_overdue': where.push(openSql, openFollowUp(`AND t.due_date < now()${filters.for_user ? ` AND t.assignee_id = ${push(Number(filters.for_user))}` : ''}`)); break;
     case 'fu_today': {
@@ -405,7 +408,7 @@ export async function listLeads(filters = {}, scope = { all: true }) {
         + `${filters.for_user ? ` AND t.assignee_id = ${push(Number(filters.for_user))}` : ''}`));
       break;
     }
-    case 'new_uncalled': where.push(`l.status = 'NEW'`, 'l.call_attempts = 0', 'l.last_called_at IS NULL', 'l.last_contacted_at IS NULL'); break;
+    case 'new_uncalled': where.push(`l.status = 'NEW'`, 'l.call_attempts = 0', 'l.last_called_at IS NULL', 'l.last_contacted_at IS NULL', NOT_OPTED_OUT); break;
     // open, already worked, with nothing planned: no follow-up and no retry
     case 'no_next_action': where.push(openSql, `NOT (l.status = 'NEW' AND l.call_attempts = 0)`, `NOT ${openFollowUp()}`, 'l.retry_at IS NULL'); break;
     case 'location_missing': where.push(openSql, 'l.state IS NULL', 'l.district IS NULL', 'l.city IS NULL', 'l.pincode IS NULL'); break;

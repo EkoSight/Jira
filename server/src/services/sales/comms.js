@@ -23,6 +23,7 @@ import { createFollowUp } from './followups.js';
 import { createLead, logLeadActivity } from './leads.js';
 import { claimSubmission, settleSubmission } from './callRecords.js';
 import { emitEvent, normalizePhone, salesSettings } from './core.js';
+import { countAttemptOnce, describeCall, pendingCallFor } from './phoneCalls.js';
 
 // ---------------------------------------------------------------- shared
 
@@ -106,7 +107,7 @@ const TERMINAL = new Set(['COMPLETED', 'NO_ANSWER', 'BUSY', 'FAILED', 'CANCELLED
 export const CALL_OUTCOMES = ['CONNECTED', 'NO_ANSWER', 'BUSY', 'WRONG_NUMBER', 'LEFT_MESSAGE', 'CALLBACK_REQUESTED', 'NOT_INTERESTED', 'INTERESTED'];
 
 /** Puts a finished call on the timeline of what it is about, once. */
-async function callOnTimeline(client, call, actorId) {
+export async function callOnTimeline(client, call, actorId) {
   const reached = call.status === 'COMPLETED' && (call.duration_sec ?? 1) > 0 && !['NO_ANSWER', 'BUSY', 'WRONG_NUMBER'].includes(call.outcome);
   const minutes = call.duration_sec ? ` (${Math.floor(call.duration_sec / 60)}m ${call.duration_sec % 60}s)` : '';
   const subject = `${call.direction === 'INBOUND' ? 'Inbound' : 'Outbound'} call${minutes}: ${(call.outcome || call.status).toLowerCase().replace(/_/g, ' ')}`;
@@ -148,6 +149,30 @@ export async function logCall(input, actor) {
 
 /** A call a person logs by hand, inside the caller's transaction. */
 export async function recordManualCall(client, input, actor) {
+  // the person's own started call on the same record, not yet described, is
+  // the one being logged: fill it in rather than adding a second record
+  if (!input.call_id && actor?.id && (input.direction || 'OUTBOUND') === 'OUTBOUND') {
+    const pending = await pendingCallFor(client, { actorId: actor.id, leadId: input.lead_id ?? null, accountId: input.account_id ?? null, opportunityId: input.opportunity_id ?? null });
+    if (pending) input = { ...input, call_id: pending };
+  }
+  // a call started from TaskFlow (a session) is filled in, never added again
+  if (input.call_id) {
+    const call = await describeCall(client, input.call_id, {
+      actor, outcome: input.outcome || null, notes: input.notes || null, durationSec: input.duration_sec ?? null,
+      durationSource: input.duration_source || 'TYPED', leadId: input.lead_id ?? null, accountId: input.account_id ?? null,
+    });
+    if (call.lead_id && input.count_on_lead !== false) await countAttemptOnce(client, call);
+    let next = null;
+    if (input.next?.due_at) {
+      next = await createFollowUp(client, {
+        leadId: call.lead_id, accountId: call.account_id, opportunityId: call.opportunity_id, kind: input.next.kind || 'CALL', title: input.next.title || null,
+        dueAt: input.next.due_at, assigneeId: input.next.assignee_id || actor.id, priority: input.next.priority || 'MEDIUM', notes: input.next.notes || null, actor,
+      });
+      await client.query('UPDATE crm_calls SET follow_up_task_id = $2 WHERE id = $1', [call.id, next.id]);
+    }
+    await emitEvent(client, { type: 'call.logged', entityType: call.lead_id ? 'LEAD' : 'OPPORTUNITY', entityId: call.lead_id || call.opportunity_id || call.account_id, actorId: actor.id, payload: { call_id: call.id, outcome: call.outcome } });
+    return { call, next };
+  }
   {
     const phone = input.phone || null;
     const match = phone ? await matchPhone(client, phone) : {};

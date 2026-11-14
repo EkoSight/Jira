@@ -13,6 +13,9 @@ import { processEvents, runDue, scanTimers } from '../services/sales/automation.
 import { sendDueReminders } from '../services/sales/followupReminders.js';
 import { runFollowUpDigests } from '../services/sales/followupDigest.js';
 import { processImports } from '../services/sales/imports.js';
+import { closeStaleSessions } from '../services/sales/phoneCalls.js';
+import { runRecordingRetention } from '../services/sales/callRecordings.js';
+import { runWeeklyCallingReview } from '../services/sales/callingCare.js';
 
 const TIMERS_EVERY_MS = 5 * 60 * 1000;
 
@@ -43,6 +46,11 @@ export async function runSalesTick({ force = false, now = new Date() } = {}) {
   if (force || Date.now() - lastTimers > TIMERS_EVERY_MS) {
     lastTimers = Date.now();
     await step('timers', () => scanTimers(now), out);
+    // calls on company phones: undescribed calls close at the day's end,
+    // recordings go after their retention, the week's review on Monday
+    await step('call_sessions', () => closeStaleSessions(now), out);
+    await step('call_recordings', () => runRecordingRetention(now), out);
+    await step('calling_review', () => runWeeklyCallingReview(now), out);
   }
   return out;
 }

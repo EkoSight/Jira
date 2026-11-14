@@ -281,6 +281,13 @@ async function perform(client, { run, action, index, ctx, live, liveSends, fetch
         ? new Date(Date.now() + Number(action.due_in_hours) * 3600_000)
         : cal.addWorkingHours(new Date(), Number(action.due_in_hours));
       const assignee = (await recipients(client, ctx, action.assignee || 'owner'))[0] ?? null;
+      // a number that asked not to be called gets no automated call to make
+      if (['CALL', 'CALLBACK'].includes(action.kind || 'CALL') && ctx.lead_id && run.entity_type === 'LEAD') {
+        const { rows: stop } = await client.query(
+          `SELECT 1 FROM crm_leads l JOIN crm_optouts o ON o.channel = 'CALL' AND o.address = l.phone_normalized AND o.lifted_at IS NULL WHERE l.id = $1`, [ctx.lead_id],
+        );
+        if (stop[0]) return { ...label, skipped: 'This number asked not to be called' };
+      }
       if (!live) return { ...label, would: `a ${String(action.kind || 'CALL').toLowerCase()} due ${due.toISOString()} for user ${assignee ?? '(owner not set)'}` };
       if (!assignee) return { ...label, skipped: 'Nobody to give it to (no owner)' };
       const task = await createFollowUp(client, {

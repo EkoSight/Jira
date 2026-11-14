@@ -29,6 +29,7 @@
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.2.0",
+    "music-metadata": "11.16.1",
     "nodemailer": "10.0.15",
     "pdfkit": "^0.17.2",
     "pg": "^8.13.1",

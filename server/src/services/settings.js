@@ -1,5 +1,70 @@
 import { query } from '../db/pool.js';
 
+// The privacy notice for leads: a draft for the company (and its adviser) to
+// approve. "## " starts a heading, "- " a list item; {placeholders} are filled
+// from Settings → Calling. No real company details live here.
+export const PRIVACY_NOTICE_EN = `# How we use your details when we call you
+
+## Who we are
+{legal_name}, {address}.
+
+## What we keep
+- your name, phone number and the details you gave in your enquiry;
+- notes from our calls with you;
+- the time and length of each call;
+- recordings of calls.
+
+## Why
+- to answer your enquiry;
+- to follow up about the products and services you asked about;
+- to check and improve the quality of our calls, and to train our team.
+
+## Recordings
+Calls with our team may be recorded. We keep recordings for {retention_months} months and then delete them, unless one is needed to settle a complaint or dispute.
+
+## Who sees your details
+Only the people at {company} who work with you, and managers who check call quality. We do not sell your details.
+
+## Your choices
+At any time you can ask us not to record your calls, or not to call you at all. Tell the person who calls you, or contact us below. You can also ask to see, correct or delete your details.
+
+## Questions or complaints
+{contact_name}, {legal_name}
+{contact_lines}
+
+Last updated: {date}`;
+
+export const PRIVACY_NOTICE_HI = `# जब हम आपको कॉल करते हैं, तब आपकी जानकारी का उपयोग कैसे होता है
+
+## हम कौन हैं
+{legal_name}, {address}।
+
+## हम क्या रखते हैं
+- आपका नाम, फ़ोन नंबर और आपकी पूछताछ में दी गई जानकारी;
+- आपसे हुई कॉल के नोट्स;
+- हर कॉल का समय और अवधि;
+- कॉल की रिकॉर्डिंग।
+
+## क्यों
+- आपकी पूछताछ का जवाब देने के लिए;
+- जिन उत्पादों और सेवाओं के बारे में आपने पूछा, उनके बारे में आगे बात करने के लिए;
+- हमारी कॉल की गुणवत्ता जाँचने और सुधारने, और अपनी टीम को प्रशिक्षण देने के लिए।
+
+## रिकॉर्डिंग
+हमारी टीम के साथ आपकी कॉल रिकॉर्ड की जा सकती है। हम रिकॉर्डिंग {retention_months} महीने तक रखते हैं और फिर हटा देते हैं, जब तक किसी शिकायत या विवाद को सुलझाने के लिए उसकी ज़रूरत न हो।
+
+## आपकी जानकारी कौन देखता है
+केवल {company} के वे लोग जो आपके साथ काम करते हैं, और कॉल की गुणवत्ता जाँचने वाले मैनेजर। हम आपकी जानकारी बेचते नहीं हैं।
+
+## आपके विकल्प
+आप कभी भी कह सकते हैं कि आपकी कॉल रिकॉर्ड न की जाए, या आपको कॉल ही न किया जाए। जो व्यक्ति आपको कॉल करे उसे बताएँ, या नीचे दिए संपर्क पर हमसे बात करें। आप अपनी जानकारी देखने, सुधारने या हटाने के लिए भी कह सकते हैं।
+
+## सवाल या शिकायत
+{contact_name}, {legal_name}
+{contact_lines}
+
+अंतिम अपडेट: {date}`;
+
 export const DEFAULT_SETTINGS = {
   blackmarks: {
     // a member with this many missed deadlines in a month is flagged for review
@@ -244,8 +309,58 @@ export const DEFAULT_SETTINGS = {
         // 'none' (dial on your own phone, log by hand), 'exotel', or 'webhook'
         // (any provider posting TaskFlow's signed call-event format)
         provider: 'none',
+        // these two govern provider (Exotel) recordings only, as before
         recordings: true,
         recordingRetentionDays: 365,
+
+        // ---- calls made on company phones and SIMs (no provider) ----
+        // keep recordings of calls (attached, shared or picked up by the app).
+        // Off until an administrator switches it on, which needs the opening
+        // sentence and a published privacy notice.
+        deviceRecordings: false,
+        // calendar months from the call's start, in India time
+        recordingRetentionMonths: 6,
+        // the app deletes its own copy on the phone once TaskFlow has the file
+        removePhoneCopy: true,
+        callingHours: { start: '09:00', end: '21:00', workingDaysOnly: true },
+        // call attempts per lead per day, retries included; a callback the lead
+        // asked for is allowed past it
+        dailyAttemptCap: 3,
+        maxRecordingMb: 50,
+        // the Android app sends lead and contact calls from the phone's call log
+        deviceSync: true,
+        // the name leads hear on calls ("…from {company}")
+        companyName: '',
+        openingSentence: {
+          en: 'Hello, this is {first_name} from {company}, calling about your enquiry. This call may be recorded for quality and training.',
+          hi: 'नमस्ते, मैं {company} से {first_name} बोल रहा/रही हूँ, आपकी पूछताछ के बारे में। यह कॉल गुणवत्ता और प्रशिक्षण के लिए रिकॉर्ड की जा सकती है।',
+        },
+        staffPolicy: {
+          version: 1,
+          en: 'This is a company phone. Calls with leads and customers on the company SIM are logged in TaskFlow and recorded for quality and training, and recordings are kept for 6 months. Please use your own phone for personal calls.',
+          hi: 'यह कंपनी का फ़ोन है। कंपनी सिम से लीड और ग्राहकों के साथ होने वाली कॉल TaskFlow में दर्ज होती हैं और गुणवत्ता व प्रशिक्षण के लिए रिकॉर्ड की जाती हैं; रिकॉर्डिंग 6 महीने तक रखी जाती हैं। निजी कॉल के लिए कृपया अपने फ़ोन का उपयोग करें।',
+        },
+        // the public page for leads. The company's own details are typed in by
+        // an administrator; nothing real is kept in the code.
+        privacyNotice: {
+          legalName: '',
+          address: '',
+          contactName: '',
+          contactPhone: '',
+          contactEmail: '',
+          publishedAt: null,
+          version: 1,
+          en: PRIVACY_NOTICE_EN,
+          hi: PRIVACY_NOTICE_HI,
+          formLine: {
+            en: 'By sending this, you agree that we may call you about your enquiry. Calls may be recorded.',
+            hi: 'यह फ़ॉर्म भेजकर आप सहमत हैं कि हम आपकी पूछताछ के बारे में आपको कॉल कर सकते हैं। कॉल रिकॉर्ड की जा सकती हैं।',
+          },
+        },
+        // the copy leads see, made when the notice is published (edits above are a draft until then)
+        privacyNoticePublished: null,
+        // the Android app offered to staff (uploaded by an administrator)
+        appRelease: { version: null, notes: null, file: null, uploadedAt: null },
       },
       whatsapp: {
         // the Meta WhatsApp Business Platform (Cloud API)

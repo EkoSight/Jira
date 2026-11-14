@@ -199,7 +199,12 @@ router.get('/leads/:id', asyncHandler(async (req, res) => {
     leadRouting(lead.id),
     query(`${FOLLOWUP_SELECT} WHERE t.crm_lead_id = $1 AND t.followup_kind IS NOT NULL ORDER BY t.completed_at DESC NULLS FIRST, t.due_date`, [lead.id]),
     findDuplicates({ ...lead }),
-    query(`SELECT c.*, u.full_name AS agent_name FROM crm_calls c LEFT JOIN users u ON u.id = c.agent_user_id WHERE c.lead_id = $1 ORDER BY COALESCE(c.started_at, c.created_at) DESC`, [lead.id]),
+    query(`SELECT c.*, u.full_name AS agent_name,
+                  CASE WHEN rr.id IS NOT NULL THEN 'STORED' WHEN c.recording_ref IS NOT NULL THEN 'PROVIDER' END AS recording_kind,
+                  rr.length_sec AS recording_length_sec, rr.hold_at AS recording_hold_at
+             FROM crm_calls c LEFT JOIN users u ON u.id = c.agent_user_id
+             LEFT JOIN crm_call_recordings rr ON rr.call_id = c.id AND rr.deleted_at IS NULL
+            WHERE c.lead_id = $1 ORDER BY COALESCE(c.started_at, c.created_at) DESC`, [lead.id]),
     query(`SELECT m.id, m.direction, m.kind, m.template_name, m.body, m.status, m.error_title, m.created_at, m.sent_at, m.delivered_at, m.read_at,
                   u.full_name AS agent_name
              FROM crm_wa_messages m LEFT JOIN users u ON u.id = m.agent_user_id WHERE m.lead_id = $1 ORDER BY m.created_at DESC`, [lead.id]),
@@ -212,7 +217,7 @@ router.get('/leads/:id', asyncHandler(async (req, res) => {
     routing,
     followups: followups.rows,
     duplicates: { leads: duplicates.leads.filter((d) => d.id !== lead.id), accounts: duplicates.accounts, contacts: duplicates.contacts },
-    calls: calls.rows.map((c) => ({ ...c, recording_ref: undefined, has_recording: Boolean(c.recording_ref), can_play: Boolean(c.recording_ref) && (canRecordings || c.agent_user_id === req.currentUser.id) })),
+    calls: calls.rows.map((c) => ({ ...c, recording_ref: undefined, has_recording: Boolean(c.recording_kind), can_play: Boolean(c.recording_kind) && (canRecordings || c.agent_user_id === req.currentUser.id) })),
     messages: messages.rows,
     score: scored,
     can: { edit: canWorkLead(req.currentUser, lead), assign: hasPermission(req.currentUser, 'crm.assign'), route: hasPermission(req.currentUser, 'crm.routing') },

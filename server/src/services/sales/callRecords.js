@@ -53,8 +53,15 @@ export async function settleSubmission(client, userId, requestId, { callId = nul
 
 export const CALL_SELECT = `
   SELECT c.*, u.full_name AS agent_name, e.full_name AS edited_by_name, v.full_name AS voided_by_name,
-         l.ref AS lead_ref, COALESCE(l.organization_name, l.contact_name) AS lead_name, (c.recording_ref IS NOT NULL) AS has_recording
+         l.ref AS lead_ref, COALESCE(l.organization_name, l.contact_name) AS lead_name,
+         (c.recording_ref IS NOT NULL OR rec.id IS NOT NULL) AS has_recording,
+         CASE WHEN rec.id IS NOT NULL THEN 'STORED' WHEN c.recording_ref IS NOT NULL THEN 'PROVIDER' END AS recording_kind,
+         rec.id AS recording_id, rec.length_sec AS recording_length_sec, rec.source AS recording_source, rec.created_at AS recording_added_at,
+         rec.hold_reason AS recording_hold_reason, rec.hold_at AS recording_hold_at,
+         (SELECT r2.deleted_at FROM crm_call_recordings r2 WHERE r2.call_id = c.id AND r2.deleted_at IS NOT NULL ORDER BY r2.deleted_at DESC LIMIT 1) AS recording_deleted_at,
+         (SELECT r2.delete_reason FROM crm_call_recordings r2 WHERE r2.call_id = c.id AND r2.deleted_at IS NOT NULL ORDER BY r2.deleted_at DESC LIMIT 1) AS recording_delete_reason
     FROM crm_calls c
+    LEFT JOIN crm_call_recordings rec ON rec.call_id = c.id AND rec.deleted_at IS NULL
     LEFT JOIN users u ON u.id = c.agent_user_id
     LEFT JOIN users e ON e.id = c.edited_by
     LEFT JOIN users v ON v.id = c.voided_by
@@ -128,6 +135,9 @@ export async function editCall(id, { notes, durationSec, reason = null }, actor)
     await client.query(
       `UPDATE crm_calls SET notes = CASE WHEN $2 THEN $3 ELSE notes END,
               duration_sec = CASE WHEN $4 THEN $5::int ELSE duration_sec END,
+              -- a person's correction is the length from now on, and says so
+              talk_sec = CASE WHEN $4 THEN $5::int ELSE talk_sec END,
+              duration_source = CASE WHEN $4 THEN 'CORRECTED' ELSE duration_source END,
               ended_at = CASE WHEN $4 AND $5::int IS NOT NULL AND started_at IS NOT NULL THEN started_at + make_interval(secs => $5::int) ELSE ended_at END,
               edited_at = now(), edited_by = $6, edit_count = edit_count + 1, updated_at = now()
         WHERE id = $1`,
@@ -267,5 +277,28 @@ export async function callReview({ leadIds = null, since = null, windowSeconds =
       NEEDS_A_PERSON: 'Mixed entries (for example a call and a completed follow-up). Look at each before changing anything.',
     }[g.verdict];
   }
-  return { generated_at: new Date().toISOString(), window_seconds: windowSeconds, entries, groups, changed_nothing: true };
+  // calls where what the person chose and what the phone reported disagree
+  // ("Connected", but the phone says nobody answered): both are kept, and a
+  // manager looks at them here
+  let mismatches = [];
+  if (!legacy) {
+    try {
+      const { rows } = await runner.query(
+        `SELECT c.id AS call_id, c.lead_id, c.agent_user_id, u.full_name AS agent_name, c.outcome, c.connected, c.talk_sec, c.duration_source, c.started_at
+           FROM crm_calls c LEFT JOIN users u ON u.id = c.agent_user_id
+          WHERE c.lead_id IS NOT NULL AND ${leadFilter.replace('lead_id', 'c.lead_id')} ${sinceFilter ? `AND c.created_at >= ${sinceFilter}::date` : ''}
+            AND c.voided_at IS NULL
+            AND ((c.connected = FALSE AND c.outcome = 'CONNECTED') OR (c.connected = TRUE AND c.outcome IN ('NO_ANSWER', 'BUSY')))
+          ORDER BY c.lead_id, c.started_at, c.id`,
+        params,
+      );
+      mismatches = rows.map((r) => ({
+        ...r,
+        advice: r.connected
+          ? 'The phone says the call connected, but it was saved as not answered. Ask the person which is right before changing anything.'
+          : 'Saved as "connected", but the phone reported no conversation. Ask the person before changing anything.',
+      }));
+    } catch { /* before migration 036 there is nothing to compare */ }
+  }
+  return { generated_at: new Date().toISOString(), window_seconds: windowSeconds, entries, groups, mismatches, changed_nothing: true };
 }

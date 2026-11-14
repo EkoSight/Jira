@@ -8,6 +8,10 @@ import { FORM_WHO, captureWithKey, getForm, keyFromRequest, submitForm } from '.
 import {
   applyCallEvent, applyWhatsAppWebhook, readExotelEvent, readGenericCallEvent, validSignature,
 } from '../services/sales/comms.js';
+import { NOTICE_LANGS, callingTexts, noticeHtml, publishedNotice } from '../services/sales/callingCare.js';
+import { sendRecording } from '../services/sales/callRecordings.js';
+import { sendApp } from '../services/sales/phoneDevices.js';
+import { salesSettings } from '../services/sales/core.js';
 
 /**
  * What the outside world reaches for the sales CRM, with no sign-in: lead
@@ -124,7 +128,13 @@ const html = (res, status, body) => {
 
 const FIELD_LABEL = { designation: 'Your role', website: 'Website', city: 'City', state: 'State', requirement: 'What do you need?' };
 
-function formHtml(f, { error = null, values = {} } = {}) {
+/** The privacy line under a hosted form, once the notice is published. */
+function noticeLine(notice) {
+  if (!notice?.published) return '';
+  return `<p class="muted" style="font-size:14px">${e(notice.form_line.en)} <a href="../privacy">Privacy notice</a> · <a href="../privacy?lang=hi" lang="hi">हिंदी</a></p>`;
+}
+
+function formHtml(f, { error = null, values = {}, notice = null } = {}) {
   const optional = Array.isArray(f.fields) ? f.fields : [];
   const input = (name, label, type = 'text', required = false) => `<label class="field"><span>${e(label)}${required ? ' *' : ''}</span>
     <input type="${type}" name="${name}" value="${e(values[name] ?? '')}" ${required ? 'required' : ''} autocomplete="on"></label>`;
@@ -145,6 +155,7 @@ ${error ? `<div class="notice" role="alert">${e(error)}</div>` : ''}
   ${f.consent_text ? `<label class="row"><input type="checkbox" name="consent" value="1" required><span>${e(f.consent_text)}</span></label>` : ''}
   <div class="hp" aria-hidden="true"><label>Leave this empty<input type="text" name="website_url_confirm" tabindex="-1" autocomplete="off"></label></div>
   <input type="hidden" name="submission_id" value="${e(values.submission_id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`)}">
+  ${noticeLine(notice)}
   <div class="actions"><button class="primary" type="submit">Send</button></div>
 </form>`,
   });
@@ -153,7 +164,7 @@ ${error ? `<div class="notice" role="alert">${e(error)}</div>` : ''}
 router.get('/f/:publicId', asyncHandler(async (req, res) => {
   const f = await getForm(String(req.params.publicId));
   if (!f) return html(res, 404, page({ title: 'Form not found', body: '<h1>This form is not available</h1>' }));
-  return html(res, 200, formHtml(f));
+  return html(res, 200, formHtml(f, { notice: await formNotice() }));
 }));
 
 router.post('/f/:publicId', form, json, asyncHandler(async (req, res) => {
@@ -163,11 +174,36 @@ router.post('/f/:publicId', form, json, asyncHandler(async (req, res) => {
   try {
     await submitForm(f, body, { ip: req.ip });
   } catch (err) {
-    if ((err.status || err.statusCode) && (err.status || err.statusCode) < 500) return html(res, err.status || err.statusCode, formHtml(f, { error: err.message, values: req.body }));
+    if ((err.status || err.statusCode) && (err.status || err.statusCode) < 500) return html(res, err.status || err.statusCode, formHtml(f, { error: err.message, values: req.body, notice: await formNotice() }));
     throw err;
   }
   // the same thanks for every kind of enquiry: where it is routed is internal
   return html(res, 200, page({ title: 'Thank you', body: `<h1>Thank you</h1><p>${e(f.success_message || 'We have your enquiry and will be in touch soon.')}</p>` }));
 }));
+
+/** The privacy line's words for hosted forms, and whether the notice is published. */
+async function formNotice() {
+  const settings = await salesSettings();
+  const t = callingTexts(settings, null);
+  return { published: t.notice_published, form_line: t.form_line };
+}
+
+// ---------------------------------------------------------------- calling: the privacy notice, recordings, the app
+
+/** The privacy notice for leads, in English or Hindi. Public, once an administrator has published it. */
+router.get('/privacy', asyncHandler(async (req, res) => {
+  const settings = await salesSettings();
+  const calls = settings.calls || {};
+  if (!publishedNotice(calls)) return html(res, 404, page({ title: 'Privacy notice', body: '<h1>This page is not available yet</h1>' }));
+  const lang = NOTICE_LANGS.includes(String(req.query.lang)) ? String(req.query.lang) : 'en';
+  const other = lang === 'en' ? '<a href="?lang=hi" lang="hi">हिंदी में पढ़ें</a>' : '<a href="?lang=en" lang="en">Read in English</a>';
+  return html(res, 200, page({ title: lang === 'hi' ? 'गोपनीयता सूचना' : 'Privacy notice', body: `<p class="muted" style="text-align:right">${other}</p><div lang="${lang}">${noticeHtml(lang, calls)}</div>` }));
+}));
+
+/** A call recording, behind a short-lived link made for one person (ranges served for seeking). */
+router.get('/recordings/:token', asyncHandler(async (req, res, next) => sendRecording(req.params.token, res, next)));
+
+/** The Android app, behind a short-lived link. */
+router.get('/app/:token', asyncHandler(async (req, res, next) => sendApp(req.params.token, res, next)));
 
 export default router;

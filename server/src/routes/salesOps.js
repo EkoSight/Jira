@@ -58,6 +58,7 @@ router.post('/calls', requirePermission('crm.activity.log'), asyncHandler(async 
     outcome: z.enum(CALL_OUTCOMES), notes: z.string().max(5000).nullable().optional(), duration_sec: z.number().int().min(0).max(86400).nullable().optional(),
     started_at: z.string().max(40).nullable().optional(), next: followUpNext,
     request_id: z.string().min(8).max(80).nullable().optional(),
+    call_id: z.number().int().positive().nullable().optional(), duration_source: z.enum(['TYPED', 'ESTIMATED']).optional(),
   }).parse(req.body);
   if (['CONNECTED', 'INTERESTED', 'NOT_INTERESTED', 'CALLBACK_REQUESTED'].includes(data.outcome) && !data.notes?.trim()) {
     throw badRequest('Note what was said: a connected call with no notes cannot be followed up');
@@ -88,7 +89,11 @@ router.get('/calls', asyncHandler(async (req, res) => {
   if (req.query.mine === '1') where.push(`c.agent_user_id = ${push(req.currentUser.id)}`);
   const { rows } = await query(
     `SELECT c.id, c.provider, c.direction, c.status, c.from_number, c.to_number, c.started_at, c.duration_sec, c.outcome, c.notes, c.logged_manually,
-            c.lead_id, c.account_id, c.opportunity_id, c.agent_user_id, (c.recording_ref IS NOT NULL) AS has_recording,
+            c.lead_id, c.account_id, c.opportunity_id, c.agent_user_id,
+            (c.recording_ref IS NOT NULL OR EXISTS (SELECT 1 FROM crm_call_recordings rr WHERE rr.call_id = c.id AND rr.deleted_at IS NULL)) AS has_recording,
+            CASE WHEN EXISTS (SELECT 1 FROM crm_call_recordings rr WHERE rr.call_id = c.id AND rr.deleted_at IS NULL) THEN 'STORED'
+                 WHEN c.recording_ref IS NOT NULL THEN 'PROVIDER' END AS recording_kind,
+            c.talk_sec, c.duration_source, c.connected, c.dialled_at, c.outcome_at,
             c.created_at, c.recorded_via, c.voided_at, c.edit_count,
             u.full_name AS agent_name, l.ref AS lead_ref, COALESCE(a.name, l.organization_name, l.contact_name) AS about
        FROM crm_calls c LEFT JOIN users u ON u.id = c.agent_user_id LEFT JOIN crm_leads l ON l.id = c.lead_id LEFT JOIN accounts a ON a.id = c.account_id

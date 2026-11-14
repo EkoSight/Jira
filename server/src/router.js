@@ -40,6 +40,8 @@ import salesDealRoutes from './routes/salesDeals.js';
 import salesOpsRoutes from './routes/salesOps.js';
 import salesCallingRoutes from './routes/salesCalling.js';
 import salesWorkRoutes from './routes/salesWork.js';
+import salesPhoneRoutes from './routes/salesPhone.js';
+import deviceRoutes from './routes/device.js';
 import photoRoutes from './routes/photos.js';
 import { brandingAdminRouter, publicBrandingRouter } from './routes/branding.js';
 import { requireMarketingEnabled } from './middleware/marketing.js';
@@ -69,6 +71,8 @@ export function createTaskFlowRouter() {
   router.use('/branding', publicBrandingRouter);
   // the sales CRM's lead capture and provider webhooks, reached without signing in
   router.use('/s', requireCrmEnabled, salesPublicRoutes);
+  // the TaskFlow Android app, in the background: its own device token, nothing else
+  router.use('/device', requireCrmEnabled, deviceRoutes);
 
   // everything below needs a signed-in caller
   router.use(authenticate, touchActivity);
@@ -130,6 +134,9 @@ export function createTaskFlowRouter() {
   // calls, WhatsApp, automation, imports and exports, reports, integrations and audit
   router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesOpsRoutes);
   router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesCallingRoutes);
+  // calls on company phones: sessions, recordings, the phone policy, opt-outs, Settings → Calling, phones.
+  // Before the calls-as-records routes, whose /calls/:id would otherwise catch /calls/pending.
+  router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesPhoneRoutes);
   // calls as records, follow-up reminders, the daily Chat summary, the work queue, locations
   router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesWorkRoutes);
 
