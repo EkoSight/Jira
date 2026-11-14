@@ -373,7 +373,7 @@ export default function DealSales({ opportunity, onChanged }) {
       </div>
       {s.can_work && (
         <div className="row wrap" style={{ gap: 6 }}>
-          <CallButtons phone={phone} target={target} onLog={() => setDialog('call')} />
+          <CallButtons phone={phone} target={target} label={s.contact?.full_name || opportunity.name} onLog={() => setDialog('call')} />
           {!phone && <button type="button" className="btn btn-sm" onClick={() => setDialog('call')}>Log call</button>}
           <button type="button" className="btn btn-sm" onClick={() => setDialog('followup')}>Follow-up</button>
           <button type="button" className="btn btn-sm" onClick={() => setDialog('whatsapp')}>WhatsApp</button>

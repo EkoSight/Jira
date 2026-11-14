@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
@@ -8,12 +8,13 @@ import {
   Stars, WhatsAppPanel,
 } from '../components/sales/parts.jsx';
 import { CallStatusForm } from '../components/sales/Calling.jsx';
+import { CallAction, ComplaintDialog } from '../components/sales/PhoneCall.jsx';
 import {
   CallDialog, LeadCalls, LocationDetails, LocationFields, emptyLocation, locationChanges,
 } from '../components/sales/LeadWork.jsx';
 import { exactTime, importedAttempts, locationLine, pinProblem } from '../lib/crmWork.js';
 import {
-  CATEGORY, CHOOSABLE, FOLLOWUP_KIND, LEAD_STATUS, PRIORITY, ROUTING_STATUS, dayOf, editableFields, fieldValueLabel, handedOut, money, phoneLabel, useSalesMeta, when,
+  CATEGORY, CHOOSABLE, FOLLOWUP_KIND, LEAD_STATUS, PRIORITY, ROUTING_STATUS, dayOf, editableFields, fieldValueLabel, handedOut, money, useSalesMeta, when,
 } from '../lib/sales.js';
 
 const EDITABLE = [
@@ -158,6 +159,12 @@ export default function SalesLead() {
   const [tab, setTab] = useState('timeline');
   const load = useCallback(() => api.sales.get(`/leads/${id}`).then(setData).catch((err) => setData({ error: err })), [id]);
   useEffect(() => { load(); }, [load]);
+  // "How did it go?" from the call bar lands on the outcome form
+  const location = useLocation();
+  const loaded = Boolean(data && !data.error);
+  useEffect(() => {
+    if (loaded && location.hash === '#call-outcome') document.getElementById('call-outcome')?.scrollIntoView({ block: 'start' });
+  }, [loaded, location.hash]);
 
   if (!data || !meta) return <Spinner label="Opening the lead" />;
   if (data.error) return <EmptyState title={data.error.status === 404 ? 'Lead not found' : 'Could not open the lead'}>{data.error.status === 404 ? 'It does not exist, or it is outside your book.' : data.error.message}</EmptyState>;
@@ -181,6 +188,14 @@ export default function SalesLead() {
   const score = data.score;
   const counted = data.calls.filter((c) => !c.voided_at);
   const imported = importedAttempts(lead, data.calls);
+  const calling = data.calling || {};
+  const setDoNotRecord = async (value) => {
+    try {
+      await api.sales.post(`/leads/${lead.id}/do-not-record`, { value });
+      toast.success(value ? 'Calls with this lead will not be recorded' : 'Calls with this lead may be recorded again');
+      load();
+    } catch (err) { toast.error(err); }
+  };
 
   return (
     <div className="stack">
@@ -194,6 +209,9 @@ export default function SalesLead() {
             <Badge>{PRIORITY[lead.priority]}</Badge>
             {lead.is_archived && <Badge tone="critical">Archived{lead.archive_reason ? `: ${lead.archive_reason}` : ''}</Badge>}
             {lead.merged_into_id && <Link to={`/sales/leads/${lead.merged_into_id}`}><Badge tone="warning">Merged into another lead</Badge></Link>}
+            {calling.opted_out && <Badge tone="critical" title={`Since ${when(calling.opted_out.created_at)}`}>{calling.opted_out.complaint ? 'Complained: do not call' : 'Asked not to be called'}</Badge>}
+            {calling.no_messages && <Badge tone="warning">No WhatsApp or SMS</Badge>}
+            {calling.do_not_record && <Badge>Calls not recorded</Badge>}
           </div>
           <div className="small muted lead-place">{locationLine(lead)}</div>
         </div>
@@ -276,11 +294,25 @@ export default function SalesLead() {
             </span>
           </div>
           <div className="card-pad stack-sm">
-            {lead.phone && <a className="btn btn-sm call-dial-inline" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`}><Icon name="phone" size={13} /> Call {phoneLabel(lead.phone)}</a>}
+            {calling.opted_out && (
+              <div className="mkt-callout is-warning small">
+                <strong>This number asked not to be called</strong> ({when(calling.opted_out.created_at)}). Call it only to answer a call of theirs: TaskFlow allows that for 24 hours after they ring. An administrator can lift the opt-out, with a reason.
+              </div>
+            )}
+            {lead.phone && <CallAction phone={lead.phone} target={target} label={lead.display_name} large primary />}
             <ol className="call-steps small muted" aria-label="Steps">
               <li>Call</li><li>Choose how it went</li><li>Write what was said</li><li>Book the next step</li>
             </ol>
             <CallStatusForm lead={lead} meta={meta} onDone={load} />
+            <div className="row wrap call-lead-choices" style={{ gap: 10 }}>
+              {data.can.edit && (
+                <label className="row small" style={{ gap: 6 }}>
+                  <input type="checkbox" checked={calling.do_not_record === true} onChange={(e) => setDoNotRecord(e.target.checked)} />
+                  Do not record calls with this lead
+                </label>
+              )}
+              {!calling.opted_out?.complaint && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDialog('complaint')}>Customer complained…</button>}
+            </div>
           </div>
         </section>
       )}
@@ -417,6 +449,7 @@ export default function SalesLead() {
       {dialog?.call && <CallDialog callId={dialog.call} onClose={() => setDialog(null)} onChanged={load} />}
       {dialog === 'followup' && <FollowUpDialog target={target} users={meta.users} onClose={() => setDialog(null)} onSaved={load} />}
       {dialog === 'note' && <NoteDialog leadId={lead.id} onClose={() => setDialog(null)} onSaved={load} />}
+      {dialog === 'complaint' && <ComplaintDialog leadId={lead.id} onClose={() => setDialog(null)} onDone={load} />}
       {dialog?.task && <FollowUpActions task={dialog.task} users={meta.users} onClose={() => setDialog(null)} onDone={load} />}
       {dialog?.merge && <MergeDialog lead={lead} other={dialog.merge} onClose={() => setDialog(null)} onDone={(sid) => { setDialog(null); navigate(`/sales/leads/${sid}`); load(); }} />}
     </div>

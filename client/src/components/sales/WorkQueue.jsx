@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth } from '../../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Icon, Modal, Spinner } from '../ui.jsx';
-import { FOLLOWUP_KIND, phoneLabel } from '../../lib/sales.js';
+import { Avatar, Badge, EmptyState, Modal, Spinner } from '../ui.jsx';
+import { FOLLOWUP_KIND } from '../../lib/sales.js';
 import { NOT_PROVIDED, exactTime, indiaTime } from '../../lib/crmWork.js';
 import { CallStatusBadge, CategoryBadge, DueBadge, FollowUpActions, Stars } from './parts.jsx';
 import { CallStatusForm } from './Calling.jsx';
+import { CallAction, PendingCalls } from './PhoneCall.jsx';
 
 const PAGE_SIZE = 25;
 
@@ -48,7 +49,7 @@ function QueueRow({ lead, onCall, onFollowUp }) {
         )}
       </div>
       <div className="queue-actions">
-        {lead.phone && <a className="btn btn-sm" href={`tel:${lead.phone.replace(/[^\d+]/g, '')}`} title="Opens your dialler; say how it went afterwards"><Icon name="phone" size={13} /> {phoneLabel(lead.phone)}</a>}
+        {lead.phone && <CallAction phone={lead.phone} target={{ lead_id: lead.id }} label={lead.display_name} />}
         <button type="button" className="btn btn-sm btn-primary" onClick={() => onCall(lead)}>Say how it went</button>
         {fu && <button type="button" className="btn btn-sm btn-ghost" onClick={() => onFollowUp(lead, fu, 'reschedule')}>Move</button>}
       </div>
@@ -87,6 +88,8 @@ export function WorkQueue({ meta, userId }) {
   const pages = Math.max(1, Math.ceil(data.total / data.page_size));
   const urgent = data.groups.filter((g) => ['fu_overdue', 'fu_today', 'retry'].includes(g.key)).reduce((n, g) => n + g.count, 0);
   return (
+    <>
+    {(!userId || userId === user.id) && <PendingCalls />}
     <section className="card" aria-labelledby="queue-title">
       <div className="card-head">
         <h3 id="queue-title">Leads to work</h3>
@@ -134,5 +137,6 @@ export function WorkQueue({ meta, userId }) {
           initial={acting.mode} users={meta.users} onClose={() => setActing(null)} onDone={load} />
       )}
     </section>
+    </>
   );
 }

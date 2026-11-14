@@ -32,6 +32,30 @@
       "purpose": "maskable"
     }
   ],
+  "share_target": {
+    "action": "/share-recording",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "recording",
+          "accept": [
+            "audio/*",
+            ".m4a",
+            ".amr",
+            ".3gp",
+            ".3ga",
+            ".aac",
+            ".mp3",
+            ".ogg",
+            ".opus",
+            ".wav"
+          ]
+        }
+      ]
+    }
+  },
   "shortcuts": [
     {
       "name": "My tasks",

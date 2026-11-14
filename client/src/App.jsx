@@ -29,7 +29,10 @@ const MarketingCampaign = lazy(() => import('./pages/MarketingCampaign.jsx'));
 const MarketingAutomation = lazy(() => import('./pages/MarketingAutomation.jsx'));
 const Sales = lazy(() => import('./pages/Sales.jsx'));
 const SalesLead = lazy(() => import('./pages/SalesLead.jsx'));
+const ShareRecording = lazy(() => import('./pages/ShareRecording.jsx'));
+const PhoneSetup = lazy(() => import('./pages/PhoneSetup.jsx'));
 import { AttendanceProvider } from './state/attendance.jsx';
+import { CallSessionProvider } from './components/sales/PhoneCall.jsx';
 
 function Protected({ permission, children }) {
   const { can } = useAuth();
@@ -42,6 +45,7 @@ function Shell() {
   if (!ready) return <BrandLoader label="Loading your workspace" />;
 
   return (
+    <CallSessionProvider>
     <Layout>
       <Routes>
         <Route path="/" element={<Dashboard />} />
@@ -101,6 +105,22 @@ function Shell() {
           element={
             <Protected permission="crm.view">
               <Suspense fallback={<Spinner label="Opening the lead" />}><SalesLead /></Suspense>
+            </Protected>
+          }
+        />
+        <Route
+          path="/sales/share-recording"
+          element={
+            <Protected permission="crm.activity.log">
+              <Suspense fallback={<Spinner label="Opening the shared recording" />}><ShareRecording /></Suspense>
+            </Protected>
+          }
+        />
+        <Route
+          path="/phone-setup"
+          element={
+            <Protected permission="crm.view">
+              <Suspense fallback={<Spinner label="Opening phone setup" />}><PhoneSetup /></Suspense>
             </Protected>
           }
         />
@@ -169,6 +189,7 @@ function Shell() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Layout>
+    </CallSessionProvider>
   );
 }
 

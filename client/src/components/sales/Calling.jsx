@@ -7,6 +7,8 @@ import { fieldValueLabel, phoneLabel, toIso, when } from '../../lib/sales.js';
 import { newRequestId } from '../../lib/attendance.js';
 import { NO_AUTOMATIC_WIN, STATUS_EXPLAINED, exactTime } from '../../lib/crmWork.js';
 import { CategoryBadge, CallStatusBadge, Stars } from './parts.jsx';
+import { CallAction, useCallSession } from './PhoneCall.jsx';
+import { estimateMinutes, lengthWords } from '../../lib/phoneCalls.js';
 
 const GROUPS = [
   ['NOT_CONNECTED', 'Didn’t connect'],
@@ -75,11 +77,26 @@ export function CallStatusForm({ lead, meta, onDone, onDirty, submitLabel = 'Sav
   const [saved, setSaved] = useState(null);
   const requestId = useRef(newRequestId());
   const busy = useRef(false);
+  // the call started from TaskFlow for this lead, if one is going on: the outcome is saved onto it
+  const callSession = useCallSession();
+  const active = callSession.activeFor({ lead_id: lead.id });
+  const measured = active?.live?.duration_source === 'DEVICE_LOG' ? active.live.talk_sec : null;
+  const [minutes, setMinutes] = useState('');
+  const [minutesTyped, setMinutesTyped] = useState(false);
+  const [stopCalls, setStopCalls] = useState(false);
+  const [stopMessages, setStopMessages] = useState(false);
+  // the estimate fills in the length until the person types one
+  useEffect(() => {
+    if (!minutesTyped && active?.estimate && measured === null) setMinutes(String(estimateMinutes(active.estimate)));
+  }, [active?.estimate, measured, minutesTyped]);
   const status = statuses.find((s) => s.id === statusId);
   const reasons = meta.settings?.calling?.lostReasons || [];
   const lostReason = reason === '__other' ? otherReason.trim() : reason;
   const closes = status && ['WON', 'DISQUALIFIED'].includes(status.lifecycle);
-  const clear = () => { setStatusId(null); setNote(''); setReason(''); setOtherReason(''); setCallback(''); };
+  const clear = () => {
+    setStatusId(null); setNote(''); setReason(''); setOtherReason(''); setCallback('');
+    setMinutes(''); setMinutesTyped(false); setStopCalls(false); setStopMessages(false);
+  };
   useEffect(() => { clear(); setSaved(null); setRating(lead.rating || null); requestId.current = newRequestId(); }, [lead.id]);
   const dirty = Boolean(statusId || note.trim());
   useUnsavedWarning(dirty);
@@ -91,17 +108,24 @@ export function CallStatusForm({ lead, meta, onDone, onDirty, submitLabel = 'Sav
     busy.current = true;
     setSaving(true);
     try {
+      const sendLength = measured === null && minutes !== '' && status.outcome !== 'NOT_CONNECTED';
       const r = await api.sales.post(`/leads/${lead.id}/call-status`, {
         status_id: status.id, note: note.trim() || null, lost_reason: status.needs_reason ? lostReason : null,
-        callback_at: callback && !closes ? toIso(callback) : null, rating: rating || null, request_id: requestId.current,
+        callback_at: callback && !closes && !stopCalls ? toIso(callback) : null, rating: rating || null, request_id: requestId.current,
+        call_id: active?.callId || null,
+        duration_sec: sendLength ? Math.round(Number(minutes) * 60) : null,
+        duration_source: sendLength && !minutesTyped && active?.estimate ? 'ESTIMATED' : 'TYPED',
+        opt_out: stopCalls ? { calls: true, messages: stopMessages } : null,
       });
       requestId.current = newRequestId();
       clear();
+      if (active) callSession.finish();
       setSaved({ ...r, label: status.label });
       const retry = r.lead?.retry_at ? ` It comes up again ${when(r.lead.retry_at)}.` : '';
       toast.success(r.duplicate ? 'That was already saved; nothing was added twice.'
-        : r.exhausted ? `${status.label}: tried ${r.attempts} times, so no more automatic retries. Close it or book a callback.`
-          : `${r.call ? `Call #${r.call.id} saved` : 'Saved'}: ${status.label}.${retry}`);
+        : r.opted_out ? `${r.call ? `Call #${r.call.id} saved` : 'Saved'}. This number will not be called again.`
+          : r.exhausted ? `${status.label}: tried ${r.attempts} times, so no more automatic retries. Close it or book a callback.`
+            : `${r.call ? `Call #${r.call.id} saved` : 'Saved'}: ${status.label}.${retry}`);
       onDone?.(r);
     } catch (err) {
       // the same request id stays, so pressing Save again cannot record it twice
@@ -149,10 +173,22 @@ export function CallStatusForm({ lead, meta, onDone, onDirty, submitLabel = 'Sav
           {reason === '__other' && <input className="input" style={{ marginTop: 6 }} value={otherReason} onChange={(e) => setOtherReason(e.target.value)} placeholder="What happened" />}
         </Field>
       )}
+      {active && (
+        <div className="call-for small" role="status">
+          For the call started <span className="tnum">{exactTime(active.dialledAt)}</span>
+          {measured !== null ? <> · {lengthWords(measured, 'DEVICE_LOG')}</> : active.live?.connected === false ? ' · the phone says nobody answered' : ''}
+        </div>
+      )}
       <Field label="What was said">
         <textarea className="textarea" rows={2} value={note} onChange={(e) => { setNote(e.target.value); if (saved) setSaved(null); }} placeholder={status?.outcome === 'NOT_CONNECTED' ? 'Optional' : 'Crops, shop, what they want, objections…'} />
       </Field>
-      {status && !closes && (
+      {status && status.outcome !== 'NOT_CONNECTED' && measured === null && (
+        <Field label="How long did you talk? (minutes)" hint={!minutesTyped && active?.estimate ? `About ${estimateMinutes(active.estimate)} min, estimated from the time away from TaskFlow (it includes ringing). Change it if you know better.` : 'Leave blank if you don’t know.'}>
+          <input className="input" type="number" min="0" step="0.5" inputMode="decimal" style={{ maxWidth: 140 }} value={minutes}
+            onChange={(e) => { setMinutes(e.target.value); setMinutesTyped(true); }} />
+        </Field>
+      )}
+      {status && !closes && !stopCalls && (
         <Field label="Call back" hint={status.retry_after_minutes && !callback ? `Left blank, it comes up again in ${status.retry_after_minutes >= 120 ? `${Math.round(status.retry_after_minutes / 60)} hours` : `${status.retry_after_minutes} minutes`}` : 'They asked to be called at a time'}>
           <div className="row wrap" style={{ gap: 6 }}>
             {callbackChoices().map(([label, d]) => {
@@ -162,6 +198,21 @@ export function CallStatusForm({ lead, meta, onDone, onDirty, submitLabel = 'Sav
             <input className="input" type="datetime-local" aria-label="Call back at" style={{ maxWidth: 220 }} value={callback} onChange={(e) => setCallback(e.target.value)} />
           </div>
         </Field>
+      )}
+      {status && (
+        <div className="stack-xs call-optout">
+          <label className="row small" style={{ gap: 6 }}>
+            <input type="checkbox" checked={stopCalls} onChange={(e) => { setStopCalls(e.target.checked); if (!e.target.checked) setStopMessages(false); }} />
+            Asked not to be called again
+          </label>
+          {stopCalls && (
+            <label className="row small" style={{ gap: 6, paddingLeft: 22 }}>
+              <input type="checkbox" checked={stopMessages} onChange={(e) => setStopMessages(e.target.checked)} />
+              and no WhatsApp or SMS
+            </label>
+          )}
+          {stopCalls && <span className="small muted">The number goes on the opt-out list: no retries, call-backs or call list. Only an administrator can lift it, with a reason.</span>}
+        </div>
       )}
       <div className="row-between wrap" style={{ gap: 8 }}>
         <span className="row small" style={{ gap: 6 }}>Rating <Stars value={rating} onChange={setRating} /></span>
@@ -235,11 +286,9 @@ export function Calling({ meta }) {
               {current.last_note && <blockquote className="call-note small">{current.last_note}</blockquote>}
             </div>
             {current.phone ? (
-              <a className="btn btn-primary call-dial" href={`tel:${current.phone.replace(/[^\d+]/g, '')}`}>
-                <Icon name="phone" size={16} /> Call {phoneLabel(current.phone)}
-              </a>
+              <CallAction phone={current.phone} target={{ lead_id: current.id }} label={current.display_name} primary large />
             ) : <div className="small critical-text">No phone number on this lead.</div>}
-            <div className="small muted">Your phone dials; TaskFlow does not record the call. Afterwards, say how it went.</div>
+            <div className="small muted">Your phone dials. Afterwards, say how it went here.</div>
             <CallStatusForm lead={current} meta={meta} submitLabel="Save and next" onDone={() => load()} />
             <div className="row" style={{ gap: 6 }}>
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSkipped((s) => new Set([...s, current.id]))}>Skip for now</button>

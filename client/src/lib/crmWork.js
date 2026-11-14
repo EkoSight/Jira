@@ -59,6 +59,7 @@ export function durationWords(sec) {
 
 export const RECORDED_VIA = {
   OUTCOME_FORM: 'How did the call go?', LOG_CALL: 'Log call', FOLLOWUP: 'Completed follow-up', IMPORT: 'Imported',
+  DIALLER: 'Call button, phone dialler', ANDROID_APP: 'Call button, TaskFlow app', DEVICE_SYNC: 'From the phone’s call log',
 };
 
 export const REMINDER_OFFSETS = [30, 15, 10, 5];

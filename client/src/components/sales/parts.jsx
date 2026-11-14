@@ -9,6 +9,8 @@ import { newRequestId } from '../../lib/attendance.js';
 import {
   CHANNEL_LABEL, REMINDER_OFFSETS, REMINDER_STATUS, dueState, exactTime, reminderWords,
 } from '../../lib/crmWork.js';
+import { CallAction, useCallSession } from './PhoneCall.jsx';
+import { estimateMinutes, lengthWords } from '../../lib/phoneCalls.js';
 
 export function CategoryBadge({ category }) {
   const c = CATEGORY[category] || CATEGORY.UNCLASSIFIED;
@@ -154,10 +156,21 @@ const nextBody = (n) => (n.on ? { kind: n.kind, due_at: toIso(n.due), title: n.t
  * Logging a call: what happened, what was said, and what happens next, in one
  * step. Works for a lead, an organization or a deal.
  */
-export function LogCallDialog({ target, phone, users, onClose, onSaved }) {
+export function LogCallDialog({ target, phone, users, onClose, onSaved, call = null }) {
   const toast = useToast();
   const { can } = useAuth();
-  const [form, setForm] = useState({ outcome: 'CONNECTED', notes: '', minutes: '', direction: 'OUTBOUND' });
+  // a call started from TaskFlow for this record (or one picked from the
+  // "Dialled: say how it went" list): the log fills it in instead of adding another
+  const callSession = useCallSession();
+  const session = callSession.activeFor(target);
+  const active = call ? { callId: call.id, dialledAt: call.dialled_at || call.started_at, live: call, estimate: null }
+    : session;
+  const measured = active?.live?.duration_source === 'DEVICE_LOG' ? active.live.talk_sec : null;
+  const [form, setForm] = useState(() => ({
+    outcome: active?.live?.connected === false ? 'NO_ANSWER' : 'CONNECTED', notes: '', direction: 'OUTBOUND',
+    minutes: measured === null && active?.estimate ? String(estimateMinutes(active.estimate)) : '',
+  }));
+  const [minutesTyped, setMinutesTyped] = useState(false);
   const [next, setNext] = useState(nextDraft());
   const [saving, setSaving] = useState(false);
   // one id per call being logged: pressing Save twice, or again after a slow
@@ -171,10 +184,14 @@ export function LogCallDialog({ target, phone, users, onClose, onSaved }) {
     busy.current = true;
     setSaving(true);
     try {
+      const sendLength = measured === null && form.minutes !== '';
       const r = await api.sales.post('/calls', {
-        ...target, phone: phone || null, direction: form.direction, outcome: form.outcome, notes: form.notes.trim() || null,
-        duration_sec: form.minutes ? Math.round(Number(form.minutes) * 60) : null, next: nextBody(next), request_id: requestId.current,
+        ...target, phone: phone || null, direction: active ? 'OUTBOUND' : form.direction, outcome: form.outcome, notes: form.notes.trim() || null,
+        duration_sec: sendLength ? Math.round(Number(form.minutes) * 60) : null,
+        duration_source: sendLength && !minutesTyped && active?.estimate ? 'ESTIMATED' : 'TYPED',
+        call_id: active?.callId || null, next: nextBody(next), request_id: requestId.current,
       });
+      if (session && (!call || session.callId === call.id)) callSession.finish();
       const ref = r.call?.id ? `Call #${r.call.id}` : 'Call';
       toast.success(r.duplicate ? `${ref} was already saved; nothing was added twice` : next.on ? `${ref} logged and the next step scheduled` : `${ref} logged`);
       onSaved?.(r);
@@ -191,27 +208,36 @@ export function LogCallDialog({ target, phone, users, onClose, onSaved }) {
     <Modal title="Log a call" onClose={onClose}
       footer={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button></>}>
       <div className="stack">
-        {phone && <div className="small muted">With {phone}. Logged by hand: TaskFlow records what you enter here.</div>}
+        {active ? (
+          <div className="call-for small" role="status">
+            For the call started <span className="tnum">{exactTime(active.dialledAt)}</span>
+            {measured !== null ? <> · {lengthWords(measured, 'DEVICE_LOG')}</> : active.live?.connected === false ? ' · the phone says nobody answered' : ''}
+          </div>
+        ) : phone && <div className="small muted">With {phone}. Logged by hand: TaskFlow records what you enter here.</div>}
         <div className="grid-2">
           <Field label="How did it go?">
             <select className="select" value={form.outcome} autoFocus onChange={(e) => setForm({ ...form, outcome: e.target.value })}>
               {Object.entries(CALL_OUTCOME).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </Field>
-          <Field label="Who called whom">
-            <select className="select" value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value })}>
-              <option value="OUTBOUND">I called them</option>
-              <option value="INBOUND">They called me</option>
-            </select>
-          </Field>
+          {!active && (
+            <Field label="Who called whom">
+              <select className="select" value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value })}>
+                <option value="OUTBOUND">I called them</option>
+                <option value="INBOUND">They called me</option>
+              </select>
+            </Field>
+          )}
         </div>
         <Field label={reached ? 'What was said? *' : 'Notes'}>
           <textarea className="textarea" rows={3} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
             placeholder={reached ? 'They want a demo for the procurement head next week' : 'Optional'} />
         </Field>
-        <Field label="Minutes (optional)">
-          <input className="input" type="number" min="0" step="0.5" inputMode="decimal" value={form.minutes} onChange={(e) => setForm({ ...form, minutes: e.target.value })} style={{ maxWidth: 140 }} />
-        </Field>
+        {measured === null && (
+          <Field label="Minutes (optional)" hint={!minutesTyped && active?.estimate ? 'Estimated from the time away from TaskFlow (it includes ringing). Change it if you know better.' : undefined}>
+            <input className="input" type="number" min="0" step="0.5" inputMode="decimal" value={form.minutes} onChange={(e) => { setForm({ ...form, minutes: e.target.value }); setMinutesTyped(true); }} style={{ maxWidth: 140 }} />
+          </Field>
+        )}
         <NextStep value={next} onChange={setNext} users={users} allowAssign={can('crm.assign')} />
       </div>
     </Modal>
@@ -549,18 +575,17 @@ export function WhatsAppPanel({ target, phone }) {
 }
 
 /**
- * A tel: link, labelled honestly; with Exotel connected, a real click-to-call
- * as well. Dialling is not a call record: what happened is saved afterwards,
- * through onLog (a lead's "How did the call go?", or Log call elsewhere).
+ * The Call button (it records the call on TaskFlow first, then the phone
+ * dials); with Exotel connected, a real click-to-call as well. What happened
+ * is saved afterwards, through onLog (a lead's "How did the call go?", or Log
+ * call elsewhere), onto the same call.
  */
-export function CallButtons({ phone, target, onLog, logLabel = 'Log call', exotel }) {
+export function CallButtons({ phone, target, label, onLog, logLabel = 'Log call', exotel }) {
   const toast = useToast();
   if (!phone) return null;
   return (
-    <span className="row" style={{ gap: 4 }}>
-      <a className="btn btn-sm" href={`tel:${phone}`} title="Opens your phone's dialler. It does not record the call: say how it went afterwards.">
-        <Icon name="sound" size={13} /> Call
-      </a>
+    <span className="row wrap" style={{ gap: 4 }}>
+      <CallAction phone={phone} target={target} label={label} />
       {exotel && (
         <button type="button" className="btn btn-sm" title="Exotel rings your phone first, then connects them; the call is logged automatically"
           onClick={() => api.sales.post('/calls/click-to-call', { phone, ...target }).then(() => toast.success('Exotel is ringing your phone')).catch(toast.error)}>

@@ -11,6 +11,7 @@
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
+    "@capacitor/core": "8.5.3",
     "@mediapipe/tasks-vision": "^0.10.21",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

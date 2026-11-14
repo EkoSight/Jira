@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom';
 import { api, downloadFile, fetchBlobUrl } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
 import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
-import { RECORDED_VIA, durationWords, exactTime } from '../../lib/crmWork.js';
+import { RECORDED_VIA, exactTime } from '../../lib/crmWork.js';
+import { lengthWords } from '../../lib/phoneCalls.js';
+import { RecordingPlayer } from './PhoneCall.jsx';
 import { CallDialog } from './LeadWork.jsx';
 import { CALL_OUTCOME, CATEGORY, dayOf, localDay, money, when } from '../../lib/sales.js';
 import { Metric } from './parts.jsx';
@@ -378,9 +380,12 @@ export function Calls() {
                 {CALL_OUTCOME[c.outcome] || String(c.status).toLowerCase().replace('_', ' ')}
                 {c.voided_at && <> <Badge tone="warning">Repeat, not counted</Badge></>}{c.edit_count > 0 && <> <Badge>Edited</Badge></>}
               </td>
-              <td className="num tnum">{durationWords(c.duration_sec)}</td>
+              <td className="num tnum nowrap">{lengthWords(c.talk_sec ?? c.duration_sec, c.duration_source)}</td>
               <td className="small">{RECORDED_VIA[c.recorded_via] || (c.logged_manually ? 'logged by hand' : c.provider)}</td>
-              <td>{playing[c.id] ? <audio controls src={playing[c.id]} /> : c.can_play ? <button type="button" className="btn btn-sm" onClick={() => play(c)}>Play</button> : c.has_recording ? <span className="small muted">restricted</span> : '—'}</td>
+              <td>
+                {c.recording_kind === 'STORED' ? (c.can_play ? <RecordingPlayer call={c} /> : <span className="small muted">restricted</span>)
+                  : playing[c.id] ? <audio controls src={playing[c.id]} /> : c.can_play ? <button type="button" className="btn btn-sm" onClick={() => play(c)}>Play</button> : c.has_recording ? <span className="small muted">restricted</span> : '—'}
+              </td>
             </tr>
           ))}</tbody></table></div>
       )}

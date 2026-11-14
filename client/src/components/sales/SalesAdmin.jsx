@@ -8,9 +8,11 @@ import { CallReview, LocationReview } from './ReviewLists.jsx';
 import { CopyButton } from '../marketing/parts.jsx';
 import { CATEGORY, CHOOSABLE, dayOf, localDay, money, when } from '../../lib/sales.js';
 import { CallingSettings, LeadFieldsSettings } from './SalesCallingSettings.jsx';
+import PhoneSettings from './PhoneSettings.jsx';
 
 const SECTIONS = [
-  ['setup', 'Setup checklist'], ['general', 'Visibility, routing & calendar'], ['calling', 'Calling statuses & lost reasons'], ['fields', 'Lead fields'],
+  ['setup', 'Setup checklist'], ['general', 'Visibility, routing & calendar'], ['calling', 'Calling statuses & lost reasons'],
+  ['phones', 'Calls from company phones'], ['fields', 'Lead fields'],
   ['pipelines', 'Pipelines & stages'], ['assignment', 'Assignment'],
   ['scoring', 'Scoring'], ['sources', 'Sources & campaigns'], ['capture', 'Website forms & API keys'], ['catalogue', 'Catalogue, approvals & rates'],
   ['integrations', 'Calls, WhatsApp & TeleCRM'], ['followups', 'Follow-up reminders & daily summary'], ['locations', 'Lead locations to review'],
@@ -852,6 +854,7 @@ export function SalesSettings({ meta, onSaved, initial }) {
         {current === 'setup' && <Setup meta={meta} goTo={setSection} />}
         {current === 'general' && <General meta={meta} onSaved={onSaved} />}
         {current === 'calling' && <CallingSettings meta={meta} onSaved={onSaved} />}
+        {current === 'phones' && <PhoneSettings />}
         {current === 'fields' && <LeadFieldsSettings onSaved={onSaved} />}
         {current === 'pipelines' && <Pipelines />}
         {current === 'assignment' && <Assignment meta={meta} onSaved={onSaved} />}

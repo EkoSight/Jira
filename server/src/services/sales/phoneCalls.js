@@ -205,7 +205,9 @@ export async function countAttemptOnce(client, call) {
 const PENDING_SELECT = `
   SELECT c.id, c.direction, c.status, c.connected, c.talk_sec, c.duration_source, c.dialled_at, c.started_at, c.lead_id, c.account_id,
          c.contact_id, c.opportunity_id, c.to_number, c.from_number, c.recorded_via, c.callback_reason, c.hours_override_reason,
-         l.ref AS lead_ref, COALESCE(l.organization_name, l.contact_name, a.name) AS about, ac.full_name AS contact_name
+         l.ref AS lead_ref, COALESCE(l.organization_name, l.contact_name, a.name) AS about, ac.full_name AS contact_name,
+         c.outcome, c.no_recording, (l.do_not_record IS TRUE OR ac.do_not_record IS TRUE) AS do_not_record,
+         EXISTS (SELECT 1 FROM crm_call_recordings r WHERE r.call_id = c.id AND r.deleted_at IS NULL) AS has_recording
     FROM crm_calls c
     LEFT JOIN crm_leads l ON l.id = c.lead_id
     LEFT JOIN accounts a ON a.id = c.account_id

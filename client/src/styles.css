@@ -4112,6 +4112,83 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .call-bar-track { grid-column: 1 / -1; grid-row: 2; }
 }
 
+/* calls on company phones: the Call button, the panel while a call lasts, "how did it go" */
+.call-action { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.call-action.is-large { display: flex; }
+.call-go { gap: 5px; }
+.call-number { font-size: 12.5px; color: var(--ink-2); user-select: all; font-variant-numeric: tabular-nums; }
+.call-for {
+  padding: 8px 10px; border-radius: var(--radius-sm); border: 1px solid var(--brand-border);
+  background: var(--brand-wash); color: var(--ink);
+}
+.call-optout { padding-top: 8px; border-top: 1px dashed var(--border); }
+.call-lead-choices { padding-top: 10px; border-top: 1px solid var(--border); }
+.call-audio { width: 100%; max-width: 380px; height: 40px; }
+.call-recording { padding-top: 10px; border-top: 1px solid var(--border); }
+.live-call {
+  position: fixed; z-index: 90; right: 16px; bottom: 16px; width: min(420px, calc(100vw - 32px));
+  display: grid; gap: 8px; padding: 12px 14px;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--brand-border); border-left: 4px solid var(--brand);
+  border-radius: var(--radius); box-shadow: var(--shadow-lg);
+}
+.live-call-main { display: flex; align-items: flex-start; gap: 8px; }
+.live-call-sentence {
+  display: grid; gap: 6px; padding: 8px 10px; border-radius: var(--radius-sm);
+  border: 1px solid var(--warning); background: var(--warning-wash); color: var(--ink); line-height: 1.45;
+}
+.has-live-call .page { padding-bottom: calc(var(--live-call-h, 160px) + 40px); }
+.has-live-call .toasts { bottom: calc(var(--live-call-h, 160px) + 28px); }
+.pending-calls .sales-row { align-items: center; }
+@media (max-width: 900px) {
+  .live-call { left: 12px; right: 12px; width: auto; bottom: calc(66px + env(safe-area-inset-bottom)); }
+  .has-live-call .page { padding-bottom: calc(84px + var(--live-call-h, 200px) + env(safe-area-inset-bottom)); }
+  .has-live-call .toasts { bottom: calc(76px + var(--live-call-h, 200px) + env(safe-area-inset-bottom)); }
+}
+/* sharing a recording from the phone: "Which call is this?" */
+.share-call-list { display: grid; }
+.share-call {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; cursor: pointer;
+  border-top: 1px solid var(--border);
+}
+.share-call-list li:first-child .share-call { border-top: 0; }
+.share-call input { margin-top: 3px; }
+.share-call.is-chosen { background: var(--brand-wash); }
+.share-call.is-disabled { cursor: not-allowed; color: var(--ink-muted); }
+/* phone setup in the Android app */
+.setup-steps { display: grid; gap: 10px; }
+.setup-step {
+  display: flex; gap: 12px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface);
+}
+.setup-step.is-done { border-color: color-mix(in srgb, var(--good) 40%, var(--border)); }
+.setup-step-mark {
+  flex: none; width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  border: 2px solid var(--border-strong); color: var(--on-brand);
+}
+.setup-step.is-done .setup-step-mark { background: var(--good); border-color: var(--good); }
+.setup-step-title { font-size: 15px; margin: 0; }
+.setup-policy {
+  margin: 0; padding: 10px 12px; border-left: 3px solid var(--brand); background: var(--surface-2);
+  color: var(--ink); line-height: 1.5; max-width: 65ch;
+}
+.setup-perm { display: flex; gap: 8px; align-items: flex-start; }
+.setup-confirm input { margin-top: 3px; }
+/* Settings: calls from company phones */
+.two-langs { border: 0; padding: 0; margin: 0; min-width: 0; }
+.textarea.is-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; line-height: 1.5; }
+.tight-list { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 2px; }
+.notice-preview { width: 100%; height: min(60vh, 560px); border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+.phone-list { display: grid; }
+.phone-row { display: flex; gap: 12px; padding: 14px; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.phone-list li:first-child { border-top: 0; }
+.phone-row.is-revoked { background: var(--surface-2); }
+.phone-actions { align-self: flex-start; }
+@media (prefers-reduced-motion: no-preference) {
+  .live-call { animation: live-call-in 160ms ease-out; }
+  @keyframes live-call-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+}
+
 /* the daily standup form: one row per item, stacking on a phone */
 .standup-item { display: grid; grid-template-columns: 22px minmax(110px, 0.8fr) 1.3fr 1.3fr 104px 32px; gap: 6px; align-items: center; }
 .standup-blocker { display: grid; grid-template-columns: 1.6fr 1fr 104px 32px; gap: 6px; align-items: center; }

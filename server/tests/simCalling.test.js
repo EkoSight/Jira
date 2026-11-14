@@ -681,6 +681,48 @@ test('C: the weekly calling review goes to administrators on Monday morning, onc
   assert.ok('complaints' in preview);
 });
 
+test('the screens get what they show: the lead\'s opt-out and recording choice, which recent calls have a recording, talk time by source, the share target', async (t) => {
+  if (skip(t)) return;
+  const lead = await newLead();
+  let page = ok(await api('GET', `/sales/leads/${lead.id}`, { token: tokens.isha }));
+  assert.deepEqual(page.calling, { opted_out: null, no_messages: false, do_not_record: false });
+  ok(await api('POST', `/sales/leads/${lead.id}/do-not-record`, { token: tokens.isha, body: { value: true } }));
+  ok(await api('POST', '/sales/calls/complaint', { token: tokens.isha, body: { lead_id: lead.id, what_they_said: 'Too many calls' } }), 201);
+  page = ok(await api('GET', `/sales/leads/${lead.id}`, { token: tokens.isha }));
+  assert.equal(page.calling.do_not_record, true);
+  assert.equal(page.calling.opted_out.complaint, true);
+
+  // "Which call is this?" sees which calls already have a recording, and which are not to be recorded
+  const other = await newLead();
+  const s = ok(await start(other), 201);
+  const recent = ok(await api('GET', '/sales/calls/recent', { token: tokens.isha })).calls.find((c) => c.id === s.call.id);
+  assert.equal(recent.has_recording, false);
+  assert.equal(recent.do_not_record, false);
+
+  // talk time is split by where it came from: never measured and typed added up silently
+  ok(await api('POST', `/sales/leads/${other.id}/call-status`, {
+    token: tokens.isha, body: { status_id: await statusId('busy'), call_id: s.call.id, duration_sec: 120, duration_source: 'ESTIMATED', request_id: rid('est') },
+  }));
+  const typed = await newLead();
+  ok(await api('POST', `/sales/leads/${typed.id}/call-status`, { token: tokens.isha, body: { status_id: await statusId('busy'), duration_sec: 60, request_id: rid('typed') } }));
+  const report = ok(await api('GET', '/sales/reports/calling', { token: tokens.admin, query: undefined }));
+  const isha = report.people.find((p) => p.id === ids.isha);
+  assert.ok(isha.talk_estimated_seconds >= 120, JSON.stringify(isha));
+  assert.ok(isha.talk_typed_seconds >= 60);
+  assert.equal(isha.talk_seconds, isha.talk_measured_seconds + isha.talk_typed_seconds + isha.talk_estimated_seconds, 'the parts add up to the total');
+
+  // the phone's setup is told how its dialler records
+  const reg = ok(await api('POST', '/sales/calling/devices/register', { token: tokens.isha, body: { install_id: 'screens-phone-01', info: { maker: 'motorola', dialler_package: 'com.google.android.dialer' } } }), 201);
+  assert.deepEqual(reg.recording_mode, { mode: 'SHARE_BY_HAND', confirmed: false });
+
+  // the installed app accepts recordings shared from the phone
+  const res = await fetch(`${baseUrl}/manifest.webmanifest`);
+  const manifest = await res.json();
+  assert.equal(manifest.share_target.action, '/share-recording');
+  assert.equal(manifest.share_target.method, 'POST');
+  assert.equal(manifest.share_target.params.files[0].name, 'recording');
+});
+
 test('the call length of an AMR recording is counted from its frames; migration 036 run again changes no existing call', async (t) => {
   if (skip(t)) return;
   const frames = Buffer.alloc(250 * 32);

@@ -545,7 +545,14 @@ export async function callingReport(input, scope) {
   const { rows: people } = await query(
     `SELECT u.id, u.full_name, COUNT(c.id)::int AS calls,
             COUNT(c.id) FILTER (WHERE c.status = 'COMPLETED' AND COALESCE(c.outcome, '') NOT IN ('NO_ANSWER', 'BUSY', 'WRONG_NUMBER'))::int AS connected,
-            COUNT(DISTINCT c.lead_id)::int AS leads_called, COALESCE(SUM(c.duration_sec), 0)::int AS talk_seconds
+            COUNT(DISTINCT c.lead_id)::int AS leads_called, COALESCE(SUM(c.duration_sec), 0)::int AS talk_seconds,
+            -- talk time by where it came from, never mixed silently: measured by the phone or the recording
+            -- (and a connected provider's own figure), typed or corrected by a person, or estimated
+            COALESCE(SUM(COALESCE(c.talk_sec, c.duration_sec)) FILTER (WHERE c.duration_source IN ('DEVICE_LOG', 'RECORDING')
+              OR (c.duration_source IS NULL AND c.provider NOT IN ('manual', 'device'))), 0)::int AS talk_measured_seconds,
+            COALESCE(SUM(COALESCE(c.talk_sec, c.duration_sec)) FILTER (WHERE c.duration_source IN ('TYPED', 'CORRECTED')
+              OR (c.duration_source IS NULL AND c.provider IN ('manual', 'device'))), 0)::int AS talk_typed_seconds,
+            COALESCE(SUM(COALESCE(c.talk_sec, c.duration_sec)) FILTER (WHERE c.duration_source = 'ESTIMATED'), 0)::int AS talk_estimated_seconds
        FROM crm_calls c JOIN crm_leads l ON l.id = c.lead_id JOIN users u ON u.id = c.agent_user_id
       WHERE ${b.lead} AND ${b.inRange('c.started_at')} AND c.voided_at IS NULL
       GROUP BY u.id, u.full_name ORDER BY calls DESC, u.full_name`,

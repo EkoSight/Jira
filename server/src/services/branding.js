@@ -255,6 +255,13 @@ export async function manifest(prefix) {
       { src: b.icons['icon-512.png'], sizes: '512x512', type: 'image/png', purpose: 'any' },
       { src: b.icons['maskable-512.png'], sizes: '512x512', type: 'image/png', purpose: 'maskable' },
     ],
+    // a call recording shared from the phone's own recordings opens "Which call is this?"
+    share_target: {
+      action: '/share-recording',
+      method: 'POST',
+      enctype: 'multipart/form-data',
+      params: { files: [{ name: 'recording', accept: ['audio/*', '.m4a', '.amr', '.3gp', '.3ga', '.aac', '.mp3', '.ogg', '.opus', '.wav'] }] },
+    },
     shortcuts: [
       { name: 'My tasks', short_name: 'My tasks', url: '/my-tasks' },
       { name: 'Board', short_name: 'Board', url: '/board' },

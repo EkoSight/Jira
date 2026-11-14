@@ -3,6 +3,7 @@ import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Field, Icon, Modal } from './ui.jsx';
 import { CONTACT_ROLES, PREFERRED_CHANNELS, ROLE_LABEL } from '../lib/crm.js';
+import { CallAction } from './sales/PhoneCall.jsx';
 
 /**
  * The people at the organization.
@@ -14,16 +15,19 @@ import { CONTACT_ROLES, PREFERRED_CHANNELS, ROLE_LABEL } from '../lib/crm.js';
 
 const CHANNEL_LINK = {
   EMAIL: (c) => (c.email ? `mailto:${c.email}` : null),
-  PHONE: (c) => (c.phone ? `tel:${c.phone.replace(/\s/g, '')}` : null),
   WHATSAPP: (c) => (c.whatsapp ? `https://wa.me/${c.whatsapp.replace(/\D/g, '')}` : null),
   LINKEDIN: (c) => c.linkedin_url || null,
 };
 
-/** Opens the channel this person actually answers on. Nothing is sent for them. */
-function ChannelLinks({ contact }) {
+/**
+ * Opens the channel this person actually answers on. Nothing is sent for them.
+ * A phone number is the Call button: the call is recorded on this person and
+ * described afterwards.
+ */
+function ChannelLinks({ contact, accountId }) {
   const links = [
     ['EMAIL', 'link', contact.email],
-    ['PHONE', 'bell', contact.phone],
+    ['PHONE', 'phone', contact.phone],
     ['WHATSAPP', 'sound', contact.whatsapp],
     ['LINKEDIN', 'user', contact.linkedin_url],
   ].filter(([, , value]) => value);
@@ -33,6 +37,14 @@ function ChannelLinks({ contact }) {
   return (
     <div className="row wrap" style={{ gap: 6 }}>
       {links.map(([channel, icon, value]) => {
+        if (channel === 'PHONE') {
+          return (
+            <span key={channel} className={`row${contact.preferred_channel === channel ? ' is-preferred-call' : ''}`} style={{ gap: 4 }}
+              title={contact.preferred_channel === channel ? 'Prefers calls' : undefined}>
+              <CallAction phone={value} target={{ account_id: accountId, contact_id: contact.id }} label={contact.full_name} />
+            </span>
+          );
+        }
         const href = CHANNEL_LINK[channel]?.(contact);
         const preferred = contact.preferred_channel === channel;
         return (
@@ -339,7 +351,7 @@ export default function CrmPeople({ accountId, contacts, opportunities, canEdit,
                     {[contact.designation, contact.department, contact.location].filter(Boolean).join(' · ')}
                   </div>
                 )}
-                <div style={{ marginTop: 5 }}><ChannelLinks contact={contact} /></div>
+                <div style={{ marginTop: 5 }}><ChannelLinks contact={contact} accountId={accountId} /></div>
                 {contact.roles?.length > 0 && (
                   <div className="row wrap" style={{ gap: 5, marginTop: 6 }}>
                     {contact.roles.map((r) => (

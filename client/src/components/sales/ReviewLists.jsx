@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useToast } from '../../state/AppState.jsx';
 import { Badge, Field, Spinner } from '../ui.jsx';
-import { durationWords, exactTime, LOCATION_FIELDS } from '../../lib/crmWork.js';
+import { exactTime, LOCATION_FIELDS } from '../../lib/crmWork.js';
+import { lengthWords } from '../../lib/phoneCalls.js';
 import { CallDialog } from './LeadWork.jsx';
 
 const VERDICT = {
@@ -44,6 +45,26 @@ export function CallReview() {
           <div><button type="button" className="btn btn-sm btn-primary" disabled={busy || (!form.leads.trim() && !form.since)} onClick={run}>{busy ? 'Looking…' : 'Build the list'}</button></div>
         </div>
       </section>
+      {data?.mismatches?.length > 0 && (
+        <section className="card">
+          <div className="card-head"><h3>Outcome and phone disagree ({data.mismatches.length})</h3><span className="small muted">Both are kept. Nothing is changed here.</span></div>
+          <div className="card-pad table-scroll">
+            <table className="data-table">
+              <thead><tr><th>Call</th><th>When</th><th>Lead</th><th>By</th><th>Saved as</th><th>The phone said</th></tr></thead>
+              <tbody>{data.mismatches.map((m) => (
+                <tr key={m.call_id}>
+                  <td><button type="button" className="btn-link tnum" onClick={() => setOpen(m.call_id)}>Call #{m.call_id}</button></td>
+                  <td className="tnum nowrap">{exactTime(m.started_at)}</td>
+                  <td><Link to={`/sales/leads/${m.lead_id}`}>Lead {m.lead_id}</Link></td>
+                  <td>{m.agent_name || '—'}</td>
+                  <td>{String(m.outcome || '').toLowerCase().replace(/_/g, ' ')}</td>
+                  <td className="small">{m.connected ? `Connected · ${lengthWords(m.talk_sec, m.duration_source)}` : 'Nobody answered'}<div className="muted">{m.advice}</div></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        </section>
+      )}
       {data && (
         <section className="card">
           <div className="card-head"><h3>{data.groups.length} group{data.groups.length === 1 ? '' : 's'} to look at</h3><span className="small muted">{data.entries.length} entries read · {exactTime(data.generated_at)}</span></div>
@@ -67,7 +88,7 @@ export function CallReview() {
                           <td>{e.call_id ? <button type="button" className="btn-link tnum" onClick={() => setOpen(e.call_id)}>Call #{e.call_id}</button> : <span className="muted">Timeline entry {e.activity_id}</span>}</td>
                           <td className="tnum nowrap">{exactTime(e.created_at)}</td>
                           <td>{String(e.outcome || '').toLowerCase().replace(/_/g, ' ')}</td>
-                          <td className="num tnum">{durationWords(e.duration_sec)}</td>
+                          <td className="num tnum">{lengthWords(e.talk_sec ?? e.duration_sec, e.duration_source)}</td>
                           <td className="small">{e.notes_preview || <span className="muted">none</span>}</td>
                           <td className="small">{e.recorded_via}{e.request_id ? ' · with a request id' : ''}</td>
                           <td>{e.counted ? 'Yes' : 'No'}</td>

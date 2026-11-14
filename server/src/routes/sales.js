@@ -194,7 +194,7 @@ router.post('/leads', requirePermission('crm.create'), asyncHandler(async (req, 
 router.get('/leads/:id', asyncHandler(async (req, res) => {
   const lead = await visibleLead(req, id(req.params.id));
   const models = await scoringModels();
-  const [timeline, routing, followups, duplicates, calls, messages] = await Promise.all([
+  const [timeline, routing, followups, duplicates, calls, messages, optouts] = await Promise.all([
     leadTimeline(lead.id),
     leadRouting(lead.id),
     query(`${FOLLOWUP_SELECT} WHERE t.crm_lead_id = $1 AND t.followup_kind IS NOT NULL ORDER BY t.completed_at DESC NULLS FIRST, t.due_date`, [lead.id]),
@@ -208,6 +208,11 @@ router.get('/leads/:id', asyncHandler(async (req, res) => {
     query(`SELECT m.id, m.direction, m.kind, m.template_name, m.body, m.status, m.error_title, m.created_at, m.sent_at, m.delivered_at, m.read_at,
                   u.full_name AS agent_name
              FROM crm_wa_messages m LEFT JOIN users u ON u.id = m.agent_user_id WHERE m.lead_id = $1 ORDER BY m.created_at DESC`, [lead.id]),
+    // whether the number asked not to be called (or messaged): shown on the lead, enforced everywhere else
+    lead.phone_normalized
+      ? query(`SELECT channel, source, complaint, created_at FROM crm_optouts
+                WHERE address = $1 AND channel IN ('CALL', 'WHATSAPP') AND lifted_at IS NULL`, [lead.phone_normalized])
+      : { rows: [] },
   ]);
   const scored = scoreLead(lead, models[lead.category]);
   const canRecordings = hasPermission(req.currentUser, 'crm.recordings');
@@ -221,6 +226,11 @@ router.get('/leads/:id', asyncHandler(async (req, res) => {
     messages: messages.rows,
     score: scored,
     can: { edit: canWorkLead(req.currentUser, lead), assign: hasPermission(req.currentUser, 'crm.assign'), route: hasPermission(req.currentUser, 'crm.routing') },
+    calling: {
+      opted_out: optouts.rows.find((o) => o.channel === 'CALL') || null,
+      no_messages: optouts.rows.some((o) => o.channel === 'WHATSAPP'),
+      do_not_record: lead.do_not_record === true,
+    },
   });
 }));
 

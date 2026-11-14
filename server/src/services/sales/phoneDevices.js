@@ -120,7 +120,8 @@ export async function registerDevice({ actor, installId, info = {}, assetLabel =
       action: 'PHONE_SIGNED_IN', entityType: 'DEVICE', entityId: device.id, actorId: actor.id,
       summary: [device.maker, device.model, device.asset_label].filter(Boolean).join(' · ') || `Phone #${device.id}`,
     });
-    return { device: { id: device.id, install_id: device.install_id }, token };
+    // how this phone's dialler records (and where, once an administrator confirmed it), for the setup screen
+    return { device: { id: device.id, install_id: device.install_id }, token, recording_mode: await recordingModeFor(device.dialler_package, client) };
   });
 }
 

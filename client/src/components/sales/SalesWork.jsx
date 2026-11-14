@@ -10,6 +10,7 @@ import {
   CallStatusBadge, CategoryBadge, DestinationBadge, DueBadge, FollowUpActions, LeadFieldInputs, LeadStatusBadge, Stars,
 } from './parts.jsx';
 import { WorkQueue } from './WorkQueue.jsx';
+import { CallAction } from './PhoneCall.jsx';
 import { LocationFields, emptyLocation } from './LeadWork.jsx';
 import { INDIAN_STATES, NOT_PROVIDED, exactTime, pinProblem } from '../../lib/crmWork.js';
 
@@ -24,8 +25,10 @@ const BUCKETS = [
   ['done_today', 'Done today', 'good', null],
 ];
 
-function FollowUpRow({ task, onOpen, onCall }) {
+function FollowUpRow({ task, onOpen }) {
   const about = task.lead_name || task.opportunity_name || task.account_name;
+  const callTarget = task.crm_lead_id ? { lead_id: task.crm_lead_id } : task.opportunity_id ? { opportunity_id: task.opportunity_id }
+    : task.account_id ? { account_id: task.account_id } : null;
   const to = task.crm_lead_id ? `/sales/leads/${task.crm_lead_id}` : task.account_id ? `/accounts/${task.account_id}${task.opportunity_id ? `?deal=${task.opportunity_id}` : ''}` : null;
   return (
     <div className="sales-row">
@@ -44,7 +47,7 @@ function FollowUpRow({ task, onOpen, onCall }) {
       </div>
       {!task.completed_at && (
         <div className="row" style={{ gap: 4 }}>
-          {task.phone && <a className="btn btn-sm btn-icon" href={`tel:${task.phone}`} title={`Call ${task.phone} (opens your dialler; log it after)`} onClick={onCall}><Icon name="sound" size={14} /></a>}
+          {task.phone && callTarget && <CallAction phone={task.phone} target={callTarget} label={about} showNumber={false} />}
           <button type="button" className="btn btn-sm" onClick={() => onOpen(task, 'complete')}>Done</button>
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpen(task, 'reschedule')}>Move</button>
         </div>
