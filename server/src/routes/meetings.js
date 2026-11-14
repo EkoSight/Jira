@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db/pool.js';
 import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
 import { requirePermission } from '../middleware/auth.js';
+import { replanRecord } from '../services/workspace/reminders.js';
+import '../services/workspace/rules.js';
 import {
   MEETING_KINDS, MEETING_MODES,
   canEditMeeting, createFollowUpTask, createPrepTasks, getMeeting, listMeetings,
@@ -11,6 +13,15 @@ import {
 } from '../services/meetings.js';
 
 const router = Router();
+
+// any change to a meeting re-plans its reminders (the reminder engine re-checks it before sending anyway)
+router.use((req, res, next) => {
+  const id = /^\/(\d+)/.exec(req.path)?.[1];
+  if (req.method !== 'GET' && id) {
+    res.on('finish', () => { if (res.statusCode < 300) replanRecord('MEETING', Number(id)); });
+  }
+  next();
+});
 
 async function mustEdit(user, id) {
   const row = await loadMeeting(id);

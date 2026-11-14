@@ -1,4 +1,5 @@
 import RemindMe from '../components/workspace/RemindMe.jsx';
+import { OriginPanel } from '../components/workspace/OriginPanel.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
@@ -284,6 +285,8 @@ export default function SalesLead() {
           </span>
         </div>
       </div>
+
+      <OriginPanel kind="lead" id={lead.id} canEdit={data.can.edit} accountId={lead.account_id || null} />
 
       {canCall && (
         <section className="card" id="call-outcome" aria-labelledby="call-outcome-title">

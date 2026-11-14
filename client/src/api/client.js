@@ -183,6 +183,7 @@ export const api = {
   get: (path, params) => request('GET', `${path}${qs(params)}`),
   post: (path, body) => request('POST', path, body || {}),
   put: (path, body) => request('PUT', path, body || {}),
+  patch: (path, body) => request('PATCH', path, body || {}),
   del: (path, body) => request('DELETE', path, body),
   form: (path, form, method = 'POST') => formRequest(method, path, form),
   url: (path, params) => `${BASE}${path}${qs(params)}`,

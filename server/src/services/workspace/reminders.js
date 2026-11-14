@@ -398,7 +398,9 @@ export async function sendDueOccurrences(now = new Date(), { limit = 300 } = {})
       let recipient = u;
       let coverNote = null;
       const { away } = await awayAt([o.recipient_id], now, ws.timezone);
-      const off = away.get(o.recipient_id);
+      // leave and holidays hold reminders back; a weekly day off does not (these rules count calendar days)
+      const off0 = away.get(o.recipient_id);
+      const off = off0 && off0.code !== 'WEEKLY_OFF' ? off0 : null;
       if (off) {
         const cover = rule.coverable && (await wantsCover(client, o.recipient_id)) ? await coverPerson(client, o) : null;
         if (cover && await canSeeRecord(cover, o.entity_type, o.entity_id)) {

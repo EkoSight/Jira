@@ -8,7 +8,7 @@
  */
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncHandler, badRequest, forbidden } from '../lib/errors.js';
+import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
 import { requirePermission } from '../middleware/auth.js';
 import { hasPermission } from '../lib/permissions.js';
 import { getSettings, updateSetting } from '../services/settings.js';
@@ -27,6 +27,12 @@ import { RULES, cancelMine, effectivePref, occurrencesFor, replanMine, replanRec
 import { addPersonalReminder, cancelPersonalReminder, changePersonalReminder, myPersonalReminders } from '../services/workspace/personal.js';
 import { ENTITY_TYPES } from '../services/workspace/access.js';
 import '../services/workspace/rules.js';
+import { cancelMeeting, confirmMeeting, createMeeting, myMeetings, proposeTime, recordOutcome, rescheduleMeeting } from '../services/workspace/meetings.js';
+import { canSeeRecord, recordLabel, timeZoneList, validTimeZone } from '../services/workspace/access.js';
+import { getMeeting } from '../services/meetings.js';
+import { recordAuditEvent } from '../services/audit.js';
+import { recordHistory, canWorkOnOpportunity } from '../services/opportunities.js';
+import { withTransaction } from '../db/pool.js';
 import { chatRoute, reminderSettings } from '../services/taskReminders.js';
 import { widgetAccess } from '../../../shared/workspaceWidgets.js';
 
@@ -267,16 +273,191 @@ router.get('/reminders/log', asyncHandler(async (req, res) => {
 
 /** D4: an optional personal timezone; empty means the company calendar's. */
 router.get('/timezones', asyncHandler(async (req, res) => {
-  res.json({ timezones: Intl.supportedValuesOf('timeZone'), company: (await workspaceSettings()).timezone });
+  const company = (await workspaceSettings()).timezone;
+  res.json({ timezones: timeZoneList([company]), company });
 }));
 router.put('/me/timezone', asyncHandler(async (req, res) => {
   const { timezone } = z.object({ timezone: z.string().max(64).nullable() }).parse(req.body || {});
-  if (timezone && !Intl.supportedValuesOf('timeZone').includes(timezone)) throw badRequest('Choose a timezone from the list');
+  if (timezone && !validTimeZone(timezone)) throw badRequest('Choose a timezone from the list');
   await query('UPDATE users SET timezone = $2 WHERE id = $1', [req.currentUser.id, timezone || null]);
   // dated reminders move to the new local time
   const { rows } = await query(`SELECT DISTINCT entity_type, entity_id FROM reminder_occurrences WHERE recipient_id = $1 AND status = 'PENDING'`, [req.currentUser.id]);
   for (const r of rows) await replanRecord(r.entity_type, r.entity_id);
   res.json({ timezone: timezone || null, replanned: rows.length });
+}));
+
+// ---------------------------------------------------------------- meetings (everyone: internal meetings need no CRM)
+
+router.get('/meetings', asyncHandler(async (req, res) => {
+  const data = await myMeetings(req.currentUser);
+  res.json({ ...data, counts: { upcoming: data.upcoming.length, to_arrange: data.to_arrange.length, awaiting_outcome: data.awaiting_outcome.length },
+    note: 'Meetings here are TaskFlow records. No invitation is sent to anyone, and nothing is added to a calendar.' });
+}));
+
+router.get('/meetings/:id', asyncHandler(async (req, res) => {
+  const mid = Number(req.params.id);
+  if (!(await canSeeRecord(req.currentUser, 'MEETING', mid))) throw notFound('Not available');
+  res.json({ meeting: await getMeeting(mid) });
+}));
+
+const meetingBody = z.object({
+  title: z.string().min(2).max(200),
+  objective: z.string().max(4000).nullable().optional(),
+  kind: z.string().max(20).optional(), mode: z.string().max(20).optional(),
+  status: z.enum(['SCHEDULED', 'TO_ARRANGE', 'TIME_PROPOSED']).optional(),
+  scheduled_at: z.string().nullable().optional(), proposed_at: z.string().nullable().optional(),
+  arrange_by: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  timezone: z.string().max(64).nullable().optional(), duration_min: z.number().int().min(5).max(1440).nullable().optional(),
+  location: z.string().max(500).nullable().optional(), meeting_url: z.string().max(500).nullable().optional(),
+  owner_user_id: z.number().int().positive().nullable().optional(), scheduling_owner_id: z.number().int().positive().nullable().optional(),
+  account_id: z.number().int().positive().nullable().optional(), opportunity_id: z.number().int().positive().nullable().optional(),
+  lead_id: z.number().int().positive().nullable().optional(),
+  participant_user_ids: z.array(z.number().int().positive()).max(50).optional(),
+  create_prep_tasks: z.boolean().optional(),
+});
+router.post('/meetings', asyncHandler(async (req, res) => {
+  res.status(201).json({ meeting: await createMeeting(req.currentUser, meetingBody.parse(req.body || {})) });
+}));
+router.post('/meetings/:id/propose', asyncHandler(async (req, res) => {
+  res.json({ meeting: await proposeTime(req.currentUser, Number(req.params.id), z.object({ proposed_at: z.string() }).parse(req.body || {})) });
+}));
+router.post('/meetings/:id/confirm', asyncHandler(async (req, res) => {
+  res.json({ meeting: await confirmMeeting(req.currentUser, Number(req.params.id), z.object({ scheduled_at: z.string(), timezone: z.string().max(64).nullable().optional() }).parse(req.body || {})) });
+}));
+router.post('/meetings/:id/reschedule', asyncHandler(async (req, res) => {
+  res.json({ meeting: await rescheduleMeeting(req.currentUser, Number(req.params.id), z.object({ scheduled_at: z.string(), reason: z.string().max(500).nullable().optional() }).parse(req.body || {})) });
+}));
+router.post('/meetings/:id/cancel', asyncHandler(async (req, res) => {
+  res.json({ meeting: await cancelMeeting(req.currentUser, Number(req.params.id), z.object({ reason: z.string().max(500) }).parse(req.body || {})) });
+}));
+router.post('/meetings/:id/outcome', asyncHandler(async (req, res) => {
+  const body = z.object({ status: z.enum(['COMPLETED', 'NO_SHOW', 'CANCELLED']), outcome: z.string().max(4000).nullable().optional(),
+    follow_up_title: z.string().max(200).nullable().optional(), follow_up_due: z.string().nullable().optional() }).parse(req.body || {});
+  res.json({ meeting: await recordOutcome(req.currentUser, Number(req.params.id), body) });
+}));
+
+// ---------------------------------------------------------------- where a lead or deal came from
+
+/**
+ * Original source and its detail, who introduced it, who created it and
+ * when, the owner and helpers, and every assignment with who made it. Kept
+ * separate; reassignment never rewrites the source or the record's age.
+ */
+async function originOf(user, kind, rid) {
+  if (!(await canSeeRecord(user, kind, rid))) throw notFound('Not available');
+  if (kind === 'LEAD') {
+    const { rows } = await query(
+      `SELECT l.id, l.created_at, l.referral, l.entry_channel, l.utm, l.landing_page, l.source_system, l.last_incoming_at, l.last_contacted_at,
+              l.owner_user_id, ow.full_name AS owner_name, cr.full_name AS created_by_name,
+              os.name AS original_source, s.name AS latest_source, oc.name AS original_campaign, c.name AS latest_campaign,
+              l.introduced_by_user_id, iu.full_name AS introduced_by_user_name, l.introduced_by_contact_id, ic.full_name AS introduced_by_contact_name
+         FROM crm_leads l
+         LEFT JOIN users ow ON ow.id = l.owner_user_id LEFT JOIN users cr ON cr.id = l.created_by
+         LEFT JOIN crm_sources os ON os.id = l.original_source_id LEFT JOIN crm_sources s ON s.id = l.source_id
+         LEFT JOIN crm_campaigns oc ON oc.id = l.original_campaign_id LEFT JOIN crm_campaigns c ON c.id = l.campaign_id
+         LEFT JOIN users iu ON iu.id = l.introduced_by_user_id LEFT JOIN account_contacts ic ON ic.id = l.introduced_by_contact_id
+        WHERE l.id = $1`, [rid],
+    );
+    const { rows: assigned } = await query(
+      `SELECT a.created_at, a.method, a.reason, f.full_name AS from_name, t.full_name AS to_name, ac.full_name AS by_name
+         FROM crm_assignments a LEFT JOIN users f ON f.id = a.from_user_id LEFT JOIN users t ON t.id = a.to_user_id LEFT JOIN users ac ON ac.id = a.actor_id
+        WHERE a.entity_type = 'LEAD' AND a.entity_id = $1 ORDER BY a.created_at`, [rid],
+    );
+    return { ...rows[0], assignments: assigned };
+  }
+  const { rows } = await query(
+    `SELECT o.id, o.created_at, o.owner_user_id, ow.full_name AS owner_name, cr.full_name AS created_by_name, s.name AS source, l.referral,
+            o.source_lead_id, o.introduced_by_user_id, iu.full_name AS introduced_by_user_name, o.introduced_by_contact_id, ic.full_name AS introduced_by_contact_name,
+            ARRAY(SELECT u.full_name FROM opportunity_collaborators oc JOIN users u ON u.id = oc.user_id WHERE oc.opportunity_id = o.id) AS helpers
+       FROM opportunities o
+       LEFT JOIN users ow ON ow.id = o.owner_user_id LEFT JOIN users cr ON cr.id = o.created_by
+       LEFT JOIN crm_sources s ON s.id = o.source_id LEFT JOIN crm_leads l ON l.id = o.source_lead_id
+       LEFT JOIN users iu ON iu.id = o.introduced_by_user_id LEFT JOIN account_contacts ic ON ic.id = o.introduced_by_contact_id
+      WHERE o.id = $1`, [rid],
+  );
+  const { rows: owners } = await query(
+    `SELECT h.created_at, h.from_value, h.to_value, h.reason, u.full_name AS by_name FROM opportunity_history h LEFT JOIN users u ON u.id = h.actor_id
+      WHERE h.opportunity_id = $1 AND h.field IN ('owner', 'owner_user_id') ORDER BY h.created_at`, [rid],
+  );
+  return { ...rows[0], assignments: owners };
+}
+
+router.get('/origin/:kind/:id', asyncHandler(async (req, res) => {
+  const kind = { lead: 'LEAD', deal: 'DEAL', application: 'APPLICATION' }[req.params.kind];
+  if (!kind) throw notFound('Not available');
+  res.json(await originOf(req.currentUser, kind === 'APPLICATION' ? 'DEAL' : kind, Number(req.params.id)));
+}));
+
+/** Who introduced it: a colleague or a contact. The free-text referral stays as it is. Every change is recorded. */
+router.put('/origin/:kind/:id', asyncHandler(async (req, res) => {
+  const kind = { lead: 'LEAD', deal: 'DEAL', application: 'DEAL' }[req.params.kind];
+  const rid = Number(req.params.id);
+  if (!kind || !(await canSeeRecord(req.currentUser, kind, rid))) throw notFound('Not available');
+  const body = z.object({
+    introduced_by_user_id: z.number().int().positive().nullable().optional(),
+    introduced_by_contact_id: z.number().int().positive().nullable().optional(),
+    reason: z.string().max(500).nullable().optional(),
+  }).parse(req.body || {});
+  if (body.introduced_by_user_id && body.introduced_by_contact_id) throw badRequest('Choose a colleague or a contact, not both');
+  const table = kind === 'LEAD' ? 'crm_leads' : 'opportunities';
+  const { rows } = await query(`SELECT x.*, ${kind === 'LEAD' ? 'NULL' : 'a.owner_user_id'} AS relationship_owner_id FROM ${table} x ${kind === 'LEAD' ? '' : 'JOIN accounts a ON a.id = x.account_id'} WHERE x.id = $1`, [rid]);
+  const row = rows[0];
+  const may = kind === 'LEAD'
+    ? row.owner_user_id === req.currentUser.id || row.created_by === req.currentUser.id || hasPermission(req.currentUser, 'crm.assign') || hasPermission(req.currentUser, 'crm.manage.any')
+    : hasPermission(req.currentUser, 'crm.activity.log') && await canWorkOnOpportunity(req.currentUser, row);
+  if (!may) throw forbidden('Only the people working on it can change where it came from');
+  const from = { user: row.introduced_by_user_id, contact: row.introduced_by_contact_id };
+  await withTransaction(async (client) => {
+    await client.query(`UPDATE ${table} SET introduced_by_user_id = $2, introduced_by_contact_id = $3, updated_at = now() WHERE id = $1`,
+      [rid, body.introduced_by_user_id || null, body.introduced_by_contact_id || null]);
+    const detail = { from, to: { user: body.introduced_by_user_id || null, contact: body.introduced_by_contact_id || null } };
+    await recordAuditEvent(client, { action: 'INTRODUCED_BY_CHANGED', entityType: kind === 'LEAD' ? 'LEAD' : 'OPPORTUNITY', entityId: rid, actorId: req.currentUser.id, reason: body.reason || null, detail });
+    if (kind === 'DEAL') await recordHistory(client, { opportunityId: rid, field: 'introduced_by', from: JSON.stringify(from), to: JSON.stringify(detail.to), actorId: req.currentUser.id, reason: body.reason || null });
+  });
+  res.json(await originOf(req.currentUser, kind, rid));
+}));
+
+// ---------------------------------------------------------------- a deal changing hands
+
+/**
+ * On a handover: the open tasks and meetings on the deal that belong to
+ * someone other than the new owner. Nothing moves until the person chooses.
+ */
+router.get('/handover-check', asyncHandler(async (req, res) => {
+  const oid = Number(req.query.opportunity_id);
+  const to = Number(req.query.to_user_id);
+  if (!(await canSeeRecord(req.currentUser, 'DEAL', oid))) throw notFound('Not available');
+  const { rows: tasks } = await query(
+    `SELECT t.id, t.ref, t.title, t.due_date, t.assignee_id, u.full_name AS assignee_name FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
+       LEFT JOIN users u ON u.id = t.assignee_id
+      WHERE t.opportunity_id = $1 AND t.is_archived = FALSE AND s.stage NOT IN ('done', 'cancelled') AND t.assignee_id IS DISTINCT FROM $2
+      ORDER BY t.due_date NULLS LAST`, [oid, to],
+  );
+  const { rows: meetings } = await query(
+    `SELECT m.id, m.title, m.status, m.scheduled_at, m.owner_user_id, u.full_name AS owner_name FROM crm_meetings m LEFT JOIN users u ON u.id = m.owner_user_id
+      WHERE m.opportunity_id = $1 AND m.status IN ('SCHEDULED', 'TO_ARRANGE', 'TIME_PROPOSED') AND m.owner_user_id IS DISTINCT FROM $2
+      ORDER BY m.scheduled_at NULLS FIRST`, [oid, to],
+  );
+  res.json({ tasks, meetings, note: 'Nothing is moved unless you choose it.' });
+}));
+
+router.post('/handover-reassign', asyncHandler(async (req, res) => {
+  const body = z.object({ opportunity_id: z.number().int().positive(), to_user_id: z.number().int().positive(),
+    task_ids: z.array(z.number().int().positive()).max(200).default([]), meeting_ids: z.array(z.number().int().positive()).max(200).default([]) }).parse(req.body || {});
+  const { rows } = await query('SELECT o.*, a.owner_user_id AS relationship_owner_id FROM opportunities o JOIN accounts a ON a.id = o.account_id WHERE o.id = $1', [body.opportunity_id]);
+  if (!rows[0] || !(await canSeeRecord(req.currentUser, 'DEAL', body.opportunity_id))) throw notFound('Not available');
+  if (!hasPermission(req.currentUser, 'task.assign') || !(await canWorkOnOpportunity(req.currentUser, rows[0]))) throw forbidden('You cannot reassign the work on this deal');
+  const { rows: active } = await query('SELECT id FROM users WHERE id = $1 AND is_active', [body.to_user_id]);
+  if (!active[0]) throw badRequest('Choose an active colleague');
+  const moved = await withTransaction(async (client) => {
+    // only the chosen ones, and only if they really belong to this deal
+    const t = await client.query(`UPDATE tasks SET assignee_id = $3, updated_at = now() WHERE id = ANY($1::int[]) AND opportunity_id = $2 AND is_archived = FALSE RETURNING id`, [body.task_ids, body.opportunity_id, body.to_user_id]);
+    const m = await client.query(`UPDATE crm_meetings SET owner_user_id = $3, updated_at = now() WHERE id = ANY($1::int[]) AND opportunity_id = $2 RETURNING id`, [body.meeting_ids, body.opportunity_id, body.to_user_id]);
+    await recordHistory(client, { opportunityId: body.opportunity_id, field: 'handover_work', to: `${t.rowCount} tasks, ${m.rowCount} meetings`, actorId: req.currentUser.id });
+    return { tasks: t.rows.map((r) => r.id), meetings: m.rows.map((r) => r.id) };
+  });
+  for (const mid of moved.meetings) await replanRecord('MEETING', mid);
+  res.json({ moved });
 }));
 
 // ---------------------------------------------------------------- templates and rollout (settings.manage)

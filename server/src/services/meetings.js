@@ -22,7 +22,9 @@ import { logActivity } from './crm.js';
 
 export const MEETING_KINDS = ['MEETING', 'DEMO', 'SITE_VISIT', 'WORKSHOP', 'REVIEW'];
 export const MEETING_MODES = ['VIRTUAL', 'IN_PERSON'];
-export const MEETING_STATUSES = ['SCHEDULED', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED'];
+export const MEETING_STATUSES = ['SCHEDULED', 'COMPLETED', 'CANCELLED', 'NO_SHOW', 'RESCHEDULED', 'TO_ARRANGE', 'TIME_PROPOSED'];
+/** Not yet booked: no confirmed time, never shown as an event. */
+export const UNCONFIRMED = new Set(['TO_ARRANGE', 'TIME_PROPOSED']);
 
 /** The statuses that mean it actually happened. */
 const HAPPENED = new Set(['COMPLETED']);
@@ -31,6 +33,8 @@ export const MEETING_SELECT = `
   SELECT m.*,
          a.name AS account_name,
          o.name AS opportunity_name,
+         COALESCE(l.organization_name, l.contact_name) AS lead_name,
+         so.full_name AS scheduling_owner_name,
          u.full_name AS owner_name, u.avatar_color AS owner_color,
          c.full_name AS created_by_name,
          (SELECT COUNT(*)::int FROM tasks t
@@ -53,7 +57,10 @@ export const MEETING_SELECT = `
              LEFT JOIN account_contacts pc ON pc.id = p.contact_id
             WHERE p.meeting_id = m.id), '[]'::json) AS participants
     FROM crm_meetings m
-    JOIN accounts a ON a.id = m.account_id
+    -- an internal meeting has no organisation; a meeting to arrange has no time yet
+    LEFT JOIN accounts a ON a.id = m.account_id
+    LEFT JOIN crm_leads l ON l.id = m.lead_id
+    LEFT JOIN users so ON so.id = m.scheduling_owner_id
     LEFT JOIN opportunities o ON o.id = m.opportunity_id
     LEFT JOIN users u ON u.id = m.owner_user_id
     LEFT JOIN users c ON c.id = m.created_by
@@ -61,13 +68,14 @@ export const MEETING_SELECT = `
 
 /** Adds what can be worked out but should never be stored. */
 export function decorateMeeting(row, now = Date.now()) {
-  const when = new Date(row.scheduled_at).getTime();
+  const when = row.scheduled_at ? new Date(row.scheduled_at).getTime() : null;
   return {
     ...row,
+    unconfirmed: UNCONFIRMED.has(row.status),
     happened: HAPPENED.has(row.status),
-    is_upcoming: row.status === 'SCHEDULED' && when >= now,
+    is_upcoming: row.status === 'SCHEDULED' && when !== null && when >= now,
     // scheduled, in the past, and nobody has said what came of it
-    awaiting_outcome: row.status === 'SCHEDULED' && when < now,
+    awaiting_outcome: row.status === 'SCHEDULED' && when !== null && when < now,
     was_rescheduled: row.reschedule_count > 0,
   };
 }
@@ -76,6 +84,7 @@ export const canEditMeeting = (user, row) =>
   hasPermission(user, 'crm.manage.any')
   || row.owner_user_id === user.id
   || row.created_by === user.id
+  || row.scheduling_owner_id === user.id
   || row.relationship_owner_id === user.id;
 
 export async function listMeetings(filters = {}) {
@@ -98,7 +107,7 @@ export async function listMeetings(filters = {}) {
 
   const { rows } = await query(
     `${MEETING_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY m.scheduled_at DESC LIMIT ${Math.min(Number(filters.limit) || 200, 500)}`,
+      ORDER BY m.scheduled_at DESC NULLS LAST, m.id DESC LIMIT ${Math.min(Number(filters.limit) || 200, 500)}`,
     params,
   );
   return rows.map((row) => decorateMeeting(row));
@@ -113,7 +122,7 @@ export async function getMeeting(id) {
 export async function loadMeeting(id) {
   const { rows } = await query(
     `SELECT m.*, a.owner_user_id AS relationship_owner_id, a.department_id, a.name AS account_name
-       FROM crm_meetings m JOIN accounts a ON a.id = m.account_id
+       FROM crm_meetings m LEFT JOIN accounts a ON a.id = m.account_id
       WHERE m.id = $1`,
     [id],
   );
@@ -160,7 +169,7 @@ const PREP_TEMPLATES = {
  * to appear on the next save.
  */
 export async function createPrepTasks(client, meeting, actor) {
-  if (meeting.prep_tasks_created) return [];
+  if (meeting.prep_tasks_created || !meeting.scheduled_at) return [];
 
   const titles = PREP_TEMPLATES[meeting.kind] || PREP_TEMPLATES.MEETING;
   const { rows: statusRows } = await client.query(
@@ -261,6 +270,8 @@ export async function createFollowUpTask(client, meeting, { title, assigneeId, d
  * not. That is what keeps the follow-up clock honest.
  */
 export async function logMeetingActivity(client, meeting, { actorId, subject, body, outcome }) {
+  // an internal meeting is not part of any organisation's history
+  if (!meeting.account_id) return null;
   return logActivity(client, {
     accountId: meeting.account_id,
     opportunityId: meeting.opportunity_id ?? null,

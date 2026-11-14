@@ -120,7 +120,11 @@ async function dealItems(user, ctx) {
     if (o.pipeline_category === 'APPLICATIONS') continue; // applications have their own rules (Part D)
     const taskOpen = o.task_id && !['done', 'cancelled'].includes(o.task_stage);
     const related = taskOpen ? [{ type: 'TASK', id: o.task_id }] : [];
-    if (o.status === 'ACTIVE' && o.stage_kind === 'open') {
+    // the task that tracked the next action is done: the deal needs its next one (it is never closed by this)
+    const trackedDone = o.status === 'ACTIVE' && o.stage_kind === 'open' && o.task_id && ['done', 'cancelled'].includes(o.task_stage);
+    if (trackedDone) {
+      out.push(item({ key: `DEAL_NO_NEXT_ACTION:DEAL:${o.id}:after${o.task_id}`, kind: 'DEAL_NO_NEXT_ACTION', title: 'Choose the next action', reason: `"${o.next_step}" is done; nothing is planned after it`, record, tier: 5, when: {}, action: { label: 'Set the next action', kind: 'OPEN' } }));
+    } else if (o.status === 'ACTIVE' && o.stage_kind === 'open') {
       const gaps = nextActionGaps(o, { todayDate: ctx.c.today });
       const due = dayOf(o.next_step_due);
       if (gaps.some((g) => g.kind === 'no_next_action')) {

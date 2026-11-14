@@ -90,7 +90,9 @@ export default function Layout({ children }) {
   // My workspace as home: "/" is My workspace and the overview keeps its own
   // entry; for everyone else the navigation is exactly as before
   const nav = user?.workspace_home
-    ? [{ to: '/', label: 'My workspace', icon: 'dashboard', end: true }, { to: '/overview', label: 'Overview', icon: 'dashboard' }, ...NAV.slice(1)]
+    ? [{ to: '/', label: 'My workspace', icon: 'dashboard', end: true }, { to: '/overview', label: 'Overview', icon: 'dashboard' }, ...NAV.slice(1, 3),
+      { to: '/meetings', label: 'Meetings', icon: 'clock' },
+      { to: '/applications', label: 'Applications', icon: 'target', permission: 'crm.view', module: 'crm' }, ...NAV.slice(3)]
     : NAV;
   const visible = nav.filter(allowed);
   const mobileVisible = MOBILE_PATHS.map((path) => nav.find((item) => item.to === path)).filter(Boolean).filter(allowed);

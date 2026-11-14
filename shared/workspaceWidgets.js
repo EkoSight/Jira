@@ -61,7 +61,7 @@ export const WIDGET_TYPES = {
   },
   meetings: {
     version: 1, title: 'Meetings', module: null, anyOf: [], widths: ['full', 'half'],
-    settings: ['title', 'density', 'rows'], scopes: ['mine'], endpoint: '/meetings/mine', drill: '/meetings',
+    settings: ['title', 'density', 'rows'], scopes: ['mine'], endpoint: '/workspace/meetings', drill: '/meetings',
     description: 'Confirmed meetings coming up, and meetings still to arrange',
   },
   applications: {

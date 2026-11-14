@@ -93,3 +93,14 @@ export async function recordLabel(type, id) {
     default: return null;
   }
 }
+
+/** Whether a timezone name is one the platform knows (aliases such as Asia/Kolkata included). */
+export function validTimeZone(tz) {
+  if (!tz || typeof tz !== 'string' || tz.length > 64) return false;
+  try { new Intl.DateTimeFormat('en', { timeZone: tz }); return true; } catch { return false; }
+}
+
+/** The list offered to people: the platform's names, with the company's own spelling included. */
+export function timeZoneList(extra = []) {
+  return [...new Set([...Intl.supportedValuesOf('timeZone'), 'Asia/Kolkata', ...extra.filter(Boolean)])].sort();
+}

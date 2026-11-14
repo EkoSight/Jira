@@ -247,6 +247,59 @@ function DealsWidget({ widget, refreshKey }) {
   );
 }
 
+function MeetingsWidget({ widget, refreshKey }) {
+  const state = useWidgetData(() => api.get('/workspace/meetings'), [refreshKey]);
+  const d = state.data;
+  const rows = rowsOf(widget);
+  const total = d ? d.upcoming.length + d.to_arrange.length : null;
+  return (
+    <WidgetFrame widget={widget} state={state} count={total} drill="/meetings"
+      empty={d && !total ? 'No meetings coming up and none to arrange. Add a meeting' : null}>
+      {d && d.upcoming.length > 0 && <div className="ws-tier">Confirmed</div>}
+      <ul className="ws-list">
+        {d?.upcoming.slice(0, rows).map((m) => (
+          <li key={m.id}><Link className="ws-row" to={`/meetings?meeting=${m.id}`}><span className="grow truncate">{m.title} <span className="ws-reason">· {m.account_name || m.opportunity_name || 'Internal'}</span></span><span className="small muted">{whenWords({ at: m.scheduled_at })}</span></Link></li>
+        ))}
+      </ul>
+      {d && d.to_arrange.length > 0 && <div className="ws-tier">To arrange or time proposed</div>}
+      <ul className="ws-list">
+        {d?.to_arrange.slice(0, rows).map((m) => (
+          <li key={m.id}><Link className="ws-row" to={`/meetings?meeting=${m.id}`}><span className="grow truncate">{m.title}</span><Badge tone="warning">{m.status === 'TIME_PROPOSED' ? 'Time proposed' : m.arrange_by ? `By ${String(m.arrange_by).slice(0, 10)}` : 'No date'}</Badge></Link></li>
+        ))}
+      </ul>
+      {d && d.awaiting_outcome.length > 0 && <div className="small muted ws-more"><Link to="/meetings">{d.awaiting_outcome.length} past meeting{d.awaiting_outcome.length === 1 ? '' : 's'} with no outcome recorded</Link></div>}
+    </WidgetFrame>
+  );
+}
+
+function ApplicationsWidget({ widget, refreshKey }) {
+  const scope = widget.config?.scope || 'mine';
+  const state = useWidgetData(() => api.get('/applications', { scope }), [scope, refreshKey]);
+  const d = state.data;
+  const rows = rowsOf(widget);
+  const preparing = d?.applications.filter((a) => a.group === 'PREPARING') || [];
+  const waiting = d?.applications.filter((a) => a.group === 'SUBMITTED') || [];
+  const total = d ? d.counts.PREPARING + d.counts.SUBMITTED : null;
+  const line = (a) => (
+    <li key={a.id}><Link className="ws-row" to={`/applications/${a.id}`}>
+      <span className="grow truncate">{a.name} <span className="ws-reason">· {a.account_name}</span></span>
+      {a.group === 'PREPARING' ? (a.deadline ? <Badge tone={a.deadline.words.state === 'PASSED' ? 'critical' : a.deadline.words.state === 'TODAY' ? 'warning' : 'neutral'}>{a.deadline.words.state === 'PASSED' ? 'Deadline passed' : a.deadline.words.text.split(' · ').pop()}</Badge> : <Badge>No deadline</Badge>)
+        : a.status_check ? <Badge tone="warning">Check {String(a.status_check.date)}</Badge> : <Badge>Update recorded</Badge>}
+    </Link></li>
+  );
+  return (
+    <WidgetFrame widget={widget} state={state} count={total} drill={`/applications?scope=${scope}`} scope={SCOPE_LABEL[scope]}
+      empty={d && !total ? 'No open applications. Add an application to track its deadline' : null}>
+      {preparing.length > 0 && <div className="ws-tier"><Link to={`/applications?group=PREPARING&scope=${scope}`}>Preparing · {d.counts.PREPARING}</Link></div>}
+      <ul className="ws-list">{preparing.slice(0, rows).map(line)}</ul>
+      {waiting.length > 0 && <div className="ws-tier"><Link to={`/applications?group=SUBMITTED&scope=${scope}`}>Submitted, waiting · {d.counts.SUBMITTED}</Link></div>}
+      <ul className="ws-list">{waiting.slice(0, rows).map(line)}</ul>
+    </WidgetFrame>
+  );
+}
+
+registerWidget('meetings', MeetingsWidget);
+registerWidget('applications', ApplicationsWidget);
 registerWidget('summary', SummaryWidget);
 registerWidget('attention', AttentionWidget);
 registerWidget('decisions', DecisionsWidget);

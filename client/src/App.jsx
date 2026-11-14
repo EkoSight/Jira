@@ -9,6 +9,8 @@ import Dashboard from './pages/Dashboard.jsx';
 import Home from './pages/Home.jsx';
 import MyWorkspace from './pages/MyWorkspace.jsx';
 import WorkspaceList from './pages/WorkspaceList.jsx';
+import Applications, { ApplicationDetail } from './pages/Applications.jsx';
+import Meetings from './pages/Meetings.jsx';
 import Board from './pages/Board.jsx';
 import MyTasks from './pages/MyTasks.jsx';
 import Review from './pages/Review.jsx';
@@ -56,6 +58,23 @@ function Shell() {
         <Route path="/overview" element={<Dashboard />} />
         <Route path="/workspace" element={<MyWorkspace />} />
         <Route path="/workspace/:list" element={<WorkspaceList />} />
+        <Route path="/meetings" element={<Meetings />} />
+        <Route
+          path="/applications"
+          element={
+            <Protected permission="crm.view">
+              <Applications />
+            </Protected>
+          }
+        />
+        <Route
+          path="/applications/:id"
+          element={
+            <Protected permission="crm.view">
+              <ApplicationDetail />
+            </Protected>
+          }
+        />
         <Route path="/board" element={<Board />} />
         <Route path="/my-tasks" element={<MyTasks />} />
         <Route path="/review" element={<Review />} />

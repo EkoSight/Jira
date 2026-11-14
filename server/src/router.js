@@ -31,6 +31,7 @@ import leaveRoutes from './routes/leave.js';
 import payrollRoutes from './routes/payroll.js';
 import standupRoutes from './routes/standup.js';
 import workspaceRoutes from './routes/workspace.js';
+import applicationRoutes from './routes/applications.js';
 import { requireAttendance } from './services/attendance.js';
 import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
 import marketingRoutes from './routes/marketing.js';
@@ -125,6 +126,8 @@ export function createTaskFlowRouter() {
   // deals live alongside the organizations that hold them, behind the same gate
   router.use('/opportunities', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), opportunityRoutes);
   router.use('/meetings', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), meetingRoutes);
+  // applications to programmes, grants and tenders: deals in their own pipeline
+  router.use('/applications', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), applicationRoutes);
   router.use('/engagements', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), engagementRoutes);
   router.use('/resources', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), resourceRoutes);
   // the week's record, weekly reviews and imported correspondence

@@ -118,13 +118,16 @@ export async function logLeadActivity(client, leadId, {
   if (!rows[0]) return null;
   const twoWay = (direction === 'INBOUND') || (['CALL', 'MEETING', 'VISIT', 'DEMO'].includes(type) && outcome === 'COMPLETED');
   const attempt = direction === 'OUTBOUND';
+  // last incoming: only when they reached us. Our calls, answered or not, never move it
+  const incoming = direction === 'INBOUND';
   await client.query(
     `UPDATE crm_leads SET last_activity_at = GREATEST(COALESCE(last_activity_at, $2), $2),
             last_contacted_at = CASE WHEN $3 THEN GREATEST(COALESCE(last_contacted_at, $2), $2) ELSE last_contacted_at END,
+            last_incoming_at = CASE WHEN $5 THEN GREATEST(COALESCE(last_incoming_at, $2), $2) ELSE last_incoming_at END,
             first_response_at = CASE WHEN ($3 OR $4) AND first_response_at IS NULL THEN $2 ELSE first_response_at END,
             status = CASE WHEN ($3 OR $4) AND status = 'NEW' THEN 'CONTACTED' ELSE status END
       WHERE id = $1`,
-    [leadId, rows[0].occurred_at, twoWay, attempt],
+    [leadId, rows[0].occurred_at, twoWay, attempt, incoming],
   );
   return rows[0];
 }

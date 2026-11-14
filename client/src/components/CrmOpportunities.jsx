@@ -1,3 +1,4 @@
+import { HandoverCheck } from './workspace/OriginPanel.jsx';
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import DealSales from './sales/DealSales.jsx';
@@ -350,6 +351,8 @@ function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState({ owner_user_id: '', escalation_owner_id: '', reason: '' });
+  const [handingTo, setHandingTo] = useState(null);
+  const { users } = useRefData();
   const [helper, setHelper] = useState({ user_id: '', role: '' });
   const [saving, setSaving] = useState(false);
   const [escalating, setEscalating] = useState(false);
@@ -383,6 +386,8 @@ function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
       await api.updateOpportunity(opportunity.id, body);
       toast.success('Saved — anyone newly named has been told');
       setEditing(false);
+      // the deal changed hands: offer (never force) to move the work others still hold on it
+      if (body.owner_user_id) setHandingTo(body.owner_user_id);
       onChanged();
     } catch (err) {
       toast.error(err);
@@ -426,6 +431,7 @@ function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
 
   return (
     <div className="stack-sm">
+      {handingTo && <HandoverCheck opportunityId={opportunity.id} toUserId={handingTo} toName={users.find((u) => u.id === handingTo)?.full_name || 'the new owner'} onClose={() => setHandingTo(null)} />}
       <div className="row-between wrap">
         <span className="stat-label">People</span>
         {canEdit && !editing && (
