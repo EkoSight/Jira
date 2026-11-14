@@ -6,6 +6,7 @@ import { BrandLockup, BrandMark, introOnce } from './BrandMark.jsx';
 import { Avatar, Icon, Modal, PageErrorBoundary } from './ui.jsx';
 import TaskDialog from './TaskDialog.jsx';
 import BellItem from './workspace/BellItem.jsx';
+import { setDisplayTimezone } from '../lib/workspace.js';
 import { AttendanceGate, SignOutReminder } from './Attendance.jsx';
 import { useAttendance } from '../state/attendance.jsx';
 import {
@@ -95,6 +96,8 @@ export default function Layout({ children }) {
       { to: '/applications', label: 'Applications', icon: 'target', permission: 'crm.view', module: 'crm' }, ...NAV.slice(3)]
     : NAV;
   const visible = nav.filter(allowed);
+  // dates in My workspace are shown in the person's timezone, else the company calendar's
+  useEffect(() => { setDisplayTimezone(user?.timezone || settings?.organisation?.timezone || 'Asia/Kolkata'); }, [user?.timezone, settings?.organisation?.timezone]);
   const mobileVisible = MOBILE_PATHS.map((path) => nav.find((item) => item.to === path)).filter(Boolean).filter(allowed);
 
   const [soundOn, setSoundOn] = useState(soundEnabled());

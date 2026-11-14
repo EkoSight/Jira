@@ -104,7 +104,7 @@ function TaskRows({ tasks, onOpenTask }) {
           <li key={t.id}>
             <button type="button" className="ws-row" onClick={() => onOpenTask?.(t.id)}>
               <span className="grow truncate"><span className="task-ref">{t.ref}</span> {t.title}</span>
-              <Badge tone={h.tone}>{h.label}</Badge>
+              <Badge tone={h.tone}>{h.text}</Badge>
             </button>
           </li>
         );

@@ -70,7 +70,17 @@ export function relativeDays(n) {
  * with no time stays a date (never given a made-up time); an instant is shown
  * in the person's timezone, with its time.
  */
-export function whenWords({ date = null, at = null }, { timeZone = 'Asia/Kolkata', now = new Date() } = {}) {
+/** The timezone dates are shown in: the person's own, else the company calendar's (set by the shell). */
+let displayZone = 'Asia/Kolkata';
+export const setDisplayTimezone = (tz) => { if (tz) displayZone = tz; };
+export const displayTimezone = () => displayZone;
+
+/** "14 Nov, 09:00" in the display timezone (for logs and lists). */
+export const shortDateTime = (at, timeZone = displayZone) => new Intl.DateTimeFormat('en-GB', {
+  timeZone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+}).format(new Date(at));
+
+export function whenWords({ date = null, at = null }, { timeZone = displayZone, now = new Date() } = {}) {
   const today = localDay(now, timeZone);
   if (date) {
     const day = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' }).format(new Date(`${date}T00:00:00Z`));
@@ -84,7 +94,7 @@ export function whenWords({ date = null, at = null }, { timeZone = 'Asia/Kolkata
 }
 
 /** Today's date in words for the header: "Saturday 14 November 2026". */
-export const longDate = (now = new Date(), timeZone = 'Asia/Kolkata') => new Intl.DateTimeFormat('en-GB', {
+export const longDate = (now = new Date(), timeZone = displayZone) => new Intl.DateTimeFormat('en-GB', {
   timeZone, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
 }).format(now);
 

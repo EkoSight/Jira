@@ -9,6 +9,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { Spinner } from '../components/ui.jsx';
 import { useWidgetData } from '../components/workspace/Widgets.jsx';
+import { shortDateTime } from '../lib/workspace.js';
 import { AttentionRow, DealRow, DecisionRow, SnoozeDialog, WaitingRow } from '../components/workspace/RecordWidgets.jsx';
 
 const ATTENTION_VIEWS = [['today', 'Today & overdue'], ['coming', 'Coming up'], ['overdue', 'Overdue'], ['due_today', 'Due today'], ['decisions', 'Decisions'], ['all', 'All']];
@@ -44,13 +45,13 @@ export default function WorkspaceList() {
         </div>
       </div>
       {list === 'attention' && (
-        <div className="ws-tabs" role="tablist" aria-label="Show" style={{ padding: 0 }}>
+        <div className="ws-tabs" role="group" aria-label="Show" style={{ padding: 0 }}>
           {ATTENTION_VIEWS.map(([k, label]) => (
-            <button key={k} type="button" role="tab" aria-selected={!snoozed && view === k} className={`kind-chip${!snoozed && view === k ? ' is-active' : ''}`} onClick={() => setParams({ view: k })}>
+            <button key={k} type="button" aria-pressed={!snoozed && view === k} className={`kind-chip${!snoozed && view === k ? ' is-active' : ''}`} onClick={() => setParams({ view: k })}>
               {label}{d?.counts?.[k] != null ? ` · ${d.counts[k]}` : ''}
             </button>
           ))}
-          <button type="button" role="tab" aria-selected={snoozed} className={`kind-chip${snoozed ? ' is-active' : ''}`} onClick={() => setParams({ view: 'all', snoozed: '1' })}>Including snoozed</button>
+          <button type="button" aria-pressed={snoozed} className={`kind-chip${snoozed ? ' is-active' : ''}`} onClick={() => setParams({ view: 'all', snoozed: '1' })}>Including snoozed</button>
         </div>
       )}
       <section className="card">
@@ -61,7 +62,7 @@ export default function WorkspaceList() {
           <ul className="ws-list">
             {list === 'attention' && d.items.map((it) => (
               <AttentionRow key={it.key} it={it} timezone={d.timezone} expanded onSnooze={it.snoozed_until ? null : setSnoozing}>
-                {it.snoozed_until && <div className="small muted row" style={{ gap: 8, padding: '0 16px 8px' }}>Snoozed by you until {new Date(it.snoozed_until).toLocaleString('en-GB')} <button type="button" className="btn btn-ghost btn-sm" onClick={() => unsnooze(it.key)}>Bring back now</button></div>}
+                {it.snoozed_until && <div className="small muted row" style={{ gap: 8, padding: '0 16px 8px' }}>Snoozed by you until {shortDateTime(it.snoozed_until)} <button type="button" className="btn btn-ghost btn-sm" onClick={() => unsnooze(it.key)}>Bring back now</button></div>}
               </AttentionRow>
             ))}
             {list === 'decisions' && d.items.map((x) => <DecisionRow key={x.key} d={x} />)}

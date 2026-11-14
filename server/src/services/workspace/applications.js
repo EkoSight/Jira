@@ -492,7 +492,7 @@ addContributor(async function applicationItems(user, ctx) {
       out.push({
         key: `APPLICATION_STATUS_CHECK:APPLICATION:${a.id}:${check.date}`, kind: 'APPLICATION_STATUS_CHECK',
         title: 'Check application status',
-        reason: `Submitted ${dayOf(a.submitted_on)}${a.acknowledged_on ? ', acknowledged' : ''}; no update recorded. Date set by ${check.words}`,
+        reason: `Submitted ${dayOf(a.submitted_on)}${a.acknowledged_on ? ', acknowledged' : ''}; no update recorded. Check date: ${check.words}`,
         record, related: [], when: { date: check.date, dateOnly: true },
         tier: check.date < today ? 2 : check.date === today ? 1 : 4, overdue: check.date < today, dueToday: check.date === today,
         action: { label: 'Log an update', kind: 'OPEN' },

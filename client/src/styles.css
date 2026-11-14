@@ -4465,3 +4465,5 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .ws-att > .ws-row { flex: 1; min-width: 0; }
 .ws-snooze { margin-right: 10px; flex: none; }
 .ws-bell-done { background: var(--surface-2); }
+/* on a hovered or focused row the background is lighter (dark theme): keep the reason readable */
+.ws-row:hover .ws-reason, .ws-row:focus-visible .ws-reason, .ws-row:hover .muted, .ws-row:focus-visible .muted { color: var(--ink-2); }

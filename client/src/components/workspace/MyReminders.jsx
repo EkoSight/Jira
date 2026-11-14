@@ -11,7 +11,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
 import { Badge, Modal, Spinner } from '../ui.jsx';
-import { whenWords } from '../../lib/workspace.js';
+import { shortDateTime, whenWords } from '../../lib/workspace.js';
 
 const STATE_TONE = { SENT: 'good', PLANNED: 'brand', WOULD_SEND: 'warning', SKIPPED: 'neutral', CANCELLED: 'neutral', FAILED: 'critical', SENT_BELL_ONLY: 'warning' };
 const STATE_WORDS = { SENT: 'Sent', PLANNED: 'Planned', WOULD_SEND: 'Would send (test mode)', SKIPPED: 'Skipped', CANCELLED: 'Cancelled', FAILED: 'Failed', SENT_BELL_ONLY: 'Bell only (Chat failed)' };
@@ -180,11 +180,11 @@ export default function MyReminders() {
           {log && log.length > 0 && (
             <div className="table-wrap">
               <table className="data small">
-                <thead><tr><th>When</th><th>Reminder</th><th>What happened</th></tr></thead>
+                <thead><tr><th>When ({data.timezone})</th><th>Reminder</th><th>What happened</th></tr></thead>
                 <tbody>
                   {log.map((o) => (
                     <tr key={o.id}>
-                      <td className="tnum">{new Date(o.remind_at).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+                      <td className="tnum">{shortDateTime(o.remind_at, data.timezone)}</td>
                       <td>{o.rule_label}</td>
                       <td><Badge tone={STATE_TONE[o.state] || 'neutral'}>{STATE_WORDS[o.state] || o.state}</Badge>{o.reason ? <span className="muted"> {o.reason}</span> : null}</td>
                     </tr>

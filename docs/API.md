@@ -873,8 +873,15 @@ updates the citation instead of creating a duplicate.
 
 | Method | Route |
 |---|---|
-| GET | `/notifications` |
-| POST | `/notifications/read` — `{ ids: [...] }`, or empty to mark all read |
+| GET | `/notifications` — your 50 latest, without the ones you snoozed; `unread` leaves out resolved and cancelled ones; `snoozed` counts the hidden ones. A notification about a record you can no longer see comes back as `{ available: false, title: 'This item is not available to you', body: null }` |
+| POST | `/notifications/read` — `{ ids: [...] }`, or empty to mark all read. Reading completes nothing |
+| POST | `/notifications/:id/snooze` — your own — `{ until }` (within 90 days): leaves your bell until then; the record does not change |
+| POST | `/notifications/:id/unsnooze` — your own |
+| GET | `/notifications/:id/open` — your own — `{ available, url, label }`, with access checked now |
+
+Notifications from My workspace reminders carry `entity_type`, `entity_id`,
+`occurrence_id`, `reason` (why you got it), `resolved_at`, `snoozed_until` and
+`cancelled_at`. Older notifications have none of these and work as before.
 
 Generated on assignment, being made a follower, being tagged, new comments,
 approaching deadlines, black marks, kudos, awards and feature request updates.
@@ -1103,3 +1110,64 @@ Under `/reminders`. Mode, timing and records: `settings.manage`, except where ma
 | POST | `/blackmarks/appeals/:id/withdraw` | the person who appealed |
 | GET | `/blackmarks/recheck` | as before; each mark now carries `reasons` and `reason_words` |
 | GET | `/blackmarks/review` | as before, plus `tasks_missed` and `mark_events` per member |
+
+## My workspace
+
+The caller's own home. Every personal route works on the signed-in person:
+none takes a user id, so nobody can read another person's layout, snoozes,
+reminders or preferences. See `docs/MY_WORKSPACE.md`.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/workspace` | signed in — `{ version, source: TEMPLATE/CUSTOM, template, widgets (each with available, why, retired), home, home_choice, catalogue, scope_label, timezone }` |
+| PUT | `/workspace/layout` | signed in — `{ version, widgets, force? }`. A newer saved version answers 409 `LAYOUT_CONFLICT` unless `force` (the person confirmed "Keep mine"). A widget you may not use cannot be added (400 `WIDGET_NOT_AVAILABLE`); one already there stays, shown as not available |
+| POST | `/workspace/layout/reset` | signed in — back to your team's template; nothing else changes |
+| PUT | `/workspace/home` | signed in — `{ home: WORKSPACE / OVERVIEW / null }` (null follows the rollout) |
+| GET | `/workspace/attention?view=&snoozed=1&limit=&offset=` | signed in — `{ items, total, counts (one per view), snoozed, tiers, timezone }`. Views: today, coming, overdue, due_today, decisions, all |
+| POST | `/workspace/attention/snooze` | signed in — `{ key, until }`; only an item in your own list, within 90 days |
+| POST | `/workspace/attention/unsnooze` | signed in — `{ key }` |
+| GET | `/workspace/decisions` | signed in — approvals waiting on you, each by its module's own rule |
+| GET | `/workspace/waiting` | signed in — what you are waiting for: `{ what, from, since, promised, next_check, specific, overdue }` |
+| GET | `/workspace/widgets/summary` | signed in — tiles, each `{ count, url }`; the count is the length of the list at `url` |
+| GET | `/workspace/widgets/deals?scope=mine/team` | CRM — your open deals (team: for people whose CRM access shows team records) |
+| GET | `/workspace/widgets/key_results` | Goals — your key results due a check-in or behind |
+| GET | `/workspace/meetings` | signed in — `{ upcoming, to_arrange, awaiting_outcome }` |
+| GET | `/workspace/meetings/:id` | someone who can see it |
+| POST | `/workspace/meetings` | signed in — `{ title, status: SCHEDULED/TO_ARRANGE/TIME_PROPOSED, scheduled_at?, arrange_by?, proposed_at?, timezone?, location?, meeting_url?, participant_user_ids?, account_id? / opportunity_id? / lead_id? }`. Links to CRM records need `crm.activity.log` and access to them. Sends no invitation |
+| POST | `/workspace/meetings/:id/propose`, `/confirm`, `/reschedule`, `/cancel`, `/outcome` | the meeting's owner, its creator, the person arranging it, or `crm.manage.any` |
+| GET / PUT | `/workspace/origin/:kind/:id` | kind lead, deal or application — read: anyone who can see it; change "introduced by": the people working on it. Audited |
+| GET | `/workspace/handover-check?opportunity_id=&to_user_id=` | can see the deal — open tasks and meetings on it held by someone else |
+| POST | `/workspace/handover-reassign` | `task.assign` and a part in the deal — `{ opportunity_id, to_user_id, task_ids, meeting_ids }`; only the chosen ones, only on that deal |
+| GET | `/workspace/reminders` | signed in — every rule that can reach you (new and older), your choices, channels (email and push: false), your own reminders, timezone |
+| PUT | `/workspace/reminders/rules/:key` | signed in — `{ enabled, at_time?, chat? }`; off cancels only your pending reminders of that rule |
+| GET / POST | `/workspace/reminders/personal` | signed in — your own "remind me" reminders; POST `{ entity_type, entity_id, remind_at, note? }` on a record you can see (404 "Not available" otherwise) |
+| PUT | `/workspace/reminders/personal/:id` | yours only (someone else's is 404) — "Change my reminder" |
+| POST | `/workspace/reminders/personal/:id/cancel` | yours only |
+| GET | `/workspace/reminders/log?days=` | signed in — your workspace reminders and what happened to each |
+| GET | `/workspace/timezones` | signed in |
+| PUT | `/workspace/me/timezone` | signed in — `{ timezone | null }` (null: the company calendar's) |
+| GET | `/workspace/templates` | `settings.manage` — templates, how many people follow or customised each, the whole catalogue |
+| PUT | `/workspace/templates/:key` | `settings.manage` — `{ name, layout, applies_departments, applies_roles }`; presentation only |
+| GET | `/workspace/templates/for/:userId` | `settings.manage` and `user.view` — which template applies to a person (never their layout) |
+| GET / PUT | `/workspace/settings` | `settings.manage` — `{ rollout: { mode: PILOT/EVERYONE/OFF, departmentIds }, reminderMode: OFF/TEST/LIVE }` |
+
+`GET /auth/me` and the sign-in response now include `timezone` and
+`workspace_home` (whether My workspace is the person's home). `GET /tasks`
+accepts `assigned_by` (work a person created for someone else).
+
+## Applications
+
+Deals in the "Applications & programmes" pipeline. Behind the CRM switch and
+`crm.view`; changes need `crm.activity.log` and a part in the application,
+as for deals.
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `/applications?scope=mine/team&group=PREPARING/SUBMITTED/DECIDED` | with `counts` per group, decorated deadlines and status checks |
+| GET | `/applications/:id` | the application, rounds, updates, its tasks (the same task ids as everywhere), meetings, history |
+| POST | `/applications` | `crm.create` — `{ name, account_id or organiser_name, application_type, opportunity_url?, deadline_date | deadline_at_local + deadline_timezone }` |
+| PATCH | `/applications/:id` | type, link, reference, expected response date, next check date, deadline (recorded in the history), introduced by |
+| POST | `/applications/:id/submitted` | `{ submitted_on, submitted_link?, reference?, correction_reason? }` — the only way it becomes submitted; a second time needs a reason (409 `ALREADY_SUBMITTED` otherwise) |
+| POST | `/applications/:id/updates` | `{ kind: ACKNOWLEDGEMENT / FOLLOW_UP_SENT / RESPONSE / OUTCOME, happened_on, summary?, reference?, next_check_on?, result?, onboarding_task_title? }` |
+| POST | `/applications/:id/tasks` | `{ title, due_date?, assignee_id? }` — an ordinary task linked to the application |
+| POST / PATCH | `/applications/:id/rounds`, `/applications/:id/rounds/:roundId` | each round keeps its own deadline |

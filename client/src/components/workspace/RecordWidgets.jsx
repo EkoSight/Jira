@@ -112,9 +112,9 @@ function AttentionWidget({ widget, refreshKey }) {
     <WidgetFrame widget={widget} state={state} count={d ? d.total : null} drill={`/workspace/attention?view=${view}`}
       actions={d ? <WhyOrder tiers={d.tiers} /> : null}
       empty={d && !d.total ? (view === 'today' ? 'Nothing needs you right now' : 'Nothing here') : null}>
-      <div className="ws-tabs" role="tablist" aria-label="Show">
+      <div className="ws-tabs" role="group" aria-label="Show">
         {VIEW_TABS.map(([k, label]) => (
-          <button key={k} type="button" role="tab" aria-selected={view === k} className={`kind-chip${view === k ? ' is-active' : ''}`} onClick={() => setView(k)}>
+          <button key={k} type="button" aria-pressed={view === k} className={`kind-chip${view === k ? ' is-active' : ''}`} onClick={() => setView(k)}>
             {label}{d?.counts?.[k] != null ? ` · ${d.counts[k]}` : ''}
           </button>
         ))}
@@ -125,6 +125,7 @@ function AttentionWidget({ widget, refreshKey }) {
           {d.items.map((it) => <AttentionRow key={it.key} it={it} timezone={d.timezone} expanded={widget.config?.density === 'expanded'} onSnooze={setSnoozing} />)}
         </ul>
       )}
+      {d && d.total > d.items.length && <div className="small muted ws-more"><Link to={`/workspace/attention?view=${view}`}>{d.total - d.items.length} more in the full list</Link></div>}
       {d && d.snoozed > 0 && <div className="small muted ws-more"><Link to="/workspace/attention?snoozed=1">{d.snoozed} snoozed by you</Link></div>}
       {d?.failed?.length > 0 && <div className="small muted ws-more" role="status">Part of this list could not be loaded just now.</div>}
       {snoozing && <SnoozeDialog item={snoozing} timezone={d?.timezone} onClose={() => setSnoozing(null)} onDone={() => { setSnoozing(null); setBump((b) => b + 1); }} />}
@@ -182,7 +183,7 @@ export function WaitingRow({ w }) {
       <Link className="ws-row" to={w.record.url}>
         <span className="grow" style={{ minWidth: 0 }}>
           <span className="row wrap" style={{ gap: 6 }}>
-            {w.overdue && <Badge tone="critical">Past the promised date</Badge>}
+            {w.overdue && <Badge tone="critical">{w.promised ? 'Past the promised date' : 'Time to check'}</Badge>}
             {!w.specific && <Badge tone="warning">Nothing recorded</Badge>}
             <strong className="truncate">{w.record.label}</strong>
           </span>

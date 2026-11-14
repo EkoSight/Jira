@@ -128,9 +128,9 @@ export default function Applications() {
           {can('crm.create') && <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>New application</button>}
         </div>
       </div>
-      <div className="ws-tabs" role="tablist" aria-label="Applications by state" style={{ padding: 0 }}>
+      <div className="ws-tabs" role="group" aria-label="Applications by state" style={{ padding: 0 }}>
         {GROUPS.map(([k, label]) => (
-          <button key={k} type="button" role="tab" aria-selected={group === k} className={`kind-chip${group === k ? ' is-active' : ''}`} onClick={() => setParams({ group: k, scope })}>
+          <button key={k} type="button" aria-pressed={group === k} className={`kind-chip${group === k ? ' is-active' : ''}`} onClick={() => setParams({ group: k, scope })}>
             {label}{d ? ` · ${d.counts[k]}` : ''}
           </button>
         ))}

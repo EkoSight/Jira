@@ -63,3 +63,11 @@ test('a task widget\'s filters are the board link it opens', () => {
   assert.equal(boardLink(f), '/board?stage=backlog%2Ctodo%2Cin_progress%2Creview%2Cblocked&assignee_id=4&due=range&due_from=2026-11-14&due_to=2026-11-20');
   assert.deepEqual(taskWidgetFilters('my_tasks', { scope: 'team' }, { userId: 4, departmentId: 2, today: '', addDays }), { stage: 'backlog,todo,in_progress,review,blocked', department_id: '2' });
 });
+
+test('dates follow the person\'s timezone once set; logs too', async () => {
+  const { setDisplayTimezone, shortDateTime, whenWords: ww } = await import('../src/lib/workspace.js');
+  setDisplayTimezone('Europe/London');
+  assert.equal(ww({ at: '2027-03-29T16:00:00Z' }, { now: new Date('2027-03-26T09:00:00Z') }), 'Mon 29 Mar 17:00, in 3 days');
+  assert.equal(shortDateTime('2027-01-17T03:30:00Z', 'Asia/Kolkata'), '17 Jan, 09:00');
+  setDisplayTimezone('Asia/Kolkata');
+});
