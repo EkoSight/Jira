@@ -522,6 +522,19 @@ export const DEFAULT_SETTINGS = {
       'attendance_reminder', 'attendance_checkout_reminder',
     ],
   },
+  // My workspace (docs/MY_WORKSPACE.md)
+  workspace: {
+    // D1: who gets My workspace as their home. PILOT: the departments listed
+    // (none until an administrator picks them); EVERYONE; OFF: nobody (the
+    // page still opens at /workspace). A person's own choice wins either way.
+    rollout: { mode: 'PILOT', departmentIds: [] },
+    // the reminder rules for applications, meetings and deals. TEST until an
+    // administrator has looked at the delivery log: only the test recipient
+    // receives anything, everyone else's are recorded as "would send".
+    // A person's own "remind me" always reaches them (it reaches nobody else).
+    reminderMode: 'TEST',
+    testRecipientId: null,
+  },
 };
 
 const isPlainObject = (v) => v && typeof v === 'object' && !Array.isArray(v);

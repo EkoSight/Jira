@@ -225,7 +225,8 @@ export default function Pipeline() {
 
   const [board, setBoard] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
+  // ?new=1 (from My workspace's Add menu) opens the usual dialog
+  const [creating, setCreating] = useState(() => new URLSearchParams(window.location.search).get('new') === '1');
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
   const [ownerFilter, setOwnerFilter] = useState('');

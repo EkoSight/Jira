@@ -12,6 +12,7 @@ import LookSettings from '../components/LookSettings.jsx';
 import BrandingSettings from '../components/BrandingSettings.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
+import WorkspaceSettings from '../components/WorkspaceSettings.jsx';
 import ReminderSettings from '../components/ReminderSettings.jsx';
 import { FollowUpReminderDefaults } from '../components/sales/FollowUpSettings.jsx';
 import { PhoneAppCard } from '../components/sales/PhoneCall.jsx';
@@ -735,6 +736,7 @@ const TABS = [
   ['attendance', 'Attendance & pay', 'attendance.policy'],
   ['chat', 'Google Chat', 'settings.manage'],
   ['reminders', 'Reminders', 'settings.manage'],
+  ['workspace', 'Workspace', 'settings.manage'],
   ['branding', 'Branding', 'settings.manage'],
   ['account', 'My account'],
 ];
@@ -838,6 +840,7 @@ export default function Settings() {
       {tab === 'attendance' && <AttendanceSettings />}
       {tab === 'chat' && <GoogleChatSettings />}
       {tab === 'reminders' && <TaskReminderSettings />}
+      {tab === 'workspace' && <WorkspaceSettings />}
       {tab === 'branding' && <BrandingSettings />}
       {tab === 'account' && <AccountTab />}
     </div>

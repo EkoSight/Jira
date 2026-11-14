@@ -4415,3 +4415,47 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .review-filter-foot .filters .btn { flex: 1 1 100%; }
   .review-fields label { min-width: 0; flex: 1 1 100%; }
 }
+
+/* ---------------------------------------------------------------- My workspace */
+.field-label { font-size: 12px; font-weight: 600; color: var(--ink-2); letter-spacing: 0.01em; }
+.ws-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.ws-cell { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.ws-full { grid-column: 1 / -1; }
+.ws-half { grid-column: auto; }
+.ws-editing { outline: 2px dashed var(--brand-border); outline-offset: 3px; border-radius: var(--radius); cursor: grab; }
+.ws-dragging { opacity: 0.5; }
+.ws-editbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 4px 6px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); }
+.ws-grip { color: var(--ink-muted); display: inline-flex; padding: 0 4px; }
+.ws-widget { min-width: 0; }
+.ws-body { min-width: 0; }
+.ws-body .att-card { border: 0; box-shadow: none; }
+.ws-state { padding: 18px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ws-empty { color: var(--ink-muted); }
+.ws-count { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--surface-3); color: var(--ink-2); font-size: 12px; font-weight: 650; }
+.ws-list { list-style: none; margin: 0; padding: 4px 0; }
+.ws-list > li + li { border-top: 1px solid var(--border); }
+.ws-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 16px; background: none; border: 0; text-align: left; color: inherit; text-decoration: none; cursor: pointer; font: inherit; }
+.ws-row:hover { background: var(--surface-2); }
+.ws-row:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.ws-static { cursor: default; }
+.ws-static:hover { background: none; }
+.ws-pad { padding: 8px 16px 0; }
+.ws-more { padding: 6px 16px 10px; }
+.ws-line { padding: 8px 16px; gap: 8px; }
+.ws-note, .ws-toolbar { background: var(--surface-2); }
+.ws-error { color: var(--critical-text); }
+.ws-unavailable { background: var(--surface-2); }
+.ws-menu { position: relative; }
+.ws-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; min-width: 170px; display: flex; flex-direction: column; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); }
+.ws-menu-item { display: block; width: 100%; padding: 9px 12px; background: none; border: 0; border-radius: 6px; text-align: left; color: inherit; text-decoration: none; font: inherit; cursor: pointer; min-height: 40px; }
+.ws-menu-item:hover, .ws-menu-item:focus-visible { background: var(--surface-2); }
+.ws-catalogue { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.ws-catalogue-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
+.ws-tier { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-muted); padding: 10px 16px 2px; }
+.ws-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 16px 0; }
+.ws-reason { font-size: 12px; color: var(--ink-muted); }
+@media (max-width: 760px) {
+  .ws-grid { grid-template-columns: minmax(0, 1fr); }
+  .ws-full, .ws-half { grid-column: 1 / -1; }
+  .ws-editbar .btn { min-height: 40px; }
+}

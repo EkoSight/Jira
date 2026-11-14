@@ -6,6 +6,17 @@ import { hashPassword, verifyPassword } from '../lib/password.js';
 import { effectivePermissions } from '../lib/permissions.js';
 import { authenticate, signToken, loadUser } from '../middleware/auth.js';
 import { ACCENT_PRESETS } from '../../../shared/brandTheme.js';
+import { homeFor } from '../services/workspace/layout.js';
+
+/** Whether My workspace is the person's home (for the navigation); never fails sign-in. */
+async function withHome(user) {
+  try {
+    const { rows } = await query('SELECT home FROM user_dashboards WHERE user_id = $1', [user.id]);
+    return { ...publicUser(user), workspace_home: (await homeFor(user, rows[0] || null)).workspace };
+  } catch {
+    return publicUser(user);
+  }
+}
 
 const router = Router();
 
@@ -20,6 +31,7 @@ const publicUser = (user) => ({
   photo_version: user.photo_version ?? null,
   theme_mode: user.theme_mode ?? null,
   theme_accent: user.theme_accent ?? null,
+  timezone: user.timezone ?? null,
   must_change_password: user.must_change_password,
   permissions: effectivePermissions(user),
 });
@@ -45,7 +57,7 @@ router.post(
 
     await query('UPDATE users SET last_login_at = now(), last_activity_at = now() WHERE id = $1', [user.id]);
 
-    res.json({ token: signToken(user), user: publicUser(user) });
+    res.json({ token: signToken(user), user: await withHome(user) });
   }),
 );
 
@@ -53,7 +65,7 @@ router.get(
   '/me',
   authenticate,
   asyncHandler(async (req, res) => {
-    res.json({ user: publicUser(req.currentUser) });
+    res.json({ user: await withHome(req.currentUser) });
   }),
 );
 

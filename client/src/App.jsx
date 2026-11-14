@@ -6,6 +6,8 @@ import { BrandLoader } from './components/BrandMark.jsx';
 import Layout from './components/Layout.jsx';
 import Login, { ForcePasswordChange } from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
+import Home from './pages/Home.jsx';
+import MyWorkspace from './pages/MyWorkspace.jsx';
 import Board from './pages/Board.jsx';
 import MyTasks from './pages/MyTasks.jsx';
 import Review from './pages/Review.jsx';
@@ -48,7 +50,10 @@ function Shell() {
     <CallSessionProvider>
     <Layout>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Home />} />
+        {/* today's company overview, at its own address whatever the home is */}
+        <Route path="/overview" element={<Dashboard />} />
+        <Route path="/workspace" element={<MyWorkspace />} />
         <Route path="/board" element={<Board />} />
         <Route path="/my-tasks" element={<MyTasks />} />
         <Route path="/review" element={<Review />} />

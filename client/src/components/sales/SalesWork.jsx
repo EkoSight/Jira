@@ -276,7 +276,8 @@ export function Leads({ meta }) {
   const [counts, setCounts] = useState({});
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState(new Set());
-  const [creating, setCreating] = useState(false);
+  // ?new=1 (from My workspace's Add menu) opens the usual dialog
+  const [creating, setCreating] = useState(() => new URLSearchParams(window.location.search).get('new') === '1');
   const [bulk, setBulk] = useState(null);
   const [savedViews, setSavedViews] = useState([]);
   const routing = can('crm.routing');

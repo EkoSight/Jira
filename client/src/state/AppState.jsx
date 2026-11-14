@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, tokenStore, setUnauthorizedHandler } from '../api/client.js';
+import { workspaceCache } from '../lib/workspace.js';
 import { REFRESH_MS, applyBranding, cachedBranding, fetchBranding, rememberLook, resolveMode, storedAccent, storedMode } from '../lib/brand.js';
 import { clearPhotoVersions, loadPhotoVersions } from '../lib/photos.js';
 
@@ -53,12 +54,15 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(() => {
     tokenStore.clear();
     clearPhotoVersions();
+    // the cached copy of My workspace belongs to this sign-in only
+    workspaceCache.clear();
     setUser(null);
   }, []);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
       tokenStore.clear();
+      workspaceCache.clear();
       setUser(null);
     });
   }, []);

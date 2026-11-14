@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
@@ -32,7 +32,108 @@ function Stat({ label, value, note, tone, onClick }) {
   );
 }
 
-export default function Dashboard() {
+/** The overview's tiles: each opens the board with the same filter. Also the Company overview widget. */
+export function OverviewStats({ summary, goToBoard }) {
+  return (
+    <div className="stat-grid">
+      <Stat label="Open" value={summary.open} note="Backlog and to do" onClick={() => goToBoard({ stage: 'backlog,todo' })} />
+      <Stat label="In progress" value={summary.in_progress} note="Being worked on now" onClick={() => goToBoard({ stage: 'in_progress' })} />
+      <Stat label="Overdue" value={summary.overdue} note="Past the deadline" tone="critical" onClick={() => goToBoard({ due: 'overdue' })} />
+      <Stat label="Due soon" value={summary.due_soon} note="Today and the next 3 working days" tone="warning" onClick={() => goToBoard({ due: 'soon' })} />
+      <Stat label="Critical" value={summary.critical} note="Highest priority open" tone="serious" onClick={() => goToBoard({ priority: 'critical', exclude_stage: 'done,cancelled' })} />
+      <Stat label="Unassigned" value={summary.unassigned} note="Nobody owns these" onClick={() => goToBoard({ assignee_id: 'none', exclude_stage: 'done,cancelled' })} />
+      <Stat label="Done this month" value={summary.completed_this_month} note={`${summary.completed_this_week} this week`} tone="good" onClick={() => goToBoard({ stage: 'done', show_done: '1' })} />
+      <Stat label="Blocked" value={summary.blocked} note="Waiting on something" tone="serious" onClick={() => goToBoard({ stage: 'blocked' })} />
+    </div>
+  );
+}
+
+/** Who is working on what, as on the overview. Also the Team workload widget. */
+export function WorkloadCard({ workload, goToBoard, title = 'Who is working on what' }) {
+  // someone on leave with nothing open is away, not idle
+  const idle = workload.filter((w) => w.status === 'idle' && !w.away_today);
+  const away = workload.filter((w) => w.away_today);
+  const stalled = workload.filter((w) => w.status === 'stalled');
+  const overloaded = workload.filter((w) => w.status === 'overloaded');
+  if (!workload.length) return null;
+  return (
+    <section className="card">
+      <div className="card-head">
+        <h2>{title}</h2>
+        <div className="row small muted wrap" style={{ gap: 10 }}>
+          {overloaded.length > 0 && <Badge tone="critical">{overloaded.length} overloaded</Badge>}
+          {stalled.length > 0 && <Badge tone="serious">{stalled.length} stalled</Badge>}
+          {idle.length > 0 && <Badge>{idle.length} idle</Badge>}
+          {away.length > 0 && <Badge tone="warning">{away.length} away today</Badge>}
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table className="data">
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Bandwidth</th>
+              <th className="num">Open</th>
+              <th className="num">Active</th>
+              <th className="num">Overdue</th>
+              <th className="num">Critical</th>
+              <th className="num">Done 30d</th>
+              <th>Last movement</th>
+            </tr>
+          </thead>
+          <tbody>
+            {workload.map((member) => {
+              const state = WORKLOAD_STATUS[member.status];
+              return (
+                <tr
+                  key={member.id}
+                  className="clickable"
+                  onClick={() => goToBoard({ assignee_id: member.id })}
+                >
+                  <td>
+                    <div className="row">
+                      <Avatar name={member.full_name} color={member.avatar_color} size={26} />
+                      <div>
+                        <div className="row wrap" style={{ gap: 6, fontWeight: 600 }}>
+                          {member.full_name}
+                          <AwayBadge entry={member.away_today} compact />
+                        </div>
+                        <div className="small muted">{member.department || 'No department'}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td style={{ minWidth: 190 }}>
+                    <LoadMeter percent={member.load_percent} status={member.status} />
+                    <div className="row" style={{ gap: 6, marginTop: 2 }}>
+                      <Badge tone={state.tone}>{state.label}</Badge>
+                      <span className="small muted">{loadSummary(member)}</span>
+                    </div>
+                  </td>
+                  <td className="num tnum">{member.open_tasks}</td>
+                  <td className="num tnum">{member.active_tasks}</td>
+                  <td className="num tnum">
+                    {member.overdue_tasks > 0 ? (
+                      <strong style={{ color: 'var(--critical-text)' }}>{member.overdue_tasks}</strong>
+                    ) : (
+                      0
+                    )}
+                  </td>
+                  <td className="num tnum">{member.critical_tasks}</td>
+                  <td className="num tnum">{member.completed_30d}</td>
+                  <td className="small muted">
+                    {member.days_since_activity == null ? '—' : `${member.days_since_activity}d ago`}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+export default function Dashboard({ offerWorkspace = false }) {
   const { user, can } = useAuth();
   const { departments } = useRefData();
   const toast = useToast();
@@ -68,12 +169,6 @@ export default function Dashboard() {
     color: STATUS_COLOR[PRIORITY_TONE[priority] === 'brand' ? 'brand' : PRIORITY_TONE[priority]] || STATUS_COLOR.neutral,
   }));
 
-  // someone on leave with nothing open is away, not idle
-  const idle = workload.filter((w) => w.status === 'idle' && !w.away_today);
-  const away = workload.filter((w) => w.away_today);
-  const stalled = workload.filter((w) => w.status === 'stalled');
-  const overloaded = workload.filter((w) => w.status === 'overloaded');
-
   return (
     <div className="stack" style={{ gap: 16 }}>
       <div className="row-between wrap">
@@ -98,19 +193,17 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {offerWorkspace && (
+        <div className="card card-pad row-between wrap" role="note">
+          <span className="small"><strong>My workspace</strong> · your own home: what needs you now, what is next, and what you are waiting on. This overview stays one click away.</span>
+          <Link className="btn btn-sm" to="/workspace">Open My workspace</Link>
+        </div>
+      )}
+
       <SuperAdminClaim />
       <TodayAttendanceCard hideWhenUntracked />
 
-      <div className="stat-grid">
-        <Stat label="Open" value={summary.open} note="Backlog and to do" onClick={() => goToBoard({ stage: 'backlog,todo' })} />
-        <Stat label="In progress" value={summary.in_progress} note="Being worked on now" onClick={() => goToBoard({ stage: 'in_progress' })} />
-        <Stat label="Overdue" value={summary.overdue} note="Past the deadline" tone="critical" onClick={() => goToBoard({ due: 'overdue' })} />
-        <Stat label="Due soon" value={summary.due_soon} note="Today and the next 3 working days" tone="warning" onClick={() => goToBoard({ due: 'soon' })} />
-        <Stat label="Critical" value={summary.critical} note="Highest priority open" tone="serious" onClick={() => goToBoard({ priority: 'critical', exclude_stage: 'done,cancelled' })} />
-        <Stat label="Unassigned" value={summary.unassigned} note="Nobody owns these" onClick={() => goToBoard({ assignee_id: 'none', exclude_stage: 'done,cancelled' })} />
-        <Stat label="Done this month" value={summary.completed_this_month} note={`${summary.completed_this_week} this week`} tone="good" onClick={() => goToBoard({ stage: 'done', show_done: '1' })} />
-        <Stat label="Blocked" value={summary.blocked} note="Waiting on something" tone="serious" onClick={() => goToBoard({ stage: 'blocked' })} />
-      </div>
+      <OverviewStats summary={summary} goToBoard={goToBoard} />
 
       <div className="grid-2" style={{ alignItems: 'start' }}>
 
@@ -148,81 +241,7 @@ export default function Dashboard() {
         <AwayCard onChanged={load} />
       </div>
 
-      {workload.length > 0 && (
-        <section className="card">
-          <div className="card-head">
-            <h2>Who is working on what</h2>
-            <div className="row small muted wrap" style={{ gap: 10 }}>
-              {overloaded.length > 0 && <Badge tone="critical">{overloaded.length} overloaded</Badge>}
-              {stalled.length > 0 && <Badge tone="serious">{stalled.length} stalled</Badge>}
-              {idle.length > 0 && <Badge>{idle.length} idle</Badge>}
-              {away.length > 0 && <Badge tone="warning">{away.length} away today</Badge>}
-            </div>
-          </div>
-          <div className="table-wrap">
-            <table className="data">
-              <thead>
-                <tr>
-                  <th>Member</th>
-                  <th>Bandwidth</th>
-                  <th className="num">Open</th>
-                  <th className="num">Active</th>
-                  <th className="num">Overdue</th>
-                  <th className="num">Critical</th>
-                  <th className="num">Done 30d</th>
-                  <th>Last movement</th>
-                </tr>
-              </thead>
-              <tbody>
-                {workload.map((member) => {
-                  const state = WORKLOAD_STATUS[member.status];
-                  return (
-                    <tr
-                      key={member.id}
-                      className="clickable"
-                      onClick={() => goToBoard({ assignee_id: member.id })}
-                    >
-                      <td>
-                        <div className="row">
-                          <Avatar name={member.full_name} color={member.avatar_color} size={26} />
-                          <div>
-                            <div className="row wrap" style={{ gap: 6, fontWeight: 600 }}>
-                              {member.full_name}
-                              <AwayBadge entry={member.away_today} compact />
-                            </div>
-                            <div className="small muted">{member.department || 'No department'}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td style={{ minWidth: 190 }}>
-                        <LoadMeter percent={member.load_percent} status={member.status} />
-                        <div className="row" style={{ gap: 6, marginTop: 2 }}>
-                          <Badge tone={state.tone}>{state.label}</Badge>
-                          <span className="small muted">{loadSummary(member)}</span>
-                        </div>
-                      </td>
-                      <td className="num tnum">{member.open_tasks}</td>
-                      <td className="num tnum">{member.active_tasks}</td>
-                      <td className="num tnum">
-                        {member.overdue_tasks > 0 ? (
-                          <strong style={{ color: 'var(--critical-text)' }}>{member.overdue_tasks}</strong>
-                        ) : (
-                          0
-                        )}
-                      </td>
-                      <td className="num tnum">{member.critical_tasks}</td>
-                      <td className="num tnum">{member.completed_30d}</td>
-                      <td className="small muted">
-                        {member.days_since_activity == null ? '—' : `${member.days_since_activity}d ago`}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
+      <WorkloadCard workload={workload} goToBoard={goToBoard} />
 
       <section className="card">
         <div className="card-head">

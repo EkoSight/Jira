@@ -227,6 +227,11 @@ function listFilters(user, q) {
     filters.push(`(t.follower_id = ${sid} OR EXISTS (SELECT 1 FROM task_collaborators tc2 WHERE tc2.task_id = t.id AND tc2.user_id = ${sid}))
                   AND t.assignee_id IS DISTINCT FROM ${sid}`);
   }
+  // assigned by: work a person handed to someone else (they created it, another owns it)
+  if (q.assigned_by) {
+    const bid = push(Number(q.assigned_by));
+    filters.push(`t.created_by = ${bid} AND t.assignee_id IS DISTINCT FROM ${bid}`);
+  }
   if (q.task_type) filters.push(`t.task_type = ${push(q.task_type)}`);
   if (q.account_id) filters.push(`t.account_id = ${push(Number(q.account_id))}`);
   if (q.tag) filters.push(`${push(q.tag)} = ANY(t.tags)`);

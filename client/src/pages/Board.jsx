@@ -9,7 +9,7 @@ import CompleteTaskDialog from '../components/CompleteTaskDialog.jsx';
 import { PRIORITIES, PRIORITY_LABEL, PRIORITY_TONE, STAGE_LABEL, dueLabel, formatDate, setDeadlineCalendar, taskHealth } from '../lib/format.js';
 
 // the filters that live in the address, so a link shows someone exactly this
-const FILTER_KEYS = ['department_id', 'assignee_id', 'supporter_id', 'priority', 'stage', 'status_id', 'search', 'due', 'due_from', 'due_to', 'exclude_stage'];
+const FILTER_KEYS = ['department_id', 'assignee_id', 'supporter_id', 'assigned_by', 'priority', 'stage', 'status_id', 'search', 'due', 'due_from', 'due_to', 'exclude_stage'];
 
 const DUE_OPTIONS = [
   ['', 'Any deadline'],
@@ -236,6 +236,11 @@ export default function Board() {
         <select className="select" aria-label="Sort" value={sort} onChange={(e) => setFilter('sort', e.target.value)}>
           {SORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
+        {filters.assigned_by && (
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => setFilter('assigned_by', '')}>
+            Assigned by {String(filters.assigned_by) === String(user?.id) ? 'me' : (users.find((u) => String(u.id) === String(filters.assigned_by))?.full_name || 'someone')} ×
+          </button>
+        )}
         {filters.exclude_stage && (
           <button type="button" className="btn btn-sm btn-ghost" onClick={() => setFilter('exclude_stage', '')}>
             Without {filters.exclude_stage.split(',').map((x) => STAGE_LABEL[x] || x).join(', ').toLowerCase()} ×

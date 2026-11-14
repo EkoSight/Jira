@@ -7,7 +7,7 @@ import { effectivePermissions, hasPermission } from '../lib/permissions.js';
 const USER_COLUMNS = `
   id, full_name, email, role, department_id, job_title, avatar_color,
   weekly_capacity_hours, max_concurrent_tasks, extra_permissions, revoked_permissions,
-  is_active, must_change_password, token_version, photo_version, theme_mode, theme_accent
+  is_active, must_change_password, token_version, photo_version, theme_mode, theme_accent, timezone
 `;
 
 export function signToken(user) {

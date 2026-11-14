@@ -60,7 +60,6 @@ const noticeRoute = (type) => ATTENDANCE_TYPES[type] || MARKETING_TYPES[type] ||
 // picked by route rather than position, so adding a nav item never silently
 // reshuffles the phone tab bar
 const MOBILE_PATHS = ['/', '/board', '/my-tasks', '/goals', '/notes'];
-const MOBILE_NAV = MOBILE_PATHS.map((path) => NAV.find((item) => item.to === path)).filter(Boolean);
 
 export default function Layout({ children }) {
   const { user, signOut, can } = useAuth();
@@ -87,8 +86,13 @@ export default function Layout({ children }) {
   const enabled = (item) => !item.module || settings?.[item.module]?.enabled !== false;
   const allowed = (item) => (!item.permission || can(item.permission)) && enabled(item);
 
-  const visible = NAV.filter(allowed);
-  const mobileVisible = MOBILE_NAV.filter(allowed);
+  // My workspace as home: "/" is My workspace and the overview keeps its own
+  // entry; for everyone else the navigation is exactly as before
+  const nav = user?.workspace_home
+    ? [{ to: '/', label: 'My workspace', icon: 'dashboard', end: true }, { to: '/overview', label: 'Overview', icon: 'dashboard' }, ...NAV.slice(1)]
+    : NAV;
+  const visible = nav.filter(allowed);
+  const mobileVisible = MOBILE_PATHS.map((path) => nav.find((item) => item.to === path)).filter(Boolean).filter(allowed);
 
   const [soundOn, setSoundOn] = useState(soundEnabled());
   const [openTaskId, setOpenTaskId] = useState(null);
@@ -150,7 +154,9 @@ export default function Layout({ children }) {
     };
   }, [loadNotifications]);
 
+  const EXTRA_TITLES = { '/workspace': 'My workspace', '/overview': 'Overview', '/applications': 'Applications', '/meetings': 'Meetings' };
   const pageTitle = visible.find((item) => (item.end ? location.pathname === item.to : location.pathname.startsWith(item.to)))?.label
+    || Object.entries(EXTRA_TITLES).find(([p]) => location.pathname.startsWith(p))?.[1]
     || 'TaskFlow';
 
   return (
