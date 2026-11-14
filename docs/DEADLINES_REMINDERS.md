@@ -114,9 +114,28 @@ Problem numbers below follow the brief.
   needs an approved new deadline.
 - **Blocks:** the owner records one, an approver accepts it, and it is cleared
   later. An accepted block pauses marks (D3).
-- **The overdue review page:** mine and my team's. Each task gets a new date,
-  blocked, done with evidence, or defer. Everything is previewed before it is
-  saved, and decisions waiting for you are listed on the same page.
+- **The overdue review page:** mine, my team's, or all of it. Each task gets a
+  new date, blocked, done with evidence, or defer. Everything is previewed
+  before it is saved, and decisions waiting for you are listed on the same
+  page.
+  - **Filters:** project, goal, department and owner always show. "More
+    filters" adds supporter, reporter, lead or organisation, deal, tag,
+    priority, status, type, how long overdue, and "only with a request or
+    block waiting". There is also a search box.
+  - **Projects.** TaskFlow has no separate projects, so a project is a task
+    with subtasks. Choosing one shows that task and its overdue subtasks.
+  - **Counts.** Each choice shows how many tasks it would leave, given the
+    other filters and the Mine / My team / All switch. Choices that would
+    leave nothing are hidden, unless already chosen.
+  - **Grouping and sorting.** The list can be grouped by project, goal,
+    department or owner, and sorted oldest first, most recent first or by
+    priority.
+  - **Sharing.** Filters, grouping and sorting are kept in the address, so a
+    filtered list can be shared.
+  - **Hidden decisions.** If a filter hides a task you have already decided,
+    the page says so; that decision is still previewed and saved.
+  - **Each row** shows the task's department, project, goals, organisation and
+    tags, so it is clear why it matched.
 - **The task dialog** asks why when the deadline moves. Its "Deadline and
   reminders" panel shows the history, waiting decisions, defer, block, resume,
   and every reminder.
@@ -171,14 +190,16 @@ tomorrow before switching to Live.
 
 ## What was tested
 
-- **Server: 630 tests, all passing.** This includes 43 new ones:
+- **Server: 631 tests, all passing.** This includes 44 new ones:
   - `tests/deadlines.test.js`: 13 tests (problems 1–4, 20, 21, counts, saved
     views);
   - `tests/taskReminders.test.js`: 15 tests (problems 6–13, test mode, double
     sending, fallback, acknowledgement, CRM follow-ups, coverage, the weekly
     backlog review);
-  - `tests/deadlineChanges.test.js`: 7 tests (problem 5, D1, deferral, D3, the
-    overdue review);
+  - `tests/deadlineChanges.test.js`: 8 tests (problem 5, D1, deferral, D3, the
+    overdue review and its filters: project, goal, department, person,
+    supporter, tag, age, search, the counts on each choice, the scope switch,
+    and that a filter never shows work outside your scope);
   - `tests/blackmarkFairness.test.js`: 8 tests (problems 14–19, recheck
     reasons, the three counts).
 - **Client: 124 tests, all passing**, including 2 new label tests.
@@ -196,12 +217,16 @@ tomorrow before switching to Live.
   - Deadline moves in api.test.js now send a reason.
   - Three tests that back-date a deadline mark their rule as having been in
     force for a while.
-- **Browser walk-through:** 33 checks, all passing. It used made-up people in
-  a separate schema, on desktop and phone, in light and dark, and Google Chat
-  was not connected.
-- **Accessibility:** axe-core found no violations on 11 screens. Two older
-  problems were fixed along the way: the task progress bar's label, and the
-  black-marks filters' names.
+- **Browser walk-through:** 45 checks, all passing, including 12 for the
+  overdue review filters. It used made-up people, a made-up project and made-up
+  goals in a separate schema, on desktop and phone, in light and dark, and
+  Google Chat was not connected.
+- **Accessibility:** axe-core found no violations on 13 screens. Three older
+  problems were fixed along the way:
+  - the task progress bar's label;
+  - the black-marks filters' names;
+  - subtask cards, where the "Subtask of …" button sat inside the card's own
+    button and could not be reached. It now sits beside it.
 
 ## Not verified
 

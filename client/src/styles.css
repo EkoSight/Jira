@@ -522,6 +522,9 @@ button, input, select, textarea {
   border-left: 3px solid var(--border);
 }
 .task-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow); }
+/* the card's body is its button (see TaskCard.jsx); it lays out like the card did */
+.task-card-open { display: flex; flex-direction: column; gap: 8px; border-radius: 4px; }
+.task-card-open:focus-visible { outline: 2px solid var(--brand); outline-offset: 5px; }
 .task-card.dragging { opacity: 0.4; }
 .task-card-title { font-weight: 550; font-size: 13.5px; line-height: 1.35; }
 .task-card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -4306,10 +4309,28 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .review-fields label { display: flex; flex-direction: column; gap: 3px; min-width: 160px; }
 .review-fields label.grow { flex: 1 1 220px; }
 .review-footer { border-top: 1px solid var(--border); background: var(--surface-2); }
+/* overdue review: filters, what each task belongs to, and groups */
+.review-filter-bar { border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.review-filter-bar .filters .select { flex: 1 1 150px; max-width: 280px; }
+.review-filter-bar .review-search { flex: 1 1 160px; max-width: 240px; }
+.review-filter-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.review-filter-foot .filters .select { flex: 0 1 auto; }
+.review-context { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: var(--ink-2); }
+.review-context > span:not(.kind-chip) + span:not(.kind-chip)::before { content: "·"; margin-right: 10px; color: var(--ink-muted); }
+.review-group-block + .review-group-block { margin-top: 10px; }
+.review-group-head {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0; padding: 6px 0; border-bottom: 2px solid var(--border);
+  font-size: 13px; font-weight: 700;
+}
+.review-group-head .muted { font-weight: 600; font-variant-numeric: tabular-nums; }
 .deadline-panel { margin-top: 12px; }
 .deadline-panel table.data td, .deadline-panel table.data th { padding: 6px 8px; }
 @media (max-width: 640px) {
   .review-row { flex-direction: column; }
   .review-row .select { width: 100%; }
+  .review-filter-bar .filters .select, .review-filter-bar .review-search { flex: 1 1 calc(50% - 4px); max-width: none; }
+  .review-filter-foot .filters { width: 100%; }
+  .review-filter-foot .filters .btn { flex: 1 1 100%; }
   .review-fields label { min-width: 0; flex: 1 1 100%; }
 }

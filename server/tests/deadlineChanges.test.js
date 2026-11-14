@@ -243,3 +243,72 @@ test('the overdue review screen: mine and my scope; the preview writes nothing; 
   assert.ok(waiting.changes.some((c) => c.task_id === late3 && c.kind === 'DEFER'));
   assert.ok(waiting.blocks.some((b) => b.task_id === dealTask));
 });
+
+test('the overdue review filters by project, goal, department, person, tag and age, and lists every choice with its count', async (t) => {
+  if (skip(t)) return;
+  // a second department, a project (parent task) with two late subtasks, a goal, tags and a supporter
+  const { rows: [field] } = await query(`INSERT INTO departments (key, name, color, position) VALUES ('FLD', 'Field', '#2a9d6a', 2) RETURNING id`);
+  const project = await mkTask({ title: 'Project: launch the soil kit', inMs: -2 * DAY });
+  const sub1 = await mkTask({ title: 'Kit: print the leaflets', inMs: -10 * DAY });
+  const sub2 = await mkTask({ title: 'Kit: book the stall', inMs: -HOUR, owner: ids.ravi });
+  await query('UPDATE tasks SET parent_task_id = $1 WHERE id = ANY($2::int[])', [project, [sub1, sub2]]);
+  const fieldTask = await mkTask({ title: 'Field: visit the trial plots', inMs: -2 * DAY });
+  await query(`UPDATE tasks SET department_id = $1, tags = '{monsoon,trial}', priority = 'high', follower_id = $2 WHERE id = $3`, [field.id, ids.lead, fieldTask]);
+  await query('INSERT INTO task_collaborators (task_id, user_id) VALUES ($1, $2)', [sub1, ids.ravi]);
+  const { rows: [goal] } = await query(
+    `INSERT INTO objectives (title, scope_type, owner_user_id, start_date, end_date) VALUES ('Grow kit sales', 'COMPANY', $1, now(), now() + interval '90 days') RETURNING id`,
+    [ids.admin],
+  );
+  const { rows: [kr] } = await query(`INSERT INTO key_results (objective_id, title, owner_user_id) VALUES ($1, 'Sell 500 kits', $2) RETURNING id`, [goal.id, ids.admin]);
+  await query('INSERT INTO task_key_result_links (task_id, key_result_id, is_primary) VALUES ($1, $2, TRUE), ($3, $2, TRUE)', [sub1, kr.id, fieldTask]);
+
+  const get = async (qs, token = tokens.admin) => ok(await call('GET', `/task-review/overdue${qs}`, { token }));
+  const ids_ = (r) => r.tasks.map((x) => x.id).sort((a, b) => a - b);
+  const all = await get('');
+  assert.equal(all.matching, all.total, 'no filter: everything in scope');
+
+  // every choice is listed with its count, over the unfiltered list
+  const option = (key, label) => all.facets[key].find((o) => o.label === label);
+  assert.equal(option('department_id', 'Field').count, 1);
+  assert.equal(option('project_id', `DC-${refN - 3} Project: launch the soil kit`).count, 3, 'the project and its two subtasks');
+  assert.equal(option('goal_id', 'Grow kit sales').count, 2);
+  assert.equal(option('tag', 'monsoon').count, 1);
+  assert.ok(option('supporter_id', 'Lead Sample') && option('supporter_id', 'Ravi Sample'), 'followed and tagged both count as supporting');
+  assert.deepEqual(all.facets.priority.map((o) => o.value).filter((v) => ['high', 'medium'].includes(v)), ['high', 'medium'], 'priorities in their own order');
+
+  // each filter narrows to exactly what it says
+  assert.deepEqual(ids_(await get(`?department_id=${field.id}`)), [fieldTask]);
+  assert.deepEqual(ids_(await get(`?project_id=${project}`)), [project, sub1, sub2].sort((a, b) => a - b));
+  assert.deepEqual(ids_(await get(`?goal_id=${goal.id}`)), [sub1, fieldTask].sort((a, b) => a - b));
+  assert.deepEqual(ids_(await get('?tag=trial')), [fieldTask]);
+  assert.deepEqual(ids_(await get(`?supporter_id=${ids.ravi}`)), [sub1]);
+  assert.ok((await get(`?assignee_id=${ids.ravi}`)).tasks.every((x) => x.assignee_id === ids.ravi));
+  assert.ok((await get('?overdue_days=7')).tasks.every((x) => Date.now() - new Date(x.due_date).getTime() >= 7 * DAY));
+  assert.ok((await get('?overdue_days=7')).tasks.some((x) => x.id === sub1));
+  // several filters together: all must hold; several values of one filter: any of them
+  assert.deepEqual(ids_(await get(`?goal_id=${goal.id}&department_id=${ids.dept}`)), [sub1]);
+  assert.deepEqual(ids_(await get(`?department_id=${field.id}&project_id=${project}`)), []);
+  const either = await get(`?tag=trial&project_id=${project}`);
+  assert.equal(either.matching, 0, 'different filters are "and"');
+  assert.deepEqual(ids_(await get(`?assignee_id=${ids.ravi},${ids.isha}&project_id=${project}`)), [project, sub1, sub2].sort((a, b) => a - b));
+  assert.deepEqual(ids_(await get('?search=trial plots')), [fieldTask]);
+  // each filter's counts follow the other filters: within Field, only Field's owner is counted
+  const inField = await get(`?department_id=${field.id}`);
+  assert.deepEqual(inField.facets.assignee_id.filter((o) => o.count > 0).map((o) => [o.label, o.count]), [['Isha Sample', 1]]);
+  assert.ok(inField.facets.department_id.find((o) => o.label === 'Operations').count > 0, 'a filter does not count against its own choices');
+  // the Mine / My team switch: Isha's own work, and the counts on each side
+  const ishaAll = await get(`?goal_id=${goal.id}`, tokens.isha);
+  const ishaMine = await get(`?goal_id=${goal.id}&scope=mine`, tokens.isha);
+  assert.equal(ishaMine.matching, ishaAll.mine);
+  assert.ok(ishaMine.tasks.every((x) => x.mine));
+  assert.equal(ishaMine.facets.goal_id[0].count, ishaMine.matching);
+  const sorted = await get('?sort=newest');
+  assert.ok(sorted.tasks.every((x, i, a) => i === 0 || new Date(a[i - 1].due_date) >= new Date(x.due_date)));
+
+  // filters never widen what a person may see: a colleague asking for the project sees only their own subtask
+  assert.deepEqual(ids_(await get(`?project_id=${project}`, tokens.ravi)), [sub2]);
+  // the goal list leaves out archived goals
+  await query('UPDATE objectives SET is_archived = TRUE WHERE id = $1', [goal.id]);
+  assert.equal((await get('')).facets.goal_id.length, 0);
+  assert.equal((await get(`?goal_id=${goal.id}`)).matching, 0);
+});

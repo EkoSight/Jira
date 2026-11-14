@@ -28,13 +28,51 @@ const id = (v) => Number(v);
 
 const TASKS = `SELECT t.id, t.ref, t.title, t.due_date, t.original_due_date, t.due_date_changes, t.review_date, t.deferral_id, t.next_action,
          t.assignee_id, t.reporter_id, t.department_id, t.priority, t.status_id, t.blocked_reason, t.account_id, t.opportunity_id,
+         t.parent_task_id, t.task_type, t.tags, t.follower_id,
          s.stage, s.name AS status_name, s.color AS status_color, u.full_name AS assignee_name, u.avatar_color AS assignee_color,
-         d.name AS department_name,
+         d.name AS department_name, r.full_name AS reporter_name, f.full_name AS follower_name,
+         p.ref AS parent_ref, p.title AS parent_title, acc.name AS account_name, opp.name AS opportunity_name,
+         (SELECT COALESCE(json_agg(json_build_object('id', cu.id, 'name', cu.full_name)), '[]'::json)
+            FROM task_collaborators tc JOIN users cu ON cu.id = tc.user_id WHERE tc.task_id = t.id) AS tagged,
+         (SELECT COALESCE(json_agg(DISTINCT jsonb_build_object('id', o.id, 'title', o.title)), '[]'::json)
+            FROM task_key_result_links l JOIN key_results kr ON kr.id = l.key_result_id JOIN objectives o ON o.id = kr.objective_id
+           WHERE l.task_id = t.id AND kr.is_archived = FALSE AND o.is_archived = FALSE) AS goals,
          (SELECT row_to_json(c) FROM task_deadline_changes c WHERE c.task_id = t.id AND c.status = 'PENDING' ORDER BY c.id DESC LIMIT 1) AS pending_change,
          (SELECT row_to_json(b) FROM task_blocks b WHERE b.task_id = t.id AND b.status IN ('PENDING', 'ACCEPTED') ORDER BY b.id DESC LIMIT 1) AS open_block
-    FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id JOIN departments d ON d.id = t.department_id LEFT JOIN users u ON u.id = t.assignee_id`;
+    FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id JOIN departments d ON d.id = t.department_id
+    LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN users r ON r.id = t.reporter_id LEFT JOIN users f ON f.id = t.follower_id
+    LEFT JOIN tasks p ON p.id = t.parent_task_id
+    LEFT JOIN accounts acc ON acc.id = t.account_id LEFT JOIN opportunities opp ON opp.id = t.opportunity_id`;
 
-/** Overdue work: mine, and (for approvers) the work I can decide on. */
+const DAY_MS = 86_400_000;
+
+/**
+ * What each overdue task can be filtered by, and the value(s) it has for each:
+ * department, owner, who asked for it, supporters, project (the parent task
+ * that groups subtasks; a parent counts as its own project), goal, lead or
+ * organisation, deal, tag, priority, status and type.
+ */
+const FACETS = {
+  department_id: (t) => [[t.department_id, t.department_name]],
+  assignee_id: (t) => [[t.assignee_id || 'none', t.assignee_name || 'No owner']],
+  reporter_id: (t) => (t.reporter_id ? [[t.reporter_id, t.reporter_name]] : []),
+  supporter_id: (t) => [...(t.follower_id ? [[t.follower_id, t.follower_name]] : []), ...(t.tagged || []).map((p) => [p.id, p.name])],
+  // a subtask belongs to its parent's project; a task with subtasks is a project itself
+  project_id: (t) => [
+    ...(t.parent_task_id ? [[t.parent_task_id, `${t.parent_ref} ${t.parent_title}`]] : []),
+    ...(t.subtask_count > 0 ? [[t.id, `${t.ref} ${t.title}`]] : []),
+  ],
+  goal_id: (t) => (t.goals || []).map((g) => [g.id, g.title]),
+  account_id: (t) => (t.account_id ? [[t.account_id, t.account_name]] : []),
+  opportunity_id: (t) => (t.opportunity_id ? [[t.opportunity_id, t.opportunity_name]] : []),
+  tag: (t) => (t.tags || []).map((tag) => [tag, tag]),
+  priority: (t) => [[t.priority, t.priority]],
+  stage: (t) => [[t.stage, t.status_name]],
+  task_type: (t) => [[t.task_type, t.task_type]],
+};
+const PRIORITY_ORDER = ['critical', 'high', 'medium', 'low'];
+
+/** Overdue work: mine, and (for approvers) the work I can decide on, with filters and what can be filtered by. */
 router.get('/overdue', asyncHandler(async (req, res) => {
   const c = await deadlineClock();
   const all = hasPermission(req.currentUser, 'task.edit.any');
@@ -43,11 +81,76 @@ router.get('/overdue', asyncHandler(async (req, res) => {
       WHERE t.is_archived = FALSE AND s.stage NOT IN ('done', 'cancelled') AND t.deferral_id IS NULL AND t.due_date < now()
         AND t.followup_kind IS NULL
         AND (t.assignee_id = $1 OR ${APPROVER_SQL})
-      ORDER BY t.due_date ASC LIMIT 500`,
+      ORDER BY t.due_date ASC LIMIT 2000`,
     [req.currentUser.id, all],
   );
-  const tasks = withHealth(rows, c).map((t) => ({ ...t, mine: t.assignee_id === req.currentUser.id }));
-  res.json({ tasks, mine: tasks.filter((t) => t.mine).length, team: tasks.filter((t) => !t.mine).length });
+  // which of these are projects (have subtasks of their own)
+  const ids = rows.map((r) => r.id);
+  const { rows: parents } = ids.length
+    ? await query('SELECT parent_task_id AS id, COUNT(*)::int AS n FROM tasks WHERE parent_task_id = ANY($1::int[]) AND is_archived = FALSE GROUP BY parent_task_id', [ids])
+    : { rows: [] };
+  const subtasks = new Map(parents.map((p) => [p.id, p.n]));
+  const base = withHealth(rows, c).map((t) => ({ ...t, subtask_count: subtasks.get(t.id) || 0, mine: t.assignee_id === req.currentUser.id }));
+
+  // the filters asked for: each one narrows; several values of one filter are "any of"
+  const q = req.query;
+  const wanted = {};
+  for (const key of Object.keys(FACETS)) if (q[key]) wanted[key] = String(q[key]).split(',').filter(Boolean);
+  const minDays = Number(q.overdue_days) || 0;
+  const term = String(q.search || '').trim().toLowerCase();
+  const inScope = (t) => (q.scope === 'mine' ? t.mine : q.scope === 'team' ? !t.mine : true);
+  /** Whether a task passes every filter, leaving one out (to count that filter's choices). */
+  const passes = (t, except = null) => {
+    for (const [key, w] of Object.entries(wanted)) {
+      if (key === except) continue;
+      if (!FACETS[key](t).some(([v]) => w.includes(String(v)))) return false;
+    }
+    if (minDays && (c.now.getTime() - new Date(t.due_date).getTime()) < minDays * DAY_MS) return false;
+    if (q.waiting === '1' && !t.pending_change && !(t.open_block && t.open_block.status === 'PENDING')) return false;
+    if (term && !`${t.ref} ${t.title} ${t.next_action || ''}`.toLowerCase().includes(term)) return false;
+    return true;
+  };
+  const filtered = base.filter((t) => passes(t));
+  const tasks = filtered.filter(inScope);
+  if (q.sort === 'newest') tasks.sort((x, y) => new Date(y.due_date) - new Date(x.due_date));
+  else if (q.sort === 'priority') tasks.sort((x, y) => PRIORITY_ORDER.indexOf(x.priority) - PRIORITY_ORDER.indexOf(y.priority) || new Date(x.due_date) - new Date(y.due_date));
+  else tasks.sort((x, y) => new Date(x.due_date) - new Date(y.due_date));
+
+  // Every choice, with how many tasks it would show given the other filters and
+  // the Mine / My team switch. Choices come from everything in scope, so a
+  // chosen one keeps its name even when it now matches nothing.
+  const facets = {};
+  for (const [key, valuesOf] of Object.entries(FACETS)) {
+    const options = new Map();
+    for (const t of base) {
+      for (const [value, label] of valuesOf(t)) {
+        if (value === null || value === undefined) continue;
+        const k = String(value);
+        if (!options.has(k)) options.set(k, { value: k, label: label || k, count: 0 });
+      }
+    }
+    for (const t of base) {
+      if (!inScope(t) || !passes(t, key)) continue;
+      for (const k of new Set(valuesOf(t).map(([v]) => String(v)))) if (options.has(k)) options.get(k).count += 1;
+    }
+    facets[key] = [...options.values()].sort((x, y) => (key === 'priority'
+      ? PRIORITY_ORDER.indexOf(x.value) - PRIORITY_ORDER.indexOf(y.value)
+      : y.count - x.count || String(x.label).localeCompare(String(y.label))));
+  }
+
+  res.json({
+    tasks: tasks.slice(0, 500),
+    total: base.filter(inScope).length,
+    matching: tasks.length,
+    // how many match the filters on each side of the Mine / My team switch
+    mine: filtered.filter((t) => t.mine).length,
+    team: filtered.filter((t) => !t.mine).length,
+    all_mine: base.filter((t) => t.mine).length,
+    all_team: base.filter((t) => !t.mine).length,
+    // more than 2000 overdue in scope: the choices and counts cover the oldest 2000
+    capped: rows.length >= 2000,
+    facets,
+  });
 }));
 
 /** Requests and blocks waiting for my decision. */

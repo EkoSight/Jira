@@ -991,11 +991,14 @@ See `DEADLINES_REMINDERS.md`. Deadline health comes from `shared/deadlineHealth.
 
 ## Deadline changes, deferrals, blocks and the overdue review
 
-Under `/task-review`.
+Under `/task-review`. TaskFlow has no separate projects: a project is a task
+with subtasks. Filtering by a project shows the task itself and its subtasks.
+Goals are objectives reached through the key results a task is linked to;
+archived goals are left out.
 
 | Method | Route | Permission |
 |---|---|---|
-| GET | `/overdue` | signed in — your overdue tasks and those you can approve (`mine` per task) |
+| GET | `/overdue` | signed in — your overdue tasks and those you can approve (`mine` per task). Filters, each narrowing; a comma list within one is "any of": `project_id`, `goal_id`, `department_id`, `assignee_id` (or `none`), `supporter_id`, `reporter_id`, `account_id`, `opportunity_id`, `tag`, `priority`, `stage`, `task_type`, `overdue_days` (at least N days late), `waiting=1`, `search`, `scope=mine/team/all` (default all), `sort=newest/priority` (default oldest first). Replies `{ tasks (up to 500), total, matching, mine, team, all_mine, all_team, capped, facets }`; `facets` has, per filter, every `{ value, label, count }`, where `count` is how many the choice would show with the other filters and the scope applied. Filters never widen what you can see |
 | GET | `/waiting` | signed in — deadline changes, deferrals and blocks waiting for your decision, and your own waiting requests |
 | POST | `/preview` | signed in — `{ items: [{ task_id, action: NEW_DATE/BLOCKED/DONE/DEFER, due?, reason?, review_date?, next_action?, dependency_text?, evidence?, evidence_url? }] }` → what each would do; writes nothing |
 | POST | `/apply` | the same body; each item applied or asked for, with its result |
