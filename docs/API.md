@@ -938,6 +938,67 @@ is recorded. Send a new id for each new call, and the same id when retrying.
 | POST | `/location-suggestions/generate` | `crm.settings` — builds the review list; changes no lead |
 | GET | `/reports/calling` | adds `funnel`: attempts, leads called, conversations, leads spoken to, qualified, orders, money received, plus inbound calls, marked repeats and imported attempts shown apart |
 
+## Sales CRM — calls from company phones
+
+See `SIM_CALLING.md`. People's routes are under `/sales`, behind `crm.view`;
+the phone's own routes are under `/device`, with `Authorization: Device <token>`
+(the token reaches nothing else). Refusals are 409 with `details.code`.
+
+**Calls**
+
+| Method | Route | Permission |
+|---|---|---|
+| POST | `/calls/start` | `crm.activity.log` — `{ lead_id \| account_id + contact_id \| opportunity_id, phone?, via: DIALLER\|ANDROID_APP, request_id?, override_reason?, dialled_at? }` → `{ call, callback_reason, hours_override_reason, recording: { on, objected, kept } }`. Refused: `OPTED_OUT`, `DAILY_CAP`, `OUTSIDE_HOURS` (send `override_reason`). `dialled_at` (last 12 hours) for a call made offline |
+| GET | `/calls/hours` | whether calling is allowed now |
+| GET | `/calls/pending` | your calls still waiting for "how did it go" |
+| GET | `/calls/recent?hours=` | your calls of the last day (1–72 h), with `has_recording` and `do_not_record` |
+| GET | `/calls/:id/live` | can see the call — `connected`, `talk_sec`, `duration_source`, recording |
+| POST | `/leads/:id/call-status`, `/calls` | as before, plus `call_id` (fills in that call), `duration_source: TYPED\|ESTIMATED`; `call-status` also `opt_out: { calls: true, messages? }` |
+| POST | `/calls/:id/no-recording` | the caller (or `crm.manage.any`) — this call is not recorded, and the lead or contact is marked "do not record" |
+| POST | `/leads/:id/do-not-record`, `/contacts/:id/do-not-record` | owner or assigner / can see the organisation — `{ value, reason? }` |
+| POST | `/calls/:id/recording` | `crm.activity.log`, your own call — multipart `file`, `source: ATTACHED\|SHARED`. Refused: `RECORDINGS_OFF`, `TYPE`, `EMPTY`, `TOO_LARGE`, `UNREADABLE`, `DO_NOT_RECORD`, `ALREADY_HAS_RECORDING`, `WRONG_FILE` |
+| POST | `/calls/:id/recording/link` | your call, or `crm.recordings` — `{ download? }` (download needs `crm.recordings`) → a link valid 10 minutes, under `/s/recordings/` (ranges supported). Audited |
+| POST | `/calls/:id/recording/hold`, `/release` | `crm.settings` — `{ reason }`: kept past the retention period, or not |
+| POST | `/calls/complaint` | `crm.activity.log` — `{ lead_id \| contact_id \| call_id, what_they_said }`: opts the number out, tells administrators |
+| GET | `/leads/:id` | adds `calling: { opted_out, no_messages, do_not_record }` |
+| GET | `/reports/calling` | adds `talk_measured_seconds`, `talk_typed_seconds`, `talk_estimated_seconds` per person |
+
+**The policy, Settings → Calls from company phones**
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/calling/policy` | signed in — the opening sentence and staff policy for you, and whether you accepted its current version |
+| POST | `/calling/policy/ack` | signed in — `{ version, device_id? }`; 409 `POLICY_CHANGED` for an old version |
+| GET / PUT | `/calling/setup` | `crm.settings` — recordings, retention months, the phone's copy, calling hours, daily limit, sizes, the words, the notice's details. Switching recordings on is refused (`RECORDING_BLOCKED`) until the notice is complete and published |
+| GET | `/calling/notice/preview` | `crm.settings` — the saved notice, in each language |
+| POST | `/calling/notice/publish` | `crm.settings` — publishes the saved notice (`NOTICE_INCOMPLETE` when details are missing) |
+| GET | `/calling/review?from=&to=` | `crm.settings` — opt-outs, complaints, calls outside hours, leads at the daily limit |
+| GET | `/calling/optouts?all=1` | `crm.settings` — the call opt-outs, complaints, complaints in the last 10 days |
+| POST | `/calling/optouts/lift` | `crm.settings` — `{ address, reason }` |
+| POST | `/calling/optouts/import/preview`, `/apply` | `crm.settings` — `{ text }`, then `{ text, fingerprint }` exactly as previewed |
+| POST | `/calling/devices/register` | `crm.activity.log` — `{ install_id, info, asset_label?, sim_number? }` → `{ device, token, recording_mode }` (the token is shown once) |
+| GET | `/calling/devices` | `crm.settings` — every phone, its person, dialler, recording mode, permissions, sync, warnings |
+| POST | `/calling/devices/:id/hand-over`, `/revoke`, `/allow`; PATCH `/calling/devices/:id` | `crm.settings` |
+| PUT | `/calling/dialler-modes` | `crm.settings` — `{ package, mode: AUTOMATIC\|SHARE_BY_HAND\|NONE, folder_hint?, note? }` |
+| POST | `/calling/app` | `crm.settings` — multipart `file` (.apk), `version`, `notes` |
+| POST | `/calling/app/link` | `crm.activity.log` — a download link valid 30 minutes |
+
+**The phone (`/device`, device token)**
+
+| Method | Route | |
+|---|---|---|
+| GET | `/config` | settings for this phone: syncing, recordings, the phone's copy, recording mode, the policy |
+| POST | `/heartbeat` | `{ info, permissions, folder_chosen, work_sim, setup, last_error }` → the config |
+| GET | `/numbers` | the day's salt and the hashes of numbers it may send: `numbers`, `opted_out`, `no_record` |
+| POST | `/call-log` | `{ entries: [{ log_id, number, type, started_at, duration_sec, sim?, call_id? }] }` (≤ 200) → per entry `ATTACHED`, `CREATED`, `DUPLICATE`, `REFUSED` (with a reason) or `FAILED` |
+| POST | `/recordings` | multipart `file` with `call_id` or `log_key`, `source?: SHARED` → `{ recording, duplicate, sha256 }` |
+| POST | `/policy/ack` | `{ version }` |
+| POST | `/sign-out` | ends this phone's sign-in |
+| GET | `/app` | the newest app version and a download link |
+
+**Public (`/s`)**: `GET /privacy?lang=en|hi` (404 until published),
+`GET /recordings/:token`, `GET /app/:token`.
+
 ## Profile photos
 
 Under `/photos`, signed in. See `BRANDING_PHOTOS.md`. Uploads are

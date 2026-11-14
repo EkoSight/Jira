@@ -76,6 +76,13 @@ no customer was messaged.
     its reminders (planned, sent, not sent and why, cancelled or skipped).
   - Opening a reminder takes you to the lead and marks the reminder as seen.
 
+### Calling from company phones
+
+The Call button now records the call before the phone dials, and "How did the
+call go?" fills in that same call, with its length from the phone (in the
+TaskFlow Android app) or estimated (in a browser). Recordings, opt-outs,
+complaints and the phone setup are described in `SIM_CALLING.md`.
+
 ## For administrators
 
 - **Sales CRM settings → Follow-up reminders & daily summary:**

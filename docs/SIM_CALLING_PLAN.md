@@ -1,5 +1,7 @@
 # Calling from company phones: plan
 
+> **Built.** What was built, how it was tested and how to roll it out: `SIM_CALLING.md`. This plan is kept as written before building; where they differ, `SIM_CALLING.md` describes what exists (for example, sample audio is generated in the tests rather than with ffmpeg, and the app uses Android's JobScheduler rather than WorkManager).
+
 This plan is written from the brief "calling leads from company Android phones and
 SIMs". Results and the test record go in `SIM_CALLING.md`.
 
