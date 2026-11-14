@@ -535,44 +535,52 @@ router.post(
   }),
 );
 
-/** Days that need a reviewer: extra time waiting, unrecorded days, missing check-outs. */
+/**
+ * Days that need a reviewer: extra time waiting, unrecorded days, missing
+ * check-outs. The review queue and My workspace's "Needs my decision" both
+ * use this, so they always agree.
+ */
+export async function reviewQueueItems(viewer, monthValue = null) {
+  const { config } = await currentPolicy();
+  const month = monthParam(monthValue, config.timezone);
+  const { first, last } = monthBounds(month);
+  const ids = (await visibleActive(viewer, null)).filter((id) => id !== viewer.id);
+  const ledgers = ids.length ? await buildLedgers(ids, first, last) : new Map();
+  const items = [];
+  for (const { user, days } of ledgers.values()) {
+    for (const d of days) {
+      // a review made before early time counted decided only the time after
+      // office hours; what waits is the time before them
+      const earlyOnly = Boolean(d.extra_review && !d.extra_review.covers_before_start && d.E_before > 0);
+      for (const blocker of d.blockers) {
+        items.push({
+          user: { id: user.id, full_name: user.full_name, avatar_color: user.avatar_color },
+          date: d.date, kind: blocker, extra_seconds: d.E_recorded, classification: d.classification,
+          session_id: d.session?.id || null, check_in_at: d.session?.check_in_at || null, check_out_at: d.session?.check_out_at || null,
+          long_session: d.flags.includes('LONG_SESSION'),
+          extra_pending: d.E_pending, extra_before: d.E_before, extra_after: d.E_after, early_arrival: d.early_arrival,
+          pending_part: earlyOnly ? 'BEFORE_START' : 'ALL',
+          earlier_review: earlyOnly ? {
+            status: d.extra_review.status, eligible_seconds: d.extra_review.eligible_seconds,
+            reviewer_name: d.extra_review.reviewer_name, reviewed_at: d.extra_review.reviewed_at,
+          } : null,
+        });
+      }
+    }
+  }
+  return {
+    month: first,
+    items,
+    // whether extra time waits for a reviewer, and when a session is long enough to be held anyway
+    policy: { extra_requires_review: config.extraRequiresReview !== false, max_session_hours: Number(config.maxSessionHours) || 14 },
+  };
+}
+
 router.get(
   '/review-queue',
   requirePermission('attendance.approve', 'attendance.extra.review'),
   asyncHandler(async (req, res) => {
-    const { config } = await currentPolicy();
-    const month = monthParam(req.query.month, config.timezone);
-    const { first, last } = monthBounds(month);
-    const ids = (await visibleActive(req.currentUser, null)).filter((id) => id !== req.currentUser.id);
-    const ledgers = ids.length ? await buildLedgers(ids, first, last) : new Map();
-    const items = [];
-    for (const { user, days } of ledgers.values()) {
-      for (const d of days) {
-        // a review made before early time counted decided only the time after
-        // office hours; what waits is the time before them
-        const earlyOnly = Boolean(d.extra_review && !d.extra_review.covers_before_start && d.E_before > 0);
-        for (const blocker of d.blockers) {
-          items.push({
-            user: { id: user.id, full_name: user.full_name, avatar_color: user.avatar_color },
-            date: d.date, kind: blocker, extra_seconds: d.E_recorded, classification: d.classification,
-            session_id: d.session?.id || null, check_in_at: d.session?.check_in_at || null, check_out_at: d.session?.check_out_at || null,
-            long_session: d.flags.includes('LONG_SESSION'),
-            extra_pending: d.E_pending, extra_before: d.E_before, extra_after: d.E_after, early_arrival: d.early_arrival,
-            pending_part: earlyOnly ? 'BEFORE_START' : 'ALL',
-            earlier_review: earlyOnly ? {
-              status: d.extra_review.status, eligible_seconds: d.extra_review.eligible_seconds,
-              reviewer_name: d.extra_review.reviewer_name, reviewed_at: d.extra_review.reviewed_at,
-            } : null,
-          });
-        }
-      }
-    }
-    res.json({
-      month: first,
-      items,
-      // whether extra time waits for a reviewer, and when a session is long enough to be held anyway
-      policy: { extra_requires_review: config.extraRequiresReview !== false, max_session_hours: Number(config.maxSessionHours) || 14 },
-    });
+    res.json(await reviewQueueItems(req.currentUser, req.query.month));
   }),
 );
 

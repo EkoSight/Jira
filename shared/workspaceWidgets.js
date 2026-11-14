@@ -71,7 +71,7 @@ export const WIDGET_TYPES = {
   },
   deals: {
     version: 1, title: 'Deals', module: 'crm', anyOf: ['crm.view'], widths: ['full', 'half'],
-    settings: ['title', 'density', 'rows', 'scope'], scopes: ['mine', 'team'], endpoint: '/workspace/widgets/deals', drill: '/pipeline',
+    settings: ['title', 'density', 'rows', 'scope'], scopes: ['mine', 'team'], endpoint: '/workspace/widgets/deals', drill: '/workspace/deals',
     description: 'Your open deals with their next action, waiting and last update',
   },
   leads_to_work: {

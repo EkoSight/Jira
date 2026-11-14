@@ -4459,3 +4459,8 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .ws-full, .ws-half { grid-column: 1 / -1; }
   .ws-editbar .btn { min-height: 40px; }
 }
+.ws-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; padding: 12px 16px 16px; }
+.ws-tiles .stat { text-decoration: none; color: inherit; }
+.ws-att { display: flex; align-items: center; }
+.ws-att > .ws-row { flex: 1; min-width: 0; }
+.ws-snooze { margin-right: 10px; flex: none; }

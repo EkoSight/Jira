@@ -18,6 +18,11 @@ import {
 } from '../services/workspace/layout.js';
 import { query } from '../db/pool.js';
 import { analyse } from '../services/okrInsights.js';
+import { VIEWS, attentionFor, snoozeItem, unsnoozeItem } from '../services/workspace/attention.js';
+import { decisionsFor } from '../services/workspace/decisions.js';
+import { waitingFor } from '../services/workspace/waiting.js';
+import { listOpportunities } from '../services/opportunities.js';
+import { crmScope } from '../services/sales/core.js';
 import { widgetAccess } from '../../../shared/workspaceWidgets.js';
 
 const router = Router();
@@ -73,6 +78,100 @@ router.get('/widgets/key_results', asyncHandler(async (req, res) => {
       key_result_id: s.key_result_id, objective_id: s.objective_id, title: s.title, objective_title: s.objective_title,
       kind: s.kind, severity: s.severity, detail: s.detail, days: s.days, url: `/goals/${s.objective_id}`,
     })),
+  });
+}));
+
+// ---------------------------------------------------------------- attention, decisions, waiting
+
+const page = (list, req) => {
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+  return { items: list.slice(offset, offset + limit), limit, offset };
+};
+
+router.get('/attention', asyncHandler(async (req, res) => {
+  const view = Object.keys(VIEWS).includes(req.query.view) ? req.query.view : 'all';
+  const data = await attentionFor(req.currentUser, { view, includeSnoozed: req.query.snoozed === '1' });
+  res.json({ ...data, ...page(data.items, req), view });
+}));
+
+const snoozeBody = z.object({ key: z.string().min(3).max(200), until: z.string().refine((v) => !Number.isNaN(Date.parse(v)), 'Choose when to bring it back') });
+router.post('/attention/snooze', asyncHandler(async (req, res) => {
+  const { key, until } = snoozeBody.parse(req.body || {});
+  const at = new Date(until);
+  if (at <= new Date()) throw badRequest('Choose a time in the future');
+  if (at > new Date(Date.now() + 90 * 86_400_000)) throw badRequest('Snooze for at most 90 days');
+  // only an item that is in the person's own queue can be snoozed
+  const { items } = await attentionFor(req.currentUser, { includeSnoozed: true });
+  const it = items.find((x) => x.key === key);
+  if (!it) throw badRequest('That item is not in your list any more');
+  await snoozeItem(req.currentUser, key, at);
+  res.json({ ok: true, key, until: at, note: 'Only your list changes. The record, its dates and its owner stay as they are.' });
+}));
+
+router.post('/attention/unsnooze', asyncHandler(async (req, res) => {
+  const { key } = z.object({ key: z.string().min(3).max(200) }).parse(req.body || {});
+  await unsnoozeItem(req.currentUser, key);
+  res.json({ ok: true });
+}));
+
+router.get('/decisions', asyncHandler(async (req, res) => {
+  const list = await decisionsFor(req.currentUser);
+  res.json({ total: list.length, ...page(list, req) });
+}));
+
+router.get('/waiting', asyncHandler(async (req, res) => {
+  const data = await waitingFor(req.currentUser);
+  res.json({ ...data, ...page(data.items, req) });
+}));
+
+/** The summary tiles: each count is the length of the list it opens. */
+router.get('/widgets/summary', asyncHandler(async (req, res) => {
+  const [att, waiting] = await Promise.all([attentionFor(req.currentUser), waitingFor(req.currentUser)]);
+  res.json({
+    tiles: [
+      { key: 'attention', label: 'Needs attention', count: att.counts.all, url: '/workspace/attention?view=all' },
+      { key: 'overdue', label: 'Overdue', count: att.counts.overdue, url: '/workspace/attention?view=overdue', tone: 'critical' },
+      { key: 'due_today', label: 'Due today', count: att.counts.due_today, url: '/workspace/attention?view=due_today', tone: 'warning' },
+      { key: 'waiting', label: 'Waiting on others', count: waiting.total, url: '/workspace/waiting' },
+      { key: 'decisions', label: 'Decisions', count: att.counts.decisions, url: '/workspace/attention?view=decisions' },
+    ],
+    snoozed: att.snoozed,
+  });
+}));
+
+/**
+ * My deals (or my team's, for people whose CRM access shows team records),
+ * outside the applications pipeline: stage, next action and date, waiting,
+ * last update from the customer. "No next action" and "Overdue" are separate.
+ */
+router.get('/widgets/deals', asyncHandler(async (req, res) => {
+  const who = await mustUse(req, 'deals');
+  const team = req.query.scope === 'team';
+  if (team && !who.teamScope.crm) throw forbidden('My team is not available to you here');
+  const scope = await crmScope(req.currentUser);
+  const deals = await listOpportunities({
+    ...(team ? { departmentId: req.currentUser.department_id || -1 } : { ownerId: req.currentUser.id }),
+    statuses: ['ACTIVE', 'ON_HOLD', 'NURTURE'], scope, limit: 1000,
+  });
+  const { rows: apps } = await query(`SELECT id FROM crm_pipelines WHERE category = 'APPLICATIONS'`);
+  const appIds = new Set(apps.map((r) => r.id));
+  const list = deals.filter((d) => !appIds.has(d.pipeline_id) && d.stage_kind === 'open').map((d) => ({
+    id: d.id, name: d.name, account_id: d.account_id, account_name: d.account_name, owner_name: d.owner_name,
+    stage_name: d.stage_name, status: d.status, next_step: d.next_step, next_step_due: d.next_step_due,
+    waiting_on: d.waiting_on, waiting_until: d.waiting_until, revisit_on: d.revisit_on,
+    last_customer_at: d.last_customer_at, last_external_at: d.last_external_at,
+    no_next_action: d.status === 'ACTIVE' && !d.next_step && !d.waiting_on,
+    overdue: Boolean(d.next_step_overdue),
+    url: `/accounts/${d.account_id}?deal=${d.id}`,
+  }));
+  list.sort((a, b) => Number(b.overdue) - Number(a.overdue) || Number(b.no_next_action) - Number(a.no_next_action)
+    || String(a.next_step_due || '9999').localeCompare(String(b.next_step_due || '9999')));
+  res.json({
+    total: list.length,
+    counts: { no_next_action: list.filter((d) => d.no_next_action).length, overdue: list.filter((d) => d.overdue).length },
+    scope: team ? 'team' : 'mine',
+    ...page(list, req),
   });
 }));
 
