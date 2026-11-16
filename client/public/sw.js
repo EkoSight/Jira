@@ -1,9 +1,14 @@
 /* TaskFlow service worker — app shell caching + offline reads. */
 // bumped to clear payroll copies cached by earlier versions, then for the new icons and branding,
-// then so no copy of call data from before the calling screens is kept
-const VERSION = 'taskflow-v4';
+// then so no copy of call data from before the calling screens is kept, then so
+// the one shared copy of everyone's reads (which the next person on the same
+// browser could be shown offline) is dropped
+const VERSION = 'taskflow-v5';
 const SHELL_CACHE = `${VERSION}-shell`;
-const DATA_CACHE = `${VERSION}-data`;
+// Offline copies of API reads are kept per sign-in: each sign-in token gets its
+// own cache, named from a hash of the token, so one person is never shown
+// another's copy. Signing in or out deletes them all (src/lib/offline.js).
+const DATA_PREFIX = `${VERSION}-data-`;
 // a recording shared to TaskFlow from the phone waits here for "Which call is this?"
 // (the same names as src/lib/sharedFiles.js)
 const SHARE_CACHE = 'taskflow-shared-recordings';
@@ -29,9 +34,34 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data === 'skip-waiting') self.skipWaiting();
+  // signing in or out: every offline copy of API reads goes, then the page is told
+  if (event.data === 'clear-data') {
+    event.waitUntil(
+      caches.keys()
+        .then((keys) => Promise.all(keys.filter((k) => /-data(-|$)/.test(k)).map((k) => caches.delete(k))))
+        .then(() => event.source?.postMessage('data-cleared')),
+    );
+  }
 });
 
 const isApiRequest = (url) => url.pathname.includes('/api/');
+
+/**
+ * The most private reads are never kept on the device at all: private notes,
+ * to-dos and the notebook, reminder preferences and My reminders. Everything
+ * else is kept only in this sign-in's own cache (so, for example, the app can
+ * still open offline with the person's own details).
+ */
+const PERSONAL = /\/api\/[^/]+\/(notes|todos|reminders|workspace\/reminders)(\/|$)/;
+
+/** The cache for this request's sign-in, or null when it has none (never cached). */
+async function dataCacheFor(request) {
+  const auth = request.headers.get('Authorization');
+  if (!auth) return null;
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(auth));
+  const hex = [...new Uint8Array(digest)].slice(0, 12).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `${DATA_PREFIX}${hex}`;
+}
 
 /**
  * A recording shared from the phone (the manifest's share target): kept for a
@@ -86,21 +116,25 @@ self.addEventListener('fetch', (event) => {
   // profile photos (and the private originals) are never kept by the offline copy:
   // a deleted photo must not linger on a shared device
   if (/\/api\/[^/]+\/photos(\/|$)/.test(url.pathname)) return;
+  // personal reads: always fresh, never kept
+  if (PERSONAL.test(url.pathname)) return;
 
   // API: network first, fall back to the last good response so the board still
-  // renders something useful when the phone drops off the network.
+  // renders something useful when the phone drops off the network — from this
+  // sign-in's own cache only.
   if (isApiRequest(url)) {
-    event.respondWith(
-      fetch(request)
+    event.respondWith((async () => {
+      const name = await dataCacheFor(request);
+      return fetch(request)
         .then((response) => {
-          if (response.ok) {
+          if (response.ok && name) {
             const copy = response.clone();
-            caches.open(DATA_CACHE).then((cache) => cache.put(request, copy));
+            caches.open(name).then((cache) => cache.put(request, copy));
           }
           return response;
         })
         .catch(async () => {
-          const cached = await caches.match(request);
+          const cached = name ? await (await caches.open(name)).match(request) : null;
           if (cached) {
             const headers = new Headers(cached.headers);
             headers.set('X-Taskflow-Offline', 'true');
@@ -110,8 +144,8 @@ self.addEventListener('fetch', (event) => {
             status: 503,
             headers: { 'Content-Type': 'application/json' },
           });
-        }),
-    );
+        });
+    })());
     return;
   }
 

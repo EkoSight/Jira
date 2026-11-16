@@ -8,24 +8,12 @@ import { query } from '../../db/pool.js';
 import { hasPermission } from '../../lib/permissions.js';
 import { getSettings } from '../settings.js';
 import { canSee, crmScope } from '../sales/core.js';
+import { canSeeTask } from '../taskAccess.js';
 
 export const ENTITY_TYPES = ['TASK', 'LEAD', 'DEAL', 'APPLICATION', 'MEETING', 'ACCOUNT', 'KEY_RESULT', 'OBJECTIVE'];
 
-async function taskVisible(user, id) {
-  if (hasPermission(user, 'task.view.all')) {
-    const { rows } = await query('SELECT 1 FROM tasks WHERE id = $1', [id]);
-    return rows.length > 0;
-  }
-  const { rows } = await query(
-    `SELECT 1 FROM tasks t
-      WHERE t.id = $1
-        AND (t.assignee_id = $2 OR t.follower_id = $2 OR t.reporter_id = $2 OR t.created_by = $2
-             OR t.department_id = $3
-             OR EXISTS (SELECT 1 FROM task_collaborators tc WHERE tc.task_id = t.id AND tc.user_id = $2))`,
-    [id, user.id, user.department_id],
-  );
-  return rows.length > 0;
-}
+/** A task: the one rule (services/taskAccess.js), and it must exist. */
+const taskVisible = (user, id) => canSeeTask(user, id);
 
 /** A meeting: with an organisation, as the organisation is seen; without one, its owner, organiser and people. */
 async function meetingVisible(user, id, scope, crmOn) {

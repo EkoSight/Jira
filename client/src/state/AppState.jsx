@@ -3,6 +3,7 @@ import { api, tokenStore, setUnauthorizedHandler } from '../api/client.js';
 import { workspaceCache } from '../lib/workspace.js';
 import { REFRESH_MS, applyBranding, cachedBranding, fetchBranding, rememberLook, resolveMode, storedAccent, storedMode } from '../lib/brand.js';
 import { clearPhotoVersions, loadPhotoVersions } from '../lib/photos.js';
+import { clearOfflineCopies } from '../lib/offline.js';
 
 const AuthContext = createContext(null);
 const ToastContext = createContext(null);
@@ -54,8 +55,10 @@ export function AuthProvider({ children }) {
   const signOut = useCallback(() => {
     tokenStore.clear();
     clearPhotoVersions();
-    // the cached copy of My workspace belongs to this sign-in only
+    // the cached copy of My workspace, and every offline copy of API reads,
+    // belong to this sign-in only
     workspaceCache.clear();
+    clearOfflineCopies();
     setUser(null);
   }, []);
 
@@ -63,6 +66,7 @@ export function AuthProvider({ children }) {
     setUnauthorizedHandler(() => {
       tokenStore.clear();
       workspaceCache.clear();
+      clearOfflineCopies();
       setUser(null);
     });
   }, []);
@@ -81,6 +85,8 @@ export function AuthProvider({ children }) {
 
   const signIn = useCallback(async (email, password) => {
     const data = await api.login(email, password);
+    // a new sign-in starts with no offline copies from anyone before
+    await clearOfflineCopies();
     tokenStore.set(data.token);
     setUser(data.user);
     return data.user;

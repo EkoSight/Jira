@@ -25,6 +25,7 @@ import { checkAssignment } from '../services/availability.js';
 import { clientCalendar, deadlineClock, withHealth } from '../services/deadlines.js';
 import { acknowledgeTaskReminders, replanTask } from '../services/taskReminders.js';
 import { requestNewDeadline } from '../services/deadlineChanges.js';
+import { canEditTask, canSeeTask, taskVisibilitySql } from '../services/taskAccess.js';
 import { MY_GROUPS, applyDueFilter, healthOf } from '../../../shared/deadlineHealth.js';
 import {
   OUTCOME_STATUSES, completionContext, isDealTask, planDealCompletion, recordDealCompletion,
@@ -86,45 +87,16 @@ const TASK_SELECT = `
 `;
 
 /**
- * Restricts the visible task set to what the caller is allowed to see.
- * Being tagged on a card grants access to it regardless of department — that is
- * the whole point of tagging someone from another team.
+ * Who may see and edit a task is decided in one place (services/taskAccess.js).
+ * These names stay so the routes that import them keep working.
  */
-export function visibilityClause(user, params) {
-  if (hasPermission(user, 'task.view.all')) return '1=1';
-  params.push(user.id, user.department_id);
-  const uid = `$${params.length - 1}`;
-  const dept = `$${params.length}`;
-  return `(
-    t.assignee_id = ${uid}
-    OR t.follower_id = ${uid}
-    OR t.reporter_id = ${uid}
-    OR t.created_by = ${uid}
-    OR t.department_id = ${dept}
-    OR EXISTS (SELECT 1 FROM task_collaborators tc WHERE tc.task_id = t.id AND tc.user_id = ${uid})
-  )`;
-}
-
-function canEdit(user, task) {
-  if (hasPermission(user, 'task.edit.any')) return true;
-  if (!hasPermission(user, 'task.edit.own')) return false;
-  // the follower is a second owner, so they can move and update the card too
-  return [task.assignee_id, task.follower_id, task.reporter_id, task.created_by].includes(user.id);
-}
-
-/** Tagged people and the follower may comment even when they cannot edit. */
-export async function canAccess(user, taskId) {
-  if (hasPermission(user, 'task.view.all')) return true;
-  const { rows } = await query(
-    `SELECT 1 FROM tasks t
-      WHERE t.id = $1
-        AND (t.assignee_id = $2 OR t.follower_id = $2 OR t.reporter_id = $2 OR t.created_by = $2
-             OR t.department_id = $3
-             OR EXISTS (SELECT 1 FROM task_collaborators tc WHERE tc.task_id = t.id AND tc.user_id = $2))`,
-    [taskId, user.id, user.department_id],
-  );
-  return rows.length > 0;
-}
+export const visibilityClause = (user, params) => taskVisibilitySql(user, params, 't');
+const canEdit = canEditTask;
+/**
+ * Tagged people and the follower may comment even when they cannot edit.
+ * (As before, someone who sees every task is answered without a lookup.)
+ */
+export const canAccess = async (user, taskId) => hasPermission(user, 'task.view.all') || canSeeTask(user, taskId);
 
 // reference allocation is shared with the recurrence spawner — see lib/taskRef.js
 const nextRef = nextTaskRef;
@@ -1420,15 +1392,36 @@ router.delete(
 
 // ---------------------------------------------------------------- checklist
 
+// A task's steps follow the task's own rules: anyone who can see the task may
+// add a step and tick one; renaming or removing a step needs edit rights on
+// the task. A step id from another task is "not found".
+
+/** The task, if this person may see it; otherwise 404 (never says it exists). */
+async function visibleTaskRow(user, taskId) {
+  const params = [Number(taskId)];
+  const visible = visibilityClause(user, params);
+  const { rows } = await query(`SELECT t.* FROM tasks t WHERE t.id = $1 AND ${visible}`, params);
+  if (!rows[0]) throw notFound('Task not found');
+  return rows[0];
+}
+
+/** A step that belongs to this task, or 404. */
+async function stepOnTask(taskId, itemId) {
+  const { rows } = await query('SELECT * FROM task_checklist_items WHERE id = $1 AND task_id = $2', [Number(itemId), Number(taskId)]);
+  if (!rows[0]) throw notFound('Checklist item not found');
+  return rows[0];
+}
+
 router.post(
   '/:id/checklist',
   asyncHandler(async (req, res) => {
     const { title } = z.object({ title: z.string().min(1).max(200) }).parse(req.body);
+    const task = await visibleTaskRow(req.currentUser, req.params.id);
     const { rows } = await query(
       `INSERT INTO task_checklist_items (task_id, title, position)
        VALUES ($1, $2, (SELECT COALESCE(MAX(position), 0) + 1 FROM task_checklist_items WHERE task_id = $1))
        RETURNING *`,
-      [req.params.id, title],
+      [task.id, title],
     );
     res.status(201).json({ item: rows[0] });
   }),
@@ -1440,6 +1433,11 @@ router.patch(
     const data = z
       .object({ title: z.string().min(1).max(200).optional(), is_done: z.boolean().optional() })
       .parse(req.body);
+    const task = await visibleTaskRow(req.currentUser, req.params.taskId);
+    const item = await stepOnTask(task.id, req.params.itemId);
+    if (data.title !== undefined && data.title !== item.title && !canEdit(req.currentUser, task)) {
+      throw forbidden('Only people who can edit this task can rename its steps');
+    }
 
     const fields = [];
     const params = [];
@@ -1451,12 +1449,11 @@ router.patch(
     }
     if (!fields.length) throw badRequest('Nothing to update');
 
-    params.push(req.params.itemId);
+    params.push(item.id);
     const { rows } = await query(
       `UPDATE task_checklist_items SET ${fields.join(', ')} WHERE id = $${params.length} RETURNING *`,
       params,
     );
-    if (!rows[0]) throw notFound('Checklist item not found');
     res.json({ item: rows[0] });
   }),
 );
@@ -1464,7 +1461,10 @@ router.patch(
 router.delete(
   '/:taskId/checklist/:itemId',
   asyncHandler(async (req, res) => {
-    await query('DELETE FROM task_checklist_items WHERE id = $1', [req.params.itemId]);
+    const task = await visibleTaskRow(req.currentUser, req.params.taskId);
+    const item = await stepOnTask(task.id, req.params.itemId);
+    if (!canEdit(req.currentUser, task)) throw forbidden('Only people who can edit this task can remove its steps');
+    await query('DELETE FROM task_checklist_items WHERE id = $1', [item.id]);
     res.json({ ok: true });
   }),
 );
