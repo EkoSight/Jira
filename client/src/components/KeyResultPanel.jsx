@@ -504,7 +504,7 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
                 <div key={entry.id} className="check-in">
                   <div className="row-between wrap">
                     <div className="row">
-                      <Avatar name={entry.user_name || 'Someone'} color={entry.avatar_color} size={20} />
+                      <Avatar userId={entry.user_id} name={entry.user_name || 'Someone'} color={entry.avatar_color} size={20} />
                       <span className="small" style={{ fontWeight: 600 }}>{entry.user_name || 'Someone'}</span>
                       {/* a task roll-up has no value of its own to move, so the
                           note is the whole update */}

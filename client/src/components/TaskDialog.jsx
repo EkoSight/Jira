@@ -2,7 +2,7 @@ import RemindMe from './workspace/RemindMe.jsx';
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, ConfirmButton, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, ConfirmButton, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import {
   Attachments,
   Collaborators,
@@ -795,9 +795,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                 {item.title}
                 {(item.owner_name || item.planned_on || item.is_done) && (
                   <span className="small muted td-step-meta">
-                    {item.owner_name && ` · ${item.owner_name}`}
+                    {item.owner_name && <> · <Who id={item.owner_user_id} name={item.owner_name} size={16} /></>}
                     {item.planned_on && !item.is_done && ` · ${item.planned_on}${item.planned_time ? ` ${item.planned_time}` : ''}`}
-                    {item.is_done && ` · ${item.done_by_name ? `${item.done_by_name}, ` : ''}${doneWords({ done: true, done_at: item.done_at, done_date_unknown: !item.done_at })}`}
+                    {item.is_done && <> · {item.done_by_name && <><Who id={item.done_by} name={item.done_by_name} size={16} />, </>}{doneWords({ done: true, done_at: item.done_at, done_date_unknown: !item.done_at })}</>}
                   </span>
                 )}
               </span>
@@ -1259,7 +1259,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
 
               {!isNew && task && (
                 <div className="row wrap small muted" style={{ gap: 14 }}>
-                  <span>Created by {task.created_by_name || 'someone'} · {formatDate(task.created_at)}</span>
+                  <span>Created by <Who id={task.created_by} name={task.created_by_name} size={16} fallback="someone" /> · {formatDate(task.created_at)}</span>
                   {task.completed_at && <span>Completed {formatDate(task.completed_at, { withTime: true })}</span>}
                   {task.due_date && <span>Deadline status: {dueLabel(task.due_date, { done: task.stage === 'done' }).text}</span>}
                 </div>
@@ -1282,7 +1282,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
               {detail.activity.length === 0 && <div className="empty small">Nothing recorded yet</div>}
               {detail.activity.map((item) => (
                 <div key={item.id} className="activity-line">
-                  <Avatar name={item.actor_name || '?'} color={item.avatar_color || '#94a3b8'} size={22} />
+                  <Avatar userId={item.actor_id} name={item.actor_name || '?'} color={item.actor_name ? item.avatar_color : '#94a3b8'} size={22} />
                   <div className="grow">
                     <strong>{item.actor_name || 'System'}</strong> {describeActivity(item)}
                     {item.field && item.to_value && (

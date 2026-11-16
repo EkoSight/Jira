@@ -4300,6 +4300,14 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 
 /* ---------------------------------------------------------------- photos, branding, look */
 .avatar-photo { object-fit: cover; background: var(--surface-3); display: inline-block; }
+/* a person in a line of text: photo, then name (Who in ui.jsx) */
+.who { display: inline-flex; align-items: center; gap: 5px; vertical-align: middle; max-width: 100%; min-width: 0; line-height: 1.25; }
+.who > .avatar { flex: none; }
+.who-name { min-width: 0; overflow-wrap: anywhere; }
+.who-stack { display: inline-flex; align-items: center; }
+.who-stack > .avatar { box-shadow: 0 0 0 2px var(--surface); }
+.who-stack > .avatar + .avatar { margin-left: -6px; }
+.kind-chip > .avatar { margin: -1px 5px -1px -5px; }
 .photo-notice { margin: 0; }
 .photo-compare { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
 .photo-compare figure { margin: 0; display: grid; gap: 6px; justify-items: center; }

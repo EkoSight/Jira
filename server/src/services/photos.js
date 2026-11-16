@@ -111,7 +111,7 @@ export async function myPhoto(userId) {
     [userId],
   );
   const { rows: proposals } = await query(
-    `SELECT pr.id, pr.note, pr.created_at, u.full_name AS proposed_by_name
+    `SELECT pr.id, pr.note, pr.created_at, pr.proposed_by, u.full_name AS proposed_by_name
        FROM user_photo_proposals pr LEFT JOIN users u ON u.id = pr.proposed_by
       WHERE pr.user_id = $1 AND pr.status = 'PENDING' ORDER BY pr.id DESC`,
     [userId],
@@ -214,6 +214,12 @@ export async function photoVersions() {
   return rows;
 }
 
+/** Everyone's colour, so a person shown by id alone keeps their own colour behind their initials. */
+export async function personColours() {
+  const { rows } = await query('SELECT id, avatar_color AS c FROM users WHERE avatar_color IS NOT NULL');
+  return rows;
+}
+
 // ---------------------------------------------------------------- suggested by an administrator
 
 /** An administrator suggests a photo; it waits for the person, who is told. */
@@ -304,7 +310,7 @@ export async function proposalPath(id, viewer, size = 256) {
 /** Suggestions waiting, for administrators. */
 export async function pendingProposals() {
   const { rows } = await query(
-    `SELECT pr.id, pr.user_id, u.full_name, pr.created_at, b.full_name AS proposed_by_name
+    `SELECT pr.id, pr.user_id, u.full_name, pr.created_at, pr.proposed_by, b.full_name AS proposed_by_name
        FROM user_photo_proposals pr JOIN users u ON u.id = pr.user_id LEFT JOIN users b ON b.id = pr.proposed_by
       WHERE pr.status = 'PENDING' ORDER BY pr.created_at DESC`,
   );

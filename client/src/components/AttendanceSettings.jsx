@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import HolidaySettings from './HolidaySettings.jsx';
 import { useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import { PRIVACY_NOTICE, WEEKDAYS, dayName, todayIn } from '../lib/attendance.js';
 
 /**
@@ -86,7 +86,7 @@ function PolicySection() {
             <h2>Policy in force</h2>
             <div className="small muted">
               Version {current.id}, from {current.effective_from === '2000-01-01' ? 'the start' : dayName(current.effective_from)}
-              {current.accepted_at ? ` · accepted by ${current.accepted_by_name}` : ' · not yet accepted'}
+              {current.accepted_at ? <> · accepted by <Who id={current.accepted_by} name={current.accepted_by_name} size={16} fallback="someone" /></> : ' · not yet accepted'}
             </div>
             {/* what changed, while it waits for acceptance */}
             {!current.accepted_at && current.note && <div className="small">{current.note}</div>}
@@ -249,11 +249,11 @@ function PeopleSection() {
           <tbody>
             {rows.filter((r) => r.is_active).map((r) => (
               <tr key={r.user_id}>
-                <td><div className="row" style={{ gap: 8 }}><Avatar name={r.full_name} color={r.avatar_color} size={24} /> {r.full_name}</div></td>
+                <td><div className="row" style={{ gap: 8 }}><Avatar userId={r.user_id} name={r.full_name} color={r.avatar_color} size={24} /> {r.full_name}</div></td>
                 <td>{r.joining_date ? dayName(r.joining_date) + ' ' + r.joining_date.slice(0, 4) : <Badge tone="warning">Missing</Badge>}</td>
                 <td className="small">{r.working_days ? r.working_days.map((d) => WEEKDAYS[d]).join(' ') : <span className="muted">Company default</span>}</td>
                 <td className="small">{r.work_mode.toLowerCase()}</td>
-                <td className="small">{r.reporting_manager_name || <span className="muted">—</span>}</td>
+                <td className="small"><Who id={r.reporting_manager_id} name={r.reporting_manager_name} size={18} fallback={<span className="muted">—</span>} /></td>
                 <td>{r.attendance_required ? <Badge tone="brand">Required</Badge> : <Badge>Not required</Badge>}</td>
                 <td><button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(r)}>Edit</button></td>
               </tr>
@@ -351,7 +351,7 @@ function AccessSection() {
             <tbody>
               {managers.map((m) => (
                 <tr key={m.id}>
-                  <td><div className="row" style={{ gap: 8 }}><Avatar name={m.full_name} color={m.avatar_color} size={24} /> {m.full_name}</div></td>
+                  <td><div className="row" style={{ gap: 8 }}><Avatar userId={m.id} name={m.full_name} color={m.avatar_color} size={24} /> {m.full_name}</div></td>
                   {departments.map((d) => (
                     <td key={d.id}>
                       <input

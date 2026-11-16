@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
+import { Badge, EmptyState, Icon, Spinner, Who } from '../components/ui.jsx';
 import TaskCard from '../components/TaskCard.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import CompleteTaskDialog from '../components/CompleteTaskDialog.jsx';
@@ -75,7 +75,7 @@ function Section({ title, relation, tasks, counts, userId, onOpen, onDone, note,
                       {relation === 'SUPPORTING' && (
                         <div className="row small muted" style={{ gap: 5, marginBottom: 3 }}>
                           <Icon name="team" size={12} />
-                          Supporting {task.assignee_name || 'nobody yet'}: {task.assignee_name ? 'they own the deadline' : 'this task needs an owner'}
+                          Supporting <Who id={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={16} fallback="nobody yet" />: {task.assignee_name ? 'they own the deadline' : 'this task needs an owner'}
                         </div>
                       )}
                       {task.recurrence_parent_id && (

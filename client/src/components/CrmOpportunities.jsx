@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import DealSales from './sales/DealSales.jsx';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import DealMoveDialog from './DealMoveDialog.jsx';
 import EscalateDialog from './EscalateDialog.jsx';
 import {
@@ -457,7 +457,7 @@ function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
           <Icon name="user" size={15} />
           <div className="grow small">
             <strong>{ROLE[h.role]} {h.role === 'OWNER' ? 'was' : 'were'} handed to you</strong>
-            {h.from_name ? ` by ${h.handed_by_name || h.from_name}` : ''}
+            {h.from_name && <> by <Who id={h.handed_by_name ? h.handed_by : h.from_user_id} name={h.handed_by_name || h.from_name} size={16} /></>}
             {h.owed ? ` · owed next: ${h.owed}` : ''}{h.reason ? ` · why: ${h.reason}` : ''}
           </div>
           <button type="button" className="btn btn-sm btn-primary" onClick={() => acknowledge(h)}>I have it</button>
@@ -465,7 +465,7 @@ function PeoplePanel({ opportunity, handovers, canEdit, onChanged }) {
       ))}
       {pendingOthers.map((h) => (
         <div key={h.id} className="small muted">
-          Handed to {h.to_name} ({ROLE[h.role]}) {relativeTime(h.created_at)} — not yet confirmed.
+          Handed to <Who id={h.to_user_id} name={h.to_name} color={h.to_color} size={16} fallback="someone" /> ({ROLE[h.role]}) {relativeTime(h.created_at)} — not yet confirmed.
         </div>
       ))}
 
@@ -792,7 +792,7 @@ function HistoryPanel({ history }) {
             {h.evidence_missing?.length > 0 && <Badge tone="critical">moved without evidence</Badge>}
           </span>
           {h.reason && <span className="history-why">“{h.reason}”</span>}
-          <span className="muted">{h.actor_name || 'Someone'} · {relativeTime(h.created_at)}</span>
+          <span className="muted"><Who id={h.actor_id} name={h.actor_name} color={h.actor_color} size={16} fallback="Someone" /> · {relativeTime(h.created_at)}</span>
         </div>
       ))}
       {history.length > 6 && (
@@ -1035,7 +1035,7 @@ function RequirementsPanel({ opportunity, canEdit, onChanged }) {
                 <div className="row wrap small muted" style={{ gap: 6, marginTop: 3 }}>
                   <Badge tone={importance.tone}>{importance.label}</Badge>
                   <span>{requirement.category.toLowerCase()}</span>
-                  {requirement.owner_name && <><span>·</span><span>{requirement.owner_name}</span></>}
+                  {requirement.owner_name && <><span>·</span><Who id={requirement.owner_user_id} name={requirement.owner_name} color={requirement.owner_color} size={16} /></>}
                   {requirement.due_date && <><span>·</span><span>by {formatDate(requirement.due_date)}</span></>}
                   {requirement.evidence_url && (
                     <a className="btn-link" href={requirement.evidence_url} target="_blank" rel="noopener noreferrer">
@@ -1442,7 +1442,7 @@ export function CommitmentsPanel({ opportunity = null, commitments = [], canEdit
                 {c.what}
                 {c.resolution_note && <span className="muted"> — {c.resolution_note}</span>}
               </span>
-              <span className="muted">{c.resolved_by_name ? `${c.resolved_by_name} · ` : ''}{relativeTime(c.resolved_at)}</span>
+              <span className="muted">{c.resolved_by_name && <><Who id={c.resolved_by} name={c.resolved_by_name} size={16} /> · </>}{relativeTime(c.resolved_at)}</span>
             </div>
           ))}
         </>
@@ -1591,7 +1591,7 @@ export default function CrmOpportunities({
                         <><span>·</span><span>closes {formatDate(opportunity.expected_close)}</span></>
                       )}
                       {opportunity.owner_name && (
-                        <><span>·</span><span>{opportunity.owner_name}</span></>
+                        <><span>·</span><Who id={opportunity.owner_user_id} name={opportunity.owner_name} color={opportunity.owner_color} size={16} /></>
                       )}
                     </span>
                     {live && <NextActionLine opportunity={opportunity} compact />}

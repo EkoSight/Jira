@@ -137,7 +137,7 @@ export function NextActionLine({ opportunity, compact = false }) {
       </span>
       <span className="next-action-meta">
         {opportunity.next_step_owner_name
-          ? <span title={`Owed by ${opportunity.next_step_owner_name}`}>{firstName(opportunity.next_step_owner_name)}</span>
+          ? <span title={`Owed by ${opportunity.next_step_owner_name}`} className="who"><Avatar userId={opportunity.next_step_owner_id} name={opportunity.next_step_owner_name} color={opportunity.next_step_owner_color} size={16} /><span className="who-name">{firstName(opportunity.next_step_owner_name)}</span></span>
           : <span className="kr-flag kr-flag-warning">who?</span>}
         {opportunity.next_step_due
           ? (
@@ -203,19 +203,19 @@ export function Clocks({ opportunity, compact = false, quietAfter = 7 }) {
 /** Who leads the deal, who owes the next move, who to escalate to, and who helps. */
 export function DealPeople({ opportunity }) {
   const people = [
-    ['Accountable owner', opportunity.owner_name, opportunity.owner_color],
-    ['Owes the next move', opportunity.next_step_owner_name, opportunity.next_step_owner_color],
-    ['Escalate to', opportunity.escalation_owner_name, opportunity.escalation_owner_color],
+    ['Accountable owner', opportunity.owner_name, opportunity.owner_color, opportunity.owner_user_id],
+    ['Owes the next move', opportunity.next_step_owner_name, opportunity.next_step_owner_color, opportunity.next_step_owner_id],
+    ['Escalate to', opportunity.escalation_owner_name, opportunity.escalation_owner_color, opportunity.escalation_owner_id],
   ];
   return (
     <div className="people-grid">
-      {people.map(([label, name, color]) => (
+      {people.map(([label, name, color, id]) => (
         <div key={label}>
           <div className="value-cell-label">{label}</div>
           <div className="row" style={{ gap: 6, marginTop: 4 }}>
             {name ? (
               <>
-                <Avatar name={name} color={color} size={22} />
+                <Avatar userId={id} name={name} color={color} size={22} />
                 <span className="small" style={{ fontWeight: 600 }}>{name}</span>
               </>
             ) : <span className="small muted">Nobody named</span>}

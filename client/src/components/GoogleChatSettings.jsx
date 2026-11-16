@@ -225,7 +225,7 @@ export default function GoogleChatSettings() {
           )}
           <div className="chat-people">
             {linked.map((p) => (
-              <span key={p.id} className="chat-person"><Avatar name={p.full_name} color={p.avatar_color} size={20} /> {p.full_name}</span>
+              <span key={p.id} className="chat-person"><Avatar userId={p.id} name={p.full_name} color={p.avatar_color} size={20} /> {p.full_name}</span>
             ))}
           </div>
         </div>

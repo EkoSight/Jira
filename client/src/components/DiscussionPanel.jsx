@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon } from './ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Who } from './ui.jsx';
 import { kindsFor, replyCount, threadKind } from '../lib/threads.js';
 import { relativeTime } from '../lib/format.js';
 
@@ -160,9 +160,9 @@ export function Thread({ thread, canRaiseReview, canManage = false, onChanged })
             {thread.title || thread.messages?.[0]?.body?.slice(0, 80) || meta.label}
           </span>
           <span className="small muted thread-sub">
-            {thread.opened_by_name || 'Someone'} · {relativeTime(thread.created_at)}
+            <Who id={thread.opened_by} name={thread.opened_by_name} color={thread.opened_by_color} size={16} fallback="Someone" /> · {relativeTime(thread.created_at)}
             {replies && ` · ${replies}`}
-            {thread.awaiting_name && !resolved && ` · waiting on ${thread.awaiting_name}`}
+            {thread.awaiting_name && !resolved && <> · waiting on <Who id={thread.awaiting_user} name={thread.awaiting_name} color={thread.awaiting_color} size={16} /></>}
           </span>
         </span>
         {resolved && <Badge tone="good">Closed</Badge>}
@@ -174,7 +174,7 @@ export function Thread({ thread, canRaiseReview, canManage = false, onChanged })
           <Icon name="check" size={13} />
           <span>
             <strong>Concluded:</strong> {thread.conclusion}
-            <span className="muted"> — {thread.resolved_by_name || 'someone'}, {relativeTime(thread.resolved_at)}</span>
+            <span className="muted"> — <Who id={thread.resolved_by} name={thread.resolved_by_name} size={16} fallback="someone" />, {relativeTime(thread.resolved_at)}</span>
           </span>
         </div>
       )}

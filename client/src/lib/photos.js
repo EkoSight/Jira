@@ -4,6 +4,8 @@
  *   - **Who has one:** a small list of person → version, fetched once after
  *     sign-in and refreshed when the app comes back into view (at most every
  *     few minutes). Screens pass a person's id to Avatar; nothing else changes.
+ *     The same call brings everyone's colour, so a person shown by id alone
+ *     keeps their own colour behind their initials.
  *   - **Fetching:** pictures are served only to signed-in people, so they are
  *     fetched with the person's token and shown from memory. Each address
  *     includes the version, so the browser keeps it, and a new photo is a new
@@ -16,7 +18,7 @@ import { api } from '../api/client.js';
 export const PHOTO_SIZES = [64, 128, 256, 512];
 const REFRESH_MS = 5 * 60_000;
 
-const state = { versions: new Map(), loadedAt: 0, loading: null };
+const state = { versions: new Map(), colours: new Map(), loadedAt: 0, loading: null };
 const listeners = new Set();
 const emit = () => listeners.forEach((l) => l());
 let snapshot = 0;
@@ -29,6 +31,7 @@ export async function loadPhotoVersions({ force = false } = {}) {
   state.loading = api.get('/photos/versions')
     .then((r) => {
       state.versions = new Map((r.versions || []).map((x) => [x.id, x.v]));
+      state.colours = new Map((r.colours || []).map((x) => [x.id, x.c]));
       state.loadedAt = Date.now();
       bump();
     })
@@ -45,6 +48,7 @@ export function setPhotoVersion(userId, version) {
 
 export function clearPhotoVersions() {
   state.versions = new Map();
+  state.colours = new Map();
   state.loadedAt = 0;
   bump();
 }
@@ -53,6 +57,12 @@ const subscribe = (fn) => { listeners.add(fn); return () => listeners.delete(fn)
 export function usePhotoVersion(userId) {
   useSyncExternalStore(subscribe, () => snapshot);
   return userId ? state.versions.get(Number(userId)) || null : null;
+}
+
+/** A person's own colour (behind their initials), when a screen knows only their id. */
+export function usePersonColour(userId) {
+  useSyncExternalStore(subscribe, () => snapshot);
+  return userId ? state.colours.get(Number(userId)) || null : null;
 }
 
 /** The smallest stored size that stays sharp at this display size. */
@@ -86,6 +96,27 @@ export function usePhotoUrl(userId, displayPx) {
     return () => { gone = true; };
   }, [userId, version, size]);
   return url;
+}
+
+/**
+ * The picture as a data: address, for drawings that are saved as an image
+ * (the award card): a saved SVG cannot reach blob: addresses, only data: ones.
+ */
+export function usePhotoDataUrl(userId, displayPx) {
+  const url = usePhotoUrl(userId, displayPx);
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let gone = false;
+    if (!url) { setData(null); return undefined; }
+    fetch(url).then((r) => r.blob()).then((b) => new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(b);
+    })).then((d) => { if (!gone) setData(d); }).catch(() => { if (!gone) setData(null); });
+    return () => { gone = true; };
+  }, [url]);
+  return data;
 }
 
 // keep the list fresh when the app comes back into view

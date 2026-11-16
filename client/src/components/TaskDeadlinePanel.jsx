@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
-import { Badge, Field } from './ui.jsx';
+import { Badge, Field, Who } from './ui.jsx';
 import { formatDate, fromDateTimeLocal, taskHealth } from '../lib/format.js';
 
 const KIND_WORDS = { BEFORE_DUE: 'Before the deadline', AT_DUE: 'At the deadline', AFTER_GRACE: 'After the grace period (manager)', COVER: 'Covering (owner away)', UNREACHED: 'Owner could not be reached' };
@@ -66,7 +66,7 @@ export default function TaskDeadlinePanel({ task, onChanged }) {
             <strong>{c.kind === 'DEFER' ? 'A deferral' : 'A new deadline'} is waiting for a decision</strong>
             <span>
               {c.kind === 'DEFER' ? `Review on ${c.review_date}` : `${formatDate(c.from_due, { withTime: true })} → ${formatDate(c.to_due, { withTime: true })}`}
-              {' '}· asked by {c.requested_by_name} · “{c.reason}”
+              {' '}· asked by <Who id={c.requested_by} name={c.requested_by_name} size={16} fallback="someone" /> · “{c.reason}”
             </span>
             <div className="row wrap" style={{ gap: 6 }}>
               {data.can_approve && (
@@ -88,7 +88,7 @@ export default function TaskDeadlinePanel({ task, onChanged }) {
           <div className={`mkt-callout ${openBlock.status === 'ACCEPTED' ? '' : 'is-warning'} small stack-xs`}>
             <strong>Blocked: {openBlock.reason}</strong>
             <span>
-              {openBlock.status === 'ACCEPTED' ? `Accepted by ${openBlock.decided_by_name}: black marks are paused while it lasts` : 'Waiting for someone to accept it (until then, black marks are not paused)'}
+              {openBlock.status === 'ACCEPTED' ? <>Accepted by <Who id={openBlock.decided_by} name={openBlock.decided_by_name} size={16} fallback="someone" />: black marks are paused while it lasts</> : 'Waiting for someone to accept it (until then, black marks are not paused)'}
               {openBlock.dependency_text ? ` · waits on ${openBlock.dependency_text}` : ''}
             </span>
             <div className="row wrap" style={{ gap: 6 }}>
@@ -160,15 +160,15 @@ export default function TaskDeadlinePanel({ task, onChanged }) {
                 <li key={`c${c.id}`}>
                   <Badge tone={STATUS_TONE[c.status]}>{c.status.toLowerCase()}</Badge>{' '}
                   {c.kind === 'DEFER' ? `Deferred (review ${c.review_date})` : `Deadline ${formatDate(c.from_due, { withTime: true })} → ${formatDate(c.to_due, { withTime: true })}`}
-                  {' '}· {c.requested_by_name}: “{c.reason}”
-                  {c.auto_approved ? ' · the owner\'s one move' : c.decided_by_name ? ` · decided by ${c.decided_by_name}${c.decision_note ? `: ${c.decision_note}` : ''}` : ''}
+                  {' '}· <Who id={c.requested_by} name={c.requested_by_name} size={16} fallback="someone" />: “{c.reason}”
+                  {c.auto_approved ? ' · the owner\'s one move' : c.decided_by_name ? <> · decided by <Who id={c.decided_by} name={c.decided_by_name} size={16} />{c.decision_note ? `: ${c.decision_note}` : ''}</> : ''}
                   {c.ended_at ? ` · ended ${formatDate(c.ended_at)}` : ''}
                 </li>
               ))}
               {data.blocks.map((b) => (
                 <li key={`b${b.id}`}>
-                  <Badge tone={STATUS_TONE[b.status]}>{b.status.toLowerCase()}</Badge> Blocked: {b.reason} · {b.recorded_by_name}
-                  {b.decided_by_name ? ` · decided by ${b.decided_by_name}` : ''}{b.cleared_by_name ? ` · cleared by ${b.cleared_by_name}` : ''}
+                  <Badge tone={STATUS_TONE[b.status]}>{b.status.toLowerCase()}</Badge> Blocked: {b.reason} · <Who id={b.recorded_by} name={b.recorded_by_name} size={16} fallback="someone" />
+                  {b.decided_by_name && <> · decided by <Who id={b.decided_by} name={b.decided_by_name} size={16} /></>}{b.cleared_by_name && <> · cleared by <Who id={b.cleared_by} name={b.cleared_by_name} size={16} /></>}
                 </li>
               ))}
             </ul>
@@ -184,7 +184,7 @@ export default function TaskDeadlinePanel({ task, onChanged }) {
                 {reminders.map((r) => (
                   <tr key={r.id}>
                     <td className="tnum">{formatDate(r.remind_at, { withTime: true })}</td>
-                    <td>{r.user_name}</td>
+                    <td><Who id={r.user_id} name={r.user_name} size={18} /></td>
                     <td>{KIND_WORDS[r.kind]}</td>
                     <td>{r.channel === 'CHAT' ? 'Google Chat' : 'TaskFlow bell'}</td>
                     <td><Badge tone={STATE_TONE[r.state]}>{r.state.toLowerCase().replace('_', ' ')}</Badge>{r.reason ? <span className="muted"> {r.reason}</span> : null}</td>

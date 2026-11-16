@@ -356,7 +356,7 @@ export async function drill(metric, input, scope, { limit = 5000 } = {}) {
   const b = builder(f, scope, d.kind === 'lead' ? 'lead' : 'deal');
   if (d.kind === 'lead') {
     const { rows } = await query(
-      `SELECT l.id, l.ref, l.category, l.status, l.organization_name, l.contact_name, l.captured_at, l.converted_at, u.full_name AS owner_name,
+      `SELECT l.id, l.ref, l.category, l.status, l.organization_name, l.contact_name, l.captured_at, l.converted_at, l.owner_user_id, u.full_name AS owner_name,
               s.name AS source_name
          FROM crm_leads l LEFT JOIN users u ON u.id = l.owner_user_id LEFT JOIN crm_sources s ON s.id = COALESCE(l.original_source_id, l.source_id)
         WHERE ${b.lead} AND ${d.where(b)} ORDER BY l.captured_at DESC LIMIT ${Number(limit)}`, b.params,
@@ -365,7 +365,7 @@ export async function drill(metric, input, scope, { limit = 5000 } = {}) {
   }
   const { rows } = await query(
     `SELECT o.id, o.name, a.name AS account_name, p.name AS pipeline, st.name AS stage, o.status, o.currency, ${OPEN_VALUE} AS open_value,
-            o.agreed_value, o.committed_amount, ${PROB} AS probability, o.expected_close, o.closed_at, o.is_monetary, u.full_name AS owner_name
+            o.agreed_value, o.committed_amount, ${PROB} AS probability, o.expected_close, o.closed_at, o.is_monetary, o.owner_user_id, u.full_name AS owner_name
        FROM ${DEAL_FROM} LEFT JOIN users u ON u.id = o.owner_user_id
       WHERE ${b.deal} AND ${d.where(b)} ORDER BY o.closed_at DESC NULLS LAST, o.expected_close NULLS LAST LIMIT ${Number(limit)}`, b.params,
   );

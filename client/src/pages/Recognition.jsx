@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../components/ui.jsx';
+import { usePhotoDataUrl } from '../lib/photos.js';
 import { BarList } from '../components/charts.jsx';
 import { initials, monthKey, monthLabel, relativeTime } from '../lib/format.js';
 
@@ -11,6 +12,8 @@ import { initials, monthKey, monthLabel, relativeTime } from '../lib/format.js';
  */
 function AwardCard({ award, cardRef }) {
   const stats = award.stats || {};
+  // the winner's photo, embedded so it stays in the downloaded picture too
+  const photo = usePhotoDataUrl(award.user_id, 68);
   return (
     <svg
       ref={cardRef}
@@ -19,6 +22,7 @@ function AwardCard({ award, cardRef }) {
       xmlns="http://www.w3.org/2000/svg"
     >
       <defs>
+        <clipPath id="award-photo"><circle cx="78" cy="150" r="34" /></clipPath>
         <linearGradient id="award-bg" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor="#0f172a" />
           <stop offset="100%" stopColor="#1c5cab" />
@@ -38,10 +42,14 @@ function AwardCard({ award, cardRef }) {
       </text>
 
       <circle cx="78" cy="150" r="34" fill={award.avatar_color || '#2a78d6'} />
-      <text x="78" y="158" fill="#ffffff" fontSize="24" fontWeight="700" textAnchor="middle"
-        fontFamily="system-ui, sans-serif">
-        {initials(award.full_name)}
-      </text>
+      {photo ? (
+        <image href={photo} x="44" y="116" width="68" height="68" clipPath="url(#award-photo)" preserveAspectRatio="xMidYMid slice" />
+      ) : (
+        <text x="78" y="158" fill="#ffffff" fontSize="24" fontWeight="700" textAnchor="middle"
+          fontFamily="system-ui, sans-serif">
+          {initials(award.full_name)}
+        </text>
+      )}
 
       <text x="128" y="145" fill="#ffffff" fontSize="30" fontWeight="700" fontFamily="system-ui, sans-serif">
         {award.full_name}
@@ -371,7 +379,7 @@ export default function Recognition() {
           </div>
           <AwardCard award={winner} cardRef={cardRef} />
           {winner.awarded_by_name && (
-            <div className="small muted">Awarded by {winner.awarded_by_name}</div>
+            <div className="small muted">Awarded by <Who id={winner.awarded_by} name={winner.awarded_by_name} size={16} /></div>
           )}
         </section>
       )}
@@ -404,7 +412,7 @@ export default function Recognition() {
                     </td>
                     <td>
                       <div className="row">
-                        <Avatar name={member.full_name} color={member.avatar_color} size={26} />
+                        <Avatar userId={member.user_id} name={member.full_name} color={member.avatar_color} size={26} />
                         <div>
                           <div style={{ fontWeight: 600 }}>{member.full_name}</div>
                           <div className="small muted">{member.department || 'No department'}</div>
@@ -448,11 +456,11 @@ export default function Recognition() {
               {kudos.length === 0 && <div className="empty small">Be the first to thank someone</div>}
               {kudos.map((entry) => (
                 <div key={entry.id} className="row" style={{ alignItems: 'flex-start', gap: 8 }}>
-                  <Avatar name={entry.to_name} color={entry.to_color} size={24} />
+                  <Avatar userId={entry.to_user} name={entry.to_name} color={entry.to_color} size={24} />
                   <div className="grow">
                     <div className="small">
                       <strong>{entry.to_name}</strong>{' '}
-                      <span className="muted">from {entry.from_name}</span>
+                      <span className="muted">from <Who id={entry.from_user} name={entry.from_name} color={entry.from_color} size={16} /></span>
                     </div>
                     <div className="small dim">{entry.message}</div>
                   </div>
@@ -470,7 +478,7 @@ export default function Recognition() {
           <div className="card-pad row wrap" style={{ gap: 10 }}>
             {wall.map((award) => (
               <div key={award.id} className="badge" style={{ height: 30, paddingLeft: 4 }}>
-                <Avatar name={award.full_name} color={award.avatar_color} size={22} />
+                <Avatar userId={award.user_id} name={award.full_name} color={award.avatar_color} size={22} />
                 <strong>{award.full_name}</strong>
                 <span className="muted">{monthLabel(String(award.period_month).slice(0, 7))}</span>
               </div>

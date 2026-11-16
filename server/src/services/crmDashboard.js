@@ -135,7 +135,7 @@ export async function crmDashboard(filters = {}) {
   // the deals themselves, so "won: 3" is three names and not a bare number
   const { rows: wonRows } = await query(
     `SELECT o.id, o.name, o.account_id, o.agreed_value, o.currency, o.closed_at,
-            o.engagement_model, o.agreement_type,
+            o.engagement_model, o.agreement_type, o.owner_user_id,
             a.name AS account_name, u.full_name AS owner_name, u.avatar_color AS owner_color
        FROM opportunities o
        JOIN accounts a ON a.id = o.account_id
@@ -149,7 +149,7 @@ export async function crmDashboard(filters = {}) {
     ? `AND ${scope.map(shift).join(' AND ').replace(/o\.owner_user_id/g, 'a.owner_user_id')}`
     : '';
   const { rows: convertedRows } = await query(
-    `SELECT a.id, a.name, a.type, a.converted_at,
+    `SELECT a.id, a.name, a.type, a.converted_at, a.owner_user_id,
             u.full_name AS owner_name, u.avatar_color AS owner_color,
             (SELECT o.name FROM opportunities o
               WHERE o.account_id = a.id AND o.status = 'WON'

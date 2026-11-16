@@ -735,7 +735,7 @@ export async function dayBoard(date) {
     [subIds],
   ) : { rows: [] };
   const { rows: reviews } = await query(
-    `SELECT r.*, m.full_name, m.role_title, rb.full_name AS resolved_by_name
+    `SELECT r.*, m.full_name, m.role_title, m.user_id, rb.full_name AS resolved_by_name
        FROM standup_reviews r JOIN standup_members m ON m.id = r.member_id LEFT JOIN users rb ON rb.id = r.resolved_by
       WHERE r.work_date = $1 ORDER BY m.full_name`,
     [date],
@@ -749,7 +749,7 @@ export async function dayBoard(date) {
     reviews,
     submissions: subs.map((x) => ({ ...x, versions: versions.filter((v) => v.submission_id === x.id) })),
     unmatched,
-    excluded: excluded.map(({ member, reason }) => ({ id: member.id, full_name: member.full_name, reason })),
+    excluded: excluded.map(({ member, reason }) => ({ id: member.id, user_id: member.user_id || null, full_name: member.full_name, reason })),
     consequences: 'Standups do not change attendance, leave, pay or black marks.',
   };
 }

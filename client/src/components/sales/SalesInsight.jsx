@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, downloadFile, fetchBlobUrl } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../ui.jsx';
 import { RECORDED_VIA, exactTime } from '../../lib/crmWork.js';
 import { lengthWords } from '../../lib/phoneCalls.js';
 import { RecordingPlayer } from './PhoneCall.jsx';
@@ -45,11 +45,11 @@ function Drill({ metric, filters, onClose }) {
           <table className="data-table">
             {data.kind === 'lead' ? (
               <><thead><tr><th>Lead</th><th>Category</th><th>Status</th><th>Owner</th><th>Source</th><th>Captured</th></tr></thead>
-                <tbody>{data.rows.map((r) => <tr key={r.id}><td><Link to={`/sales/leads/${r.id}`}>{r.ref} {r.organization_name || r.contact_name}</Link></td><td>{CATEGORY[r.category]?.short}</td><td>{r.status.toLowerCase()}</td><td>{r.owner_name || '—'}</td><td>{r.source_name || '—'}</td><td>{dayOf(r.captured_at)}</td></tr>)}</tbody></>
+                <tbody>{data.rows.map((r) => <tr key={r.id}><td><Link to={`/sales/leads/${r.id}`}>{r.ref} {r.organization_name || r.contact_name}</Link></td><td>{CATEGORY[r.category]?.short}</td><td>{r.status.toLowerCase()}</td><td><Who id={r.owner_user_id} name={r.owner_name} size={18} fallback="—" /></td><td>{r.source_name || '—'}</td><td>{dayOf(r.captured_at)}</td></tr>)}</tbody></>
             ) : (
               <><thead><tr><th>Deal</th><th>Organization</th><th>Pipeline</th><th>Stage</th><th className="num">Value</th><th>Owner</th><th>Closed / expected</th></tr></thead>
                 <tbody>{data.rows.map((r) => <tr key={r.id}><td>{r.name}</td><td>{r.account_name}</td><td>{r.pipeline}</td><td>{r.stage}</td>
-                  <td className="num tnum">{!r.is_monetary ? 'non-monetary' : money(r.status === 'WON' ? (r.agreed_value ?? r.committed_amount) : r.open_value, r.currency)}</td><td>{r.owner_name}</td><td>{dayOf(r.closed_at || r.expected_close)}</td></tr>)}</tbody></>
+                  <td className="num tnum">{!r.is_monetary ? 'non-monetary' : money(r.status === 'WON' ? (r.agreed_value ?? r.committed_amount) : r.open_value, r.currency)}</td><td><Who id={r.owner_user_id} name={r.owner_name} size={18} fallback="—" /></td><td>{dayOf(r.closed_at || r.expected_close)}</td></tr>)}</tbody></>
             )}
           </table>
         </div>
@@ -119,7 +119,7 @@ function ReportSchedules({ meta, report, filters, onClose }) {
           <div className="field">
             <span className="small">Send to</span>
             <div className="row wrap" style={{ gap: 6 }}>
-              {people.map((u) => <button key={u.id} type="button" aria-pressed={form.recipient_ids.includes(u.id)} className={`kind-chip${form.recipient_ids.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggle(u.id)}>{u.full_name}</button>)}
+              {people.map((u) => <button key={u.id} type="button" aria-pressed={form.recipient_ids.includes(u.id)} className={`kind-chip${form.recipient_ids.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggle(u.id)}><Avatar userId={u.id} name={u.full_name} color={u.avatar_color} size={16} />{u.full_name}</button>)}
             </div>
           </div>
           <div className="row"><button type="submit" className="btn btn-primary btn-sm" disabled={busy || !form.recipient_ids.length}>Schedule</button></div>
@@ -232,7 +232,7 @@ export function Reports({ meta }) {
           )}
           {tab === 'agents' && (
             <div className="table-scroll"><table className="data-table"><thead><tr><th>Person</th><th className="num">Leads received</th><th className="num">Converted</th><th className="num">Calls, messages, meetings</th><th className="num">Follow-ups done</th><th className="num">Overdue now</th><th className="num">Open deals</th><th className="num">Won</th><th className="num">Lost</th><th className="num">Win rate</th><th className="num">Bookings</th><th className="num">CSR committed</th></tr></thead>
-              <tbody>{data.rows.map((r) => <tr key={r.id}><td>{r.full_name}</td><td className="num">{r.leads_received}</td><td className="num">{r.leads_converted}</td><td className="num">{r.activities}</td><td className="num">{r.followups_done}</td><td className={`num${r.followups_overdue ? ' critical-text' : ''}`}>{r.followups_overdue}</td><td className="num">{r.open_deals}</td><td className="num">{r.won}</td><td className="num">{r.lost}</td><td className="num">{r.win_rate === null ? '—' : `${r.win_rate}%`}</td><td className="num tnum">{money(r.bookings, c)}</td><td className="num tnum">{money(r.csr_committed, c)}</td></tr>)}</tbody></table></div>
+              <tbody>{data.rows.map((r) => <tr key={r.id}><td><Who id={r.id} name={r.full_name} size={20} /></td><td className="num">{r.leads_received}</td><td className="num">{r.leads_converted}</td><td className="num">{r.activities}</td><td className="num">{r.followups_done}</td><td className={`num${r.followups_overdue ? ' critical-text' : ''}`}>{r.followups_overdue}</td><td className="num">{r.open_deals}</td><td className="num">{r.won}</td><td className="num">{r.lost}</td><td className="num">{r.win_rate === null ? '—' : `${r.win_rate}%`}</td><td className="num tnum">{money(r.bookings, c)}</td><td className="num tnum">{money(r.csr_committed, c)}</td></tr>)}</tbody></table></div>
           )}
           {tab === 'stages' && (
             <div className="stack-sm">
@@ -283,7 +283,7 @@ export function Reports({ meta }) {
                 <div className="table-scroll"><table className="data-table">
                   <thead><tr><th>Person</th><th className="num">Calls</th><th className="num">Connected</th><th className="num">Connect rate</th><th className="num">Leads called</th><th className="num">Talk time</th><th className="num">Won</th><th className="num">Lost</th></tr></thead>
                   <tbody>{data.people.map((p) => (
-                    <tr key={p.id}><td>{p.full_name}</td><td className="num tnum">{p.calls}</td><td className="num tnum">{p.connected}</td><td className="num tnum">{p.connect_rate === null ? '—' : `${p.connect_rate}%`}</td>
+                    <tr key={p.id}><td><Who id={p.id} name={p.full_name} size={20} /></td><td className="num tnum">{p.calls}</td><td className="num tnum">{p.connected}</td><td className="num tnum">{p.connect_rate === null ? '—' : `${p.connect_rate}%`}</td>
                       <td className="num tnum">{p.leads_called}</td><td className="num tnum">{p.talk_seconds ? `${Math.round(p.talk_seconds / 60)} min` : '—'}</td><td className="num tnum">{p.won}</td><td className="num tnum">{p.closed_lost}</td></tr>
                   ))}</tbody>
                 </table></div>
@@ -308,7 +308,7 @@ export function Reports({ meta }) {
           {tab === 'targets' && (
             data.targets.length === 0 ? <EmptyState title="No targets for this period">An administrator sets targets in Settings → Sales CRM → Targets.</EmptyState> : (
               <div className="table-scroll"><table className="data-table"><thead><tr><th>Period</th><th>For</th><th>Measure</th><th className="num">Target</th><th className="num">Actual</th><th className="num">Attainment</th></tr></thead>
-                <tbody>{data.targets.map((t) => <tr key={t.id}><td>{dayOf(t.period_start)} – {dayOf(t.period_end)}</td><td>{t.user_name || t.department_name || 'Company'}{t.pipeline_key ? ` · ${t.pipeline_key.toUpperCase()}` : ''}</td><td>{t.metric.toLowerCase().replace(/_/g, ' ')}</td><td className="num tnum">{t.currency ? money(t.target, t.currency) : t.target}</td><td className="num tnum">{t.actual === null ? '—' : t.currency ? money(t.actual, t.currency) : t.actual}</td><td className="num">{t.attainment === null ? '—' : `${t.attainment}%`}</td></tr>)}</tbody></table></div>
+                <tbody>{data.targets.map((t) => <tr key={t.id}><td>{dayOf(t.period_start)} – {dayOf(t.period_end)}</td><td>{t.user_name ? <Who id={t.user_id} name={t.user_name} size={18} /> : (t.department_name || 'Company')}{t.pipeline_key ? ` · ${t.pipeline_key.toUpperCase()}` : ''}</td><td>{t.metric.toLowerCase().replace(/_/g, ' ')}</td><td className="num tnum">{t.currency ? money(t.target, t.currency) : t.target}</td><td className="num tnum">{t.actual === null ? '—' : t.currency ? money(t.actual, t.currency) : t.actual}</td><td className="num">{t.attainment === null ? '—' : `${t.attainment}%`}</td></tr>)}</tbody></table></div>
             )
           )}
         </>
@@ -375,7 +375,7 @@ export function Calls() {
               <td><button type="button" className="btn-link tnum" onClick={() => setOpen(c.id)} aria-label={`Open call ${c.id}`}>#{c.id}</button></td>
               <td className="tnum nowrap">{exactTime(c.started_at || c.created_at)}</td>
               <td>{c.lead_id ? <Link to={`/sales/leads/${c.lead_id}`}>{c.about}</Link> : c.account_id ? <Link to={`/accounts/${c.account_id}`}>{c.about}</Link> : c.about}</td>
-              <td>{c.agent_name || '—'}</td><td>{c.direction.toLowerCase()}</td>
+              <td><Who id={c.agent_user_id} name={c.agent_name} size={18} fallback="—" /></td><td>{c.direction.toLowerCase()}</td>
               <td>
                 {CALL_OUTCOME[c.outcome] || String(c.status).toLowerCase().replace('_', ' ')}
                 {c.voided_at && <> <Badge tone="warning">Repeat, not counted</Badge></>}{c.edit_count > 0 && <> <Badge>Edited</Badge></>}

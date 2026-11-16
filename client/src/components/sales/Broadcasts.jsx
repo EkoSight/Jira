@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { Badge, ConfirmButton, EmptyState, Modal, Spinner } from '../ui.jsx';
+import { Badge, ConfirmButton, EmptyState, Modal, Spinner, Who } from '../ui.jsx';
 import { CATEGORY, when } from '../../lib/sales.js';
 import { INDIAN_STATES } from '../../lib/crmWork.js';
 import {
@@ -392,7 +392,7 @@ function BroadcastPage({ id, meta, back }) {
             : <h2 style={{ margin: 0 }}>{b.name}</h2>}
           <div className="row wrap small" style={{ gap: 8 }}>
             <StatusBadge status={b.status} />
-            <span className="muted">Made by {b.created_by_name}{b.approved_by_name ? ` · approved by ${b.approved_by_name}` : ''}{b.started_at ? ` · started ${when(b.started_at)}` : ''}{b.send_at && b.status === 'SCHEDULED' ? ` · starts ${when(b.send_at)}` : ''}</span>
+            <span className="muted">Made by <Who id={b.created_by} name={b.created_by_name} size={16} fallback="someone" />{b.approved_by_name && <> · approved by <Who id={b.approved_by} name={b.approved_by_name} size={16} /></>}{b.started_at ? ` · started ${when(b.started_at)}` : ''}{b.send_at && b.status === 'SCHEDULED' ? ` · starts ${when(b.send_at)}` : ''}</span>
           </div>
         </div>
       </div>

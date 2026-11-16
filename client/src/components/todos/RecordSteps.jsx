@@ -9,7 +9,7 @@
  * - My private to-dos (n): my own lines linked here. Nobody else sees them.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Spinner } from '../ui.jsx';
+import { Spinner, Who } from '../ui.jsx';
 import AddTodo from './AddTodo.jsx';
 import TodoRow from './TodoRow.jsx';
 import { useTodoActions } from './useTodoActions.jsx';
@@ -71,7 +71,7 @@ export default function RecordSteps({ type, id, label, showShared = true, title 
                   <div className="td-row-text">
                     <span className="td-title"><span className="td-words">{s.title}</span>{!s.mine && <span className="sr-only">{s.done ? ' (done)' : ' (open)'}</span>}</span>
                     <div className="td-meta small">
-                      <span>{s.owner.name}</span>
+                      <Who id={s.owner.id} name={s.owner.name} size={16} />
                       {s.done && s.done_at && <span>done {dayLabel(new Date(s.done_at).toISOString().slice(0, 10), today)}</span>}
                       {!s.done && s.planned_on && <span>{dayLabel(s.planned_on, today)}</span>}
                     </div>
@@ -89,7 +89,7 @@ export default function RecordSteps({ type, id, label, showShared = true, title 
             <details className="small">
               <summary>Step history</summary>
               <ul className="td-history">
-                {data.activity.map((a, i) => <li key={i}>{a.actor_name || 'Someone'} {ACTIVITY[a.action] || a.action}: “{a.title}”, {dayLabel(new Date(a.created_at).toISOString().slice(0, 10), today)}</li>)}
+                {data.activity.map((a, i) => <li key={i}><Who id={a.actor_id} name={a.actor_name} size={16} fallback="Someone" /> {ACTIVITY[a.action] || a.action}: “{a.title}”, {dayLabel(new Date(a.created_at).toISOString().slice(0, 10), today)}</li>)}
               </ul>
             </details>
           )}

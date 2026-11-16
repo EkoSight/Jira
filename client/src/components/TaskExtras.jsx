@@ -410,7 +410,7 @@ export function Collaborators({ taskId, collaborators, onChange, canEdit }) {
       <div className="row wrap" style={{ gap: 6 }}>
         {collaborators.map((person) => (
           <span key={person.id} className="badge" style={{ height: 26, paddingLeft: 3 }}>
-            <Avatar name={person.full_name} color={person.avatar_color} size={20} />
+            <Avatar userId={person.id} name={person.full_name} color={person.avatar_color} size={20} />
             {person.full_name}
             {person.department_name && <span className="muted">· {person.department_name}</span>}
             {canEdit && (
@@ -466,7 +466,7 @@ export function PendingCollaborators({ selected, onChange }) {
       <div className="row wrap" style={{ gap: 6 }}>
         {chosen.map((person) => (
           <span key={person.id} className="badge" style={{ height: 26, paddingLeft: 3 }}>
-            <Avatar name={person.full_name} color={person.avatar_color} size={20} />
+            <Avatar userId={person.id} name={person.full_name} color={person.avatar_color} size={20} />
             {person.full_name}
             {person.department_name && <span className="muted">· {person.department_name}</span>}
             <button

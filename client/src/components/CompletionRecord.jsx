@@ -1,4 +1,4 @@
-import { Avatar, Badge, EmptyState, Icon, Spinner } from './ui.jsx';
+import { Avatar, Badge, EmptyState, Icon, Spinner, Who } from './ui.jsx';
 import { threadKind } from '../lib/threads.js';
 import { formatDate, relativeTime, PRIORITY_LABEL, PRIORITY_TONE } from '../lib/format.js';
 
@@ -152,7 +152,7 @@ export default function CompletionRecord({ data, onOpenTask }) {
                   <div className="small muted">
                     {mark.rule_name ? `${mark.rule_name} · ` : ''}{formatDate(mark.occurred_at)}
                     {mark.status === 'waived' && (
-                      <> · waived{mark.waived_by_name ? ` by ${mark.waived_by_name}` : ''}
+                      <> · waived{mark.waived_by_name && <> by <Who id={mark.waived_by} name={mark.waived_by_name} size={16} /></>}
                         {mark.waived_reason ? ` — ${mark.waived_reason}` : ''}</>
                     )}
                   </div>
@@ -208,6 +208,7 @@ export default function CompletionRecord({ data, onOpenTask }) {
                     <Icon name={subtask.stage === 'done' ? 'check' : 'subtask'} size={13} />
                     <span className="task-ref">{subtask.ref}</span>
                     <span className="grow truncate">{subtask.title}</span>
+                    {subtask.assignee_name && <Avatar userId={subtask.assignee_id} name={subtask.assignee_name} color={subtask.assignee_color} size={18} />}
                     <Badge tone={subtask.stage === 'done' ? 'good' : 'neutral'}>
                       {subtask.status_name}
                     </Badge>
@@ -242,7 +243,7 @@ export default function CompletionRecord({ data, onOpenTask }) {
                         {thread.title || thread.messages?.[0]?.body?.slice(0, 80)}
                       </span>
                       <span className="small muted thread-sub">
-                        {thread.opened_by_name || 'Someone'} · {relativeTime(thread.created_at)}
+                        <Who id={thread.opened_by} name={thread.opened_by_name} color={thread.opened_by_color} size={16} fallback="Someone" /> · {relativeTime(thread.created_at)}
                       </span>
                     </span>
                     {thread.status === 'resolved' && <Badge tone="good">Closed</Badge>}
@@ -287,7 +288,7 @@ export default function CompletionRecord({ data, onOpenTask }) {
                 <span className="record-step-dot" />
                 <div className="grow">
                   <div className="small">
-                    <strong>{item.actor_name || 'TaskFlow'}</strong>{' '}
+                    <strong><Who id={item.actor_id} name={item.actor_name} color={item.avatar_color} size={18} fallback="TaskFlow" /></strong>{' '}
                     {item.action === 'created' ? 'created it'
                       : item.action === 'completed' ? 'marked it done'
                         : item.action === 'reopened' ? 'reopened it'
@@ -311,7 +312,7 @@ export default function CompletionRecord({ data, onOpenTask }) {
           <div className="row wrap" style={{ gap: 8 }}>
             {data.collaborators.map((person) => (
               <span key={person.id} className="row" style={{ gap: 5 }}>
-                <Avatar name={person.full_name} color={person.avatar_color} size={20} />
+                <Avatar userId={person.id} name={person.full_name} color={person.avatar_color} size={20} />
                 <span className="small">{person.full_name}</span>
               </span>
             ))}

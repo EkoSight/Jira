@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import { EmptyState, Field, Icon, Modal, Spinner, Who } from '../components/ui.jsx';
 import EmailBuilder, { cleanDesign } from '../components/marketing/EmailBuilder.jsx';
 import { WorkflowBadge, useMarketingMeta } from '../components/marketing/parts.jsx';
 import { formatDate } from '../lib/format.js';
@@ -374,7 +374,7 @@ export default function MarketingAutomation() {
           <div className="row wrap">
             <input className="input mkt-title-input" value={w.name} disabled={!can('marketing.manage')} onChange={(e) => edit({ name: e.target.value })} aria-label="Automation name" />
             <WorkflowBadge status={w.status} />
-            {approved ? <span className="badge badge-good">Approved{w.approved_by_name ? ` by ${w.approved_by_name}` : ''}</span> : w.submitted_at ? <span className="badge badge-warning">Waiting for approval</span> : null}
+            {approved ? <span className="badge badge-good">Approved{w.approved_by_name && <> by <Who id={w.approved_by} name={w.approved_by_name} size={16} /></>}</span> : w.submitted_at ? <span className="badge badge-warning">Waiting for approval</span> : null}
           </div>
         </div>
         <div className="row wrap">

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { asyncHandler, badRequest, notFound } from '../lib/errors.js';
 import { isAdmin } from '../lib/permissions.js';
 import {
-  MAX_UPLOAD_MB, decideProposal, myPhoto, originalPath, pendingProposals, photoPath, photoVersions, proposalPath, proposePhoto,
+  MAX_UPLOAD_MB, decideProposal, myPhoto, originalPath, pendingProposals, photoPath, personColours, photoVersions, proposalPath, proposePhoto,
   removePhoto, saveOwnPhoto, withdrawProposal,
 } from '../services/photos.js';
 
@@ -51,7 +51,8 @@ const sendPicture = (res, file, { immutable = false, privateOnly = false } = {})
 
 /** Who has a photo, and its version. */
 router.get('/versions', asyncHandler(async (req, res) => {
-  res.json({ versions: await photoVersions() });
+  const [versions, colours] = await Promise.all([photoVersions(), personColours()]);
+  res.json({ versions, colours });
 }));
 
 // ---------------------------------------------------------------- my own

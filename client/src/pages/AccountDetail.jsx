@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { AuthedImage, Avatar, Badge, ConfirmButton, EmptyState, Icon, Spinner } from '../components/ui.jsx';
+import { AuthedImage, Avatar, Badge, ConfirmButton, EmptyState, Icon, Spinner, Who } from '../components/ui.jsx';
 import AccountDialog from '../components/AccountDialog.jsx';
 import LogActivityDialog from '../components/LogActivityDialog.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
@@ -62,7 +62,7 @@ function Timeline({ activities }) {
                 </div>
               )}
               <div className="small muted" style={{ marginTop: 2 }}>
-                {activity.actor_name || 'Someone'} · {relativeTime(activity.occurred_at)}
+                <Who id={activity.actor_id} name={activity.actor_name} color={activity.actor_color} size={16} fallback="Someone" /> · {relativeTime(activity.occurred_at)}
                 {activity.source && SOURCE_LABEL[activity.source] ? ` · ${SOURCE_LABEL[activity.source]}` : ''}
               </div>
             </div>

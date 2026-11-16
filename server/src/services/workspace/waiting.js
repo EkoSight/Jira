@@ -71,7 +71,7 @@ export async function waitingFor(user, { now = new Date() } = {}) {
 
   // work handed to someone else that is stuck or late
   const { rows: tasks } = await query(
-    `SELECT t.id, t.ref, t.title, t.due_date, t.review_date, t.deferral_id, s.stage, u.full_name AS owner_name, t.updated_at,
+    `SELECT t.id, t.ref, t.title, t.due_date, t.review_date, t.deferral_id, s.stage, t.assignee_id, u.full_name AS owner_name, t.updated_at,
             b.id AS block_id, b.reason AS block_reason, b.dependency_text, b.status AS block_status, b.recorded_at AS block_since
        FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id
        LEFT JOIN users u ON u.id = t.assignee_id
@@ -90,6 +90,7 @@ export async function waitingFor(user, { now = new Date() } = {}) {
       specific: Boolean(t.block_id),
       what: t.block_id ? (t.dependency_text || t.block_reason) : blocked ? 'Marked Blocked, with nothing recorded about what it waits on' : 'Past its deadline',
       from: t.owner_name || 'Nobody owns it',
+      from_user_id: t.owner_name ? t.assignee_id : null,
       since: dayOf(t.block_since) || (blocked ? dayOf(t.updated_at) : dayOf(t.due_date)),
       promised: dayOf(t.due_date), next_check: dayOf(t.review_date),
       record: { type: 'TASK', id: t.id, label: `${t.ref} ${t.title}`, url: `/?task=${t.id}` },

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner } from './ui.jsx';
+import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner, Who } from './ui.jsx';
 import {
   FOLLOW_UP_META, POTENTIAL_META, agoWords, clockTone, formatMoney,
 } from '../lib/crm.js';
@@ -115,7 +115,7 @@ export function ListView({ board, search }) {
                       <div className="small truncate" style={{ maxWidth: 240 }}>{deal.next_step}</div>
                       <div className="row wrap" style={{ gap: 4 }}>
                         {deal.next_step_owner_name
-                          ? <span className="small muted">{deal.next_step_owner_name}</span>
+                          ? <span className="small muted"><Who id={deal.next_step_owner_id} name={deal.next_step_owner_name} color={deal.next_step_owner_color} size={16} /></span>
                           : <span className="kr-flag kr-flag-warning">who?</span>}
                         {deal.next_step_due
                           ? <Badge tone={overdue ? 'critical' : 'neutral'}>{formatDate(deal.next_step_due)}</Badge>

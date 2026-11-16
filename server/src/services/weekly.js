@@ -70,8 +70,8 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
   ] = await Promise.all([
     query(
       `SELECT h.opportunity_id, h.from_value, h.to_value, h.is_reversal, h.reason, h.evidence_missing,
-              h.created_at, o.name, o.account_id, a.name AS account_name, u.full_name AS actor_name,
-              ow.full_name AS owner_name
+              h.created_at, o.name, o.account_id, a.name AS account_name, u.full_name AS actor_name, h.actor_id,
+              ow.full_name AS owner_name, o.owner_user_id AS owner_id
          FROM opportunity_history h
          JOIN opportunities o ON o.id = h.opportunity_id
          JOIN accounts a ON a.id = o.account_id
@@ -142,7 +142,7 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
     // a next action due before the week ended that nobody has done or re-agreed
     query(
       `SELECT o.id AS opportunity_id, o.name, o.account_id, a.name AS account_name, o.next_step,
-              o.next_step_due, u.full_name AS owner_name
+              o.next_step_due, u.id AS owner_id, u.full_name AS owner_name
          FROM opportunities o JOIN accounts a ON a.id = o.account_id
          LEFT JOIN users u ON u.id = o.next_step_owner_id
         WHERE o.status = 'ACTIVE' AND o.is_archived = FALSE AND a.is_archived = FALSE
@@ -153,7 +153,7 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
     ),
     query(
       `SELECT t.id, t.ref, t.title, t.due_date, t.completed_at, a.id AS account_id, a.name AS account_name,
-              u.full_name AS assignee_name
+              u.id AS assignee_id, u.full_name AS assignee_name
          FROM tasks t
          JOIN accounts a ON a.id = t.account_id
          LEFT JOIN users u ON u.id = t.assignee_id
@@ -166,7 +166,7 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
       `SELECT t.id, t.title, t.category, t.blocked_item, t.dependency, t.external_party,
               t.expected_resolution, t.created_at,
               COALESCE(o.account_id, CASE WHEN t.entity_type = 'ACCOUNT' THEN t.entity_id END) AS account_id,
-              a.name AS account_name, o.name AS opportunity_name, u.full_name AS responsible_name
+              a.name AS account_name, o.name AS opportunity_name, u.id AS responsible_id, u.full_name AS responsible_name
          FROM discussion_threads t
          LEFT JOIN opportunities o ON t.entity_type = 'OPPORTUNITY' AND o.id = t.entity_id
          JOIN accounts a ON a.id = COALESCE(o.account_id, CASE WHEN t.entity_type = 'ACCOUNT' THEN t.entity_id END)
@@ -178,7 +178,7 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
     ),
     query(
       `SELECT o.id AS opportunity_id, o.name, o.account_id, a.name AS account_name, o.expected_close,
-              u.full_name AS owner_name
+              u.id AS owner_id, u.full_name AS owner_name
          FROM opportunities o JOIN accounts a ON a.id = o.account_id
          LEFT JOIN users u ON u.id = o.owner_user_id
         WHERE o.status = 'ACTIVE' AND o.is_archived = FALSE AND a.is_archived = FALSE
@@ -188,7 +188,7 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
     ),
     query(
       `SELECT h.id, h.role, h.created_at, o.id AS opportunity_id, o.name, o.account_id,
-              a.name AS account_name, t.full_name AS to_name
+              a.name AS account_name, t.id AS to_id, t.full_name AS to_name
          FROM opportunity_handovers h JOIN opportunities o ON o.id = h.opportunity_id
          JOIN accounts a ON a.id = o.account_id
          LEFT JOIN users t ON t.id = h.to_user_id
@@ -199,7 +199,7 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
     ),
     query(
       `SELECT h.opportunity_id, h.to_value, h.evidence_missing, h.reason, h.created_at, o.name,
-              o.account_id, a.name AS account_name, u.full_name AS actor_name
+              o.account_id, a.name AS account_name, h.actor_id, u.full_name AS actor_name
          FROM opportunity_history h JOIN opportunities o ON o.id = h.opportunity_id
          JOIN accounts a ON a.id = o.account_id
          LEFT JOIN users u ON u.id = h.actor_id
@@ -208,8 +208,8 @@ export async function buildWeek({ start, end, asOf = new Date() }) {
       [from, to],
     ),
     query(
-      `SELECT i.help_needed, i.opportunity_id, o.name, o.account_id, u.full_name AS asked_by,
-              hf.full_name AS help_from_name
+      `SELECT i.help_needed, i.opportunity_id, o.name, o.account_id, u.full_name AS asked_by, r.user_id AS asked_by_id,
+              hf.full_name AS help_from_name, i.help_from_user_id AS help_from_id
          FROM weekly_review_items i
          JOIN weekly_reviews r ON r.id = i.review_id
          LEFT JOIN opportunities o ON o.id = i.opportunity_id

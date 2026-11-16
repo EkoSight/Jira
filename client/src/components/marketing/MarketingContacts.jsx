@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, downloadFile } from '../../api/client.js';
 import { useAuth, useRefData, useToast } from '../../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../ui.jsx';
 import { formatDate, relativeTime } from '../../lib/format.js';
 import {
   ADDRESS_STATUS, EVENT_WORDS, IMPORT_FIELDS, MESSAGE_STATUS, SUPPRESSION_WORDS, personName, skipWords, sourceWords,
@@ -376,7 +376,7 @@ export function ContactDrawer({ contactId, meta, onClose, onChanged }) {
                     <td>{k.action.toLowerCase().replace(/_/g, ' ')}{k.audience_name ? ` · ${k.audience_name}` : ''}{k.topic_name ? ` · ${k.topic_name}` : ''}</td>
                     <td className="small">{sourceWords(k.source)}{k.ip ? <div className="muted">IP {k.ip}</div> : null}</td>
                     <td className="small">{k.basis}{k.consent_text && <div className="muted">“{k.consent_text}”</div>}{k.meta?.reason && <div className="muted">{k.meta.reason}</div>}</td>
-                    <td className="small">{k.actor_name || 'Them'}</td>
+                    <td className="small"><Who id={k.actor_id} name={k.actor_name} size={16} fallback="Them" /></td>
                   </tr>
                 ))}
               </tbody>

@@ -270,7 +270,7 @@ export async function duplicateClusters({ departmentId = null } = {}) {
     }
     clusters.push({
       accounts: members.map((m) => ({
-        id: m.id, name: m.name, type: m.type, owner_name: m.owner_name, deals: m.deals,
+        id: m.id, name: m.name, type: m.type, owner_user_id: m.owner_user_id ?? null, owner_name: m.owner_name, deals: m.deals,
       })),
       reasons: [...why],
     });

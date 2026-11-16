@@ -313,7 +313,7 @@ router.post('/imports', requirePermission('crm.import'), importBody, asyncHandle
 
 router.get('/imports', requirePermission('crm.import'), asyncHandler(async (req, res) => {
   const { rows } = await query(
-    `SELECT j.id, j.entity, j.filename, j.status, j.preset, j.counts, j.total_rows, j.processed_rows, j.created_at, j.finished_at, j.undone_at, j.undo_summary, u.full_name AS created_by_name
+    `SELECT j.id, j.entity, j.filename, j.status, j.preset, j.counts, j.total_rows, j.processed_rows, j.created_at, j.finished_at, j.undone_at, j.undo_summary, j.created_by, u.full_name AS created_by_name
        FROM crm_import_jobs j LEFT JOIN users u ON u.id = j.created_by ORDER BY j.id DESC LIMIT 100`,
   );
   res.json({ jobs: rows, fields: Object.fromEntries(Object.entries(IMPORT_FIELDS).map(([k, v]) => [k, Object.keys(v)])),
@@ -539,7 +539,7 @@ router.delete('/views/:id', asyncHandler(async (req, res) => {
 
 router.get('/audit', requirePermission('crm.audit'), asyncHandler(async (req, res) => {
   const { rows } = await query(
-    `SELECT e.id, e.action, e.entity_type, e.entity_id, e.summary, e.reason, e.created_at, u.full_name AS actor_name
+    `SELECT e.id, e.action, e.entity_type, e.entity_id, e.summary, e.reason, e.created_at, e.actor_id, u.full_name AS actor_name
        FROM crm_audit_events e LEFT JOIN users u ON u.id = e.actor_id
       WHERE ($1::text IS NULL OR e.action = $1) AND ($2::text IS NULL OR e.entity_type = $2) AND ($3::int IS NULL OR e.entity_id = $3)
         AND ($4::text IS NULL OR e.summary ILIKE '%' || $4 || '%' OR e.action ILIKE '%' || $4 || '%')

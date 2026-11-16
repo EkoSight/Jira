@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Badge, Modal, Spinner } from '../components/ui.jsx';
+import { Badge, Modal, Spinner, Who } from '../components/ui.jsx';
 import RemindMe from '../components/workspace/RemindMe.jsx';
 import { OriginPanel } from '../components/workspace/OriginPanel.jsx';
 import { ProjectsForDeal } from '../components/projects/ProjectLinks.jsx';
@@ -254,7 +254,7 @@ export function ApplicationDetail() {
         <div>
           <div className="small"><Link className="crumb-link" to="/applications">Applications</Link></div>
           <h1 style={{ margin: 0 }}>{a.name}</h1>
-          <div className="small muted">{a.account_name} · {a.type_label} · {a.stage_name} · Owner: {a.owner_name || 'nobody'}</div>
+          <div className="small muted">{a.account_name} · {a.type_label} · {a.stage_name} · Owner: <Who id={a.owner_user_id} name={a.owner_name} size={16} fallback="nobody" /></div>
         </div>
         <div className="row wrap" style={{ gap: 6 }}>
           <RemindMe entityType="APPLICATION" entityId={a.id} />
@@ -323,7 +323,7 @@ export function ApplicationDetail() {
             {!d.updates.length && !d.meetings.length && <div className="small muted">No update recorded.</div>}
             <ul className="ws-list">
               {d.updates.map((u) => (
-                <li key={`u${u.id}`} className="ws-row ws-static"><span className="grow"><strong>{d.update_kinds[u.kind]}</strong> <span className="ws-reason">{String(u.happened_on).slice(0, 10)}{u.summary ? ` · ${u.summary}` : ''}{u.by_name ? ` · ${u.by_name}` : ''}</span></span></li>
+                <li key={`u${u.id}`} className="ws-row ws-static"><span className="grow"><strong>{d.update_kinds[u.kind]}</strong> <span className="ws-reason">{String(u.happened_on).slice(0, 10)}{u.summary ? ` · ${u.summary}` : ''}{u.by_name && <> · <Who id={u.created_by} name={u.by_name} size={16} /></>}</span></span></li>
               ))}
               {d.meetings.map((m) => (
                 <li key={`m${m.id}`}><Link className="ws-row" to={`/meetings?meeting=${m.id}`}><span className="grow">{m.title} <span className="ws-reason">{m.scheduled_at ? whenWords({ at: m.scheduled_at }, { timeZone: d.timezone }) : 'Time not confirmed'}</span></span></Link></li>

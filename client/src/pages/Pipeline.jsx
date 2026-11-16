@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner } from '../components/ui.jsx';
+import { Avatar, Badge, CompanyLogo, EmptyState, Icon, Spinner, Who } from '../components/ui.jsx';
 import AccountDialog from '../components/AccountDialog.jsx';
 import CrmNudges from '../components/CrmNudges.jsx';
 import CrmDashboard from '../components/CrmDashboard.jsx';
@@ -208,7 +208,7 @@ function HandoversWaiting({ onChanged }) {
             {h.opportunity_name} <span className="muted">· {h.account_name}</span>
           </button>
           <span className="small muted">
-            {role[h.role]}{h.from_name ? ` from ${h.from_name}` : ''}{h.owed ? ` · owed: ${h.owed}` : ''}
+            {role[h.role]}{h.from_name && <> from <Who id={h.from_user_id} name={h.from_name} size={16} /></>}{h.owed ? ` · owed: ${h.owed}` : ''}
           </span>
           <button type="button" className="btn btn-sm btn-primary" onClick={() => confirm(h)}>I have it</button>
         </div>

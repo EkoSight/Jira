@@ -423,7 +423,7 @@ export default function CrmBlockers({ account, opportunities, compact = false, o
               <span className="row small muted" style={{ gap: 4 }}>
                 · asked:
                 {thread.participants.map((p) => (
-                  <Avatar key={p.id} name={p.full_name} color={p.avatar_color} size={18} title={p.full_name} />
+                  <Avatar key={p.id} userId={p.id} name={p.full_name} color={p.avatar_color} size={18} title={p.full_name} />
                 ))}
               </span>
             )}

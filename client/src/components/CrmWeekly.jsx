@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Spinner } from './ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Spinner, Who } from './ui.jsx';
 import { NextActionFields, PersonSelect, nextActionBody, nextActionDraft, nextActionProblem } from './DealParts.jsx';
 import {
   ORDER_KIND_LABEL, activityMeta, effortWords, exactMoney, formatMoney, shiftWeek, todayInIndia, weekLabel, weekOf,
@@ -159,7 +159,7 @@ export function WeekRecord() {
                 <Badge tone="good">On the record</Badge>
                 <span className="muted">
                   written {formatDate(week.generated_at, { withTime: true })}
-                  {week.generated_by ? ` by ${userById[week.generated_by]?.full_name || 'a manager'}` : ' automatically'}
+                  {week.generated_by ? <> by <Who id={week.generated_by} name={userById[week.generated_by]?.full_name} size={16} fallback="a manager" /></> : ' automatically'}
                   {' '}— later edits to the deals do not change it
                 </span>
               </>
@@ -271,7 +271,7 @@ function WeekBody({ week }) {
               {c.evidence_missing?.length > 0 && <> <Badge tone="critical">moved without evidence</Badge></>}
               {c.reason && <div className="small muted">“{c.reason}”</div>}
             </span>
-            <span className="small muted">{c.actor_name || 'Someone'} · {formatDate(c.created_at)}</span>
+            <span className="small muted"><Who id={c.actor_id} name={c.actor_name} size={16} fallback="Someone" /> · {formatDate(c.created_at)}</span>
           </div>
         ))}
       </WeekSection>
@@ -362,7 +362,7 @@ function WeekBody({ week }) {
                   <DealLink accountId={m.account_id} opportunityId={m.opportunity_id} name={m.name} accountName={m.account_name} />
                   <div>{m.next_step || <span className="muted">no next action</span>}</div>
                 </span>
-                <span className="muted">{m.owner_name || 'nobody'} · was due {formatDate(m.next_step_due)}</span>
+                <span className="muted"><Who id={m.owner_id} name={m.owner_name} size={16} fallback="nobody" /> · was due {formatDate(m.next_step_due)}</span>
               </div>
             )} />
           <SubList title="Deal tasks not finished on time" rows={week.missed.tasks} empty="None."
@@ -371,7 +371,7 @@ function WeekBody({ week }) {
                 <span className="task-ref">{t.ref}</span>
                 <span className="grow">{t.title}<div className="muted">{t.account_name}</div></span>
                 <span className="muted">
-                  {t.assignee_name || 'unassigned'} · due {formatDate(t.due_date)}
+                  <Who id={t.assignee_id} name={t.assignee_name} size={16} fallback="unassigned" /> · due {formatDate(t.due_date)}
                   {t.completed_at ? ` · finished ${formatDate(t.completed_at)}` : ' · not finished'}
                 </span>
               </div>
@@ -391,7 +391,7 @@ function WeekBody({ week }) {
                   {b.dependency && <span className="muted"> · on {b.dependency === 'EXTERNAL' ? (b.external_party || 'someone outside') : 'us'}</span>}
                   <div className="muted">
                     <DealLink accountId={b.account_id} opportunityId={null} name={b.opportunity_name} accountName={b.account_name} />
-                    {b.responsible_name ? ` · ${b.responsible_name} clears it` : ''}
+                    {b.responsible_name && <> · <Who id={b.responsible_id} name={b.responsible_name} size={16} /> clears it</>}
                     {b.expected_resolution ? ` · by ${formatDate(b.expected_resolution)}` : ''}
                   </div>
                 </span>
@@ -401,14 +401,14 @@ function WeekBody({ week }) {
             render={(p) => (
               <div key={p.opportunity_id} className="week-row small">
                 <span className="grow"><DealLink accountId={p.account_id} opportunityId={p.opportunity_id} name={p.name} accountName={p.account_name} /></span>
-                <span className="muted">{p.owner_name || 'nobody'} · was to close {formatDate(p.expected_close)}</span>
+                <span className="muted"><Who id={p.owner_id} name={p.owner_name} size={16} fallback="nobody" /> · was to close {formatDate(p.expected_close)}</span>
               </div>
             )} />
           <SubList title="Handovers nobody has confirmed" rows={week.decisions.unconfirmed_handovers} empty="None."
             render={(h) => (
               <div key={h.id} className="week-row small">
                 <span className="grow"><DealLink accountId={h.account_id} opportunityId={h.opportunity_id} name={h.name} accountName={h.account_name} /></span>
-                <span className="muted">to {h.to_name} · {relativeTime(h.created_at)}</span>
+                <span className="muted">to <Who id={h.to_id} name={h.to_name} size={16} fallback="someone" /> · {relativeTime(h.created_at)}</span>
               </div>
             )} />
           <SubList title="Moved without evidence" rows={week.decisions.moved_without_evidence} empty="None."
@@ -418,14 +418,14 @@ function WeekBody({ week }) {
                   <DealLink accountId={m.account_id} opportunityId={m.opportunity_id} name={m.name} accountName={m.account_name} /> → {m.to_value}
                   {m.reason && <div className="muted">“{m.reason}”</div>}
                 </span>
-                <span className="muted">{m.actor_name}</span>
+                <span className="muted"><Who id={m.actor_id} name={m.actor_name} size={16} /></span>
               </div>
             )} />
           <SubList title="Help asked for in reviews" rows={week.decisions.help_requested} empty="Nobody asked for help."
             render={(h, index) => (
               <div key={`${h.opportunity_id}-${index}`} className="week-row small">
                 <span className="grow"><strong>{h.help_needed}</strong>
-                  <div className="muted"><DealLink accountId={h.account_id} opportunityId={h.opportunity_id} name={h.name} /> · asked by {h.asked_by}{h.help_from_name ? ` of ${h.help_from_name}` : ''}</div>
+                  <div className="muted"><DealLink accountId={h.account_id} opportunityId={h.opportunity_id} name={h.name} /> · asked by <Who id={h.asked_by_id} name={h.asked_by} size={16} fallback="someone" />{h.help_from_name && <> of <Who id={h.help_from_id} name={h.help_from_name} size={16} /></>}</div>
                 </span>
               </div>
             )} />
@@ -518,7 +518,7 @@ function ReviewAnswer({ item, unsent = false }) {
       </div>
       {item.help_needed && (
         <div className="review-help">
-          <span className="value-cell-label">Help needed{item.help_from_name ? ` from ${item.help_from_name}` : ''}</span>
+          <span className="value-cell-label">Help needed{item.help_from_name && <> from <Who id={item.help_from_user_id} name={item.help_from_name} size={16} /></>}</span>
           <div>{item.help_needed}</div>
         </div>
       )}
@@ -750,7 +750,7 @@ export function TeamReviews({ departmentId }) {
               {data.help_requested.map((h, index) => (
                 <div key={index} className="week-row small">
                   <span className="grow"><strong>{h.help}</strong>
-                    <div className="muted">{h.deal} · {h.account_name} — {h.from}{h.help_from_name ? ` asks ${h.help_from_name}` : ''}</div>
+                    <div className="muted">{h.deal} · {h.account_name} — {h.from}{h.help_from_name && <> asks <Who id={h.help_from_user_id} name={h.help_from_name} size={16} /></>}</div>
                   </span>
                 </div>
               ))}

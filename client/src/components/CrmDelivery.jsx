@@ -239,7 +239,7 @@ function EngagementCard({ engagement, onChanged }) {
           </span>
         </span>
         {engagement.owner_name && (
-          <Avatar name={engagement.owner_name} color={engagement.owner_color} size={24} />
+          <Avatar userId={engagement.owner_user_id} name={engagement.owner_name} color={engagement.owner_color} size={24} />
         )}
         <Icon name="chevron" size={13} style={{ transform: open ? 'rotate(90deg)' : 'none' }} />
       </button>

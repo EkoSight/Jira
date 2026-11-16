@@ -26,7 +26,7 @@ function SignalRow({ signal }) {
       </div>
       {signal.owner_name && signal.entity_type !== 'DEPARTMENT' && (
         <span className="row" style={{ gap: 6 }}>
-          <Avatar name={signal.owner_name} color={signal.owner_color} size={22} />
+          <Avatar userId={signal.owner_user_id} name={signal.owner_name} color={signal.owner_color} size={22} />
         </span>
       )}
     </>
@@ -128,7 +128,7 @@ export function PeopleBehind({ people }) {
             <tr key={person.user_id}>
               <td>
                 <span className="row">
-                  <Avatar name={person.name} color={person.color} size={24} />
+                  <Avatar userId={person.user_id} name={person.name} color={person.color} size={24} />
                   <span style={{ fontWeight: 600 }}>{person.name}</span>
                 </span>
               </td>

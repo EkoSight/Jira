@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client.js';
 import { useToast } from '../../state/AppState.jsx';
-import { Badge, Field, Modal, Spinner } from '../ui.jsx';
+import { Badge, Field, Modal, Spinner, Who } from '../ui.jsx';
 import { CHANNEL_LABEL, REMINDER_OFFSETS, exactTime, reminderWords } from '../../lib/crmWork.js';
 import { notificationPermission, requestNotificationPermission } from '../../lib/alerts.js';
 
@@ -201,8 +201,8 @@ export function FollowUpDigestAdmin({ meta }) {
           {exceptions.length === 0 ? <div className="small muted">None.</div> : exceptions.map((x) => (
             <div key={x.user_id} className="sales-row small">
               <Badge tone={x.mode === 'SKIP' ? 'warning' : 'brand'}>{x.mode === 'SKIP' ? 'Skipped' : 'Included'}</Badge>
-              <span className="grow">{x.full_name}{x.until ? ` until ${x.until}` : ''}{x.reason ? ` · ${x.reason}` : ''}</span>
-              <span className="muted">set by {x.set_by_name || 'someone'}</span>
+              <span className="grow"><Who id={x.user_id} name={x.full_name} size={18} />{x.until ? ` until ${x.until}` : ''}{x.reason ? ` · ${x.reason}` : ''}</span>
+              <span className="muted">set by <Who id={x.set_by} name={x.set_by_name} size={16} fallback="someone" /></span>
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => saveException(x.user_id, { mode: null })}>Remove</button>
             </div>
           ))}
@@ -234,7 +234,7 @@ export function FollowUpDigestAdmin({ meta }) {
                   const [label, tone] = DELIVERY[g.delivery] || [g.delivery, 'neutral'];
                   return (
                     <tr key={g.id}>
-                      <td>{g.full_name}{g.test ? <> <Badge tone="warning">Test</Badge></> : null}</td>
+                      <td><Who id={g.user_id} name={g.full_name} size={18} />{g.test ? <> <Badge tone="warning">Test</Badge></> : null}</td>
                       <td><Badge tone={tone}>{label}</Badge></td>
                       <td className="num tnum">{g.items}</td>
                       <td className="small">{g.chat_error || g.reason || ''}</td>

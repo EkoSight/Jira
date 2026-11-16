@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api, downloadFile, postDownload } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../ui.jsx';
 import {
   CATEGORY, CHOOSABLE, ELIGIBLE, FOLLOWUP_KIND, PRIORITY, dayOf, editableFields, fieldValueLabel, handedOut, money, when,
 } from '../../lib/sales.js';
@@ -42,7 +42,7 @@ function FollowUpRow({ task, onOpen }) {
           <span className="tnum">{task.completed_at ? `done ${when(task.completed_at)}` : exactTime(task.due_date)}</span>
           {!task.completed_at && <DueBadge dueAt={task.due_date} />}
           {to && <Link to={to} className="btn-link truncate">{about}</Link>}
-          {task.assignee_name && <span>· {task.assignee_name}</span>}
+          {task.assignee_name && <span>· <Who id={task.assignee_id} name={task.assignee_name} size={16} /></span>}
           {task.due_date_changes > 0 && <span title="Times its date was moved">· moved {task.due_date_changes}×</span>}
         </div>
       </div>
@@ -234,7 +234,7 @@ export function NewLeadDialog({ meta, onClose, onSaved }) {
           <div className="mkt-callout small">
             <strong>Possible duplicates</strong> — check before adding; nothing is merged automatically.
             <ul>{hits.slice(0, 5).map((h, i) => (
-              <li key={i}>{h.hidden ? `A record you cannot open${h.owner_name ? ` (owned by ${h.owner_name})` : ''}` : h.isAccount
+              <li key={i}>{h.hidden ? <>A record you cannot open{h.owner_name && <> (owned by <Who id={h.owner_user_id} name={h.owner_name} size={16} />)</>}</> : h.isAccount
                 ? <Link to={`/accounts/${h.id}`}>{h.name}</Link> : <Link to={`/sales/leads/${h.id}`}>{h.ref} {h.organization_name || h.contact_name}</Link>}
                 {' — '}{(h.reasons || []).join(', ')}</li>
             ))}</ul>
@@ -391,7 +391,7 @@ export function Leads({ meta }) {
       </div>
       {forUser && (
         <div className="row wrap small" style={{ gap: 6 }}>
-          <Badge tone="brand">Follow-ups assigned to {forUser.full_name}{forUser.is_active ? '' : ' (former account)'}</Badge>
+          <Badge tone="brand">Follow-ups assigned to <Who id={forUser.id} name={forUser.full_name} color={forUser.avatar_color} size={16} />{forUser.is_active ? '' : ' (former account)'}</Badge>
           <button type="button" className="btn-link" onClick={() => setFilters({ ...filters, for_user: '' })}>Show everyone’s</button>
         </div>
       )}
@@ -450,7 +450,7 @@ export function Leads({ meta }) {
               <button key={l.id} type="button" className="link-row sales-card" onClick={() => navigate(`/sales/leads/${l.id}`)}>
                 <div className="grow stack-xs" style={{ minWidth: 0 }}>
                   <div className="row" style={{ gap: 6 }}><CategoryBadge category={l.category} /><span className="truncate" style={{ fontWeight: 600 }}>{l.display_name}</span></div>
-                  <div className="small muted">{l.ref} · {l.owner_name || 'unassigned'} · {l.next_followup_due ? `next ${when(l.next_followup_due)}` : l.retry_at ? `retry ${when(l.retry_at)}` : 'no follow-up'}</div>
+                  <div className="small muted">{l.ref} · <Who id={l.owner_user_id} name={l.owner_name} color={l.owner_color} size={16} fallback="unassigned" /> · {l.next_followup_due ? `next ${when(l.next_followup_due)}` : l.retry_at ? `retry ${when(l.retry_at)}` : 'no follow-up'}</div>
                   <div className="small muted truncate">{shortPlace(l) || `Place ${NOT_PROVIDED.toLowerCase()}`}</div>
                 </div>
                 {l.call_status_label ? <CallStatusBadge lead={l} /> : <LeadStatusBadge status={l.status} />}

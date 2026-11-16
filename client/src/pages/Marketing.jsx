@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../components/ui.jsx';
 import EmailBuilder, { cleanDesign } from '../components/marketing/EmailBuilder.jsx';
 import MarketingContacts from '../components/marketing/MarketingContacts.jsx';
 import MarketingAudiences from '../components/marketing/MarketingAudiences.jsx';
@@ -67,7 +67,7 @@ function Overview({ goTo }) {
           <div className="card-head"><h3>Follow-up tasks from email</h3><span className="small muted">{o.followups.open} open of {o.followups.total} in 30 days</span></div>
           <div className="card-pad stack-sm">
             {!followups ? <Spinner /> : followups.length === 0 ? <div className="empty small">Replies, conversions and clicks you choose become tasks here.</div> : followups.map((f) => (
-              <div key={f.id} className="row small"><Link className="task-ref" to={`?task=${f.task_id}`}>{f.task_ref}</Link><span className="grow truncate">{personName(f)} — {f.reason.toLowerCase()} · {f.campaign_name || f.workflow_name}</span><span className="muted">{f.assignee_name}</span></div>
+              <div key={f.id} className="row small"><Link className="task-ref" to={`?task=${f.task_id}`}>{f.task_ref}</Link><span className="grow truncate">{personName(f)} — {f.reason.toLowerCase()} · {f.campaign_name || f.workflow_name}</span><span className="muted"><Who id={f.assignee_id} name={f.assignee_name} size={16} /></span></div>
             ))}
           </div>
         </div>
@@ -325,7 +325,7 @@ function Automations({ meta }) {
               <thead><tr><th>Automation</th><th>Status</th><th>Starts when</th><th className="num">Started</th><th className="num">In progress</th><th className="num">Emails sent</th></tr></thead>
               <tbody>{list.map((w) => (
                 <tr key={w.id}>
-                  <td><Link to={`/marketing/automations/${w.id}`} style={{ fontWeight: 600 }}>{w.name}</Link><div className="small muted">{w.audience_name || 'Any audience'}{w.owner_name ? ` · ${w.owner_name}` : ''}</div></td>
+                  <td><Link to={`/marketing/automations/${w.id}`} style={{ fontWeight: 600 }}>{w.name}</Link><div className="small muted">{w.audience_name || 'Any audience'}{w.owner_name && <> · <Who id={w.owner_user_id} name={w.owner_name} size={16} /></>}</div></td>
                   <td><WorkflowBadge status={w.status} />{!w.approved_fingerprint && w.submitted_at && <Badge tone="warning">waiting for approval</Badge>}</td>
                   <td className="small">{triggerSummary(w.trigger, { audiences: meta.audiences })}</td>
                   <td className="num">{w.enrolled}</td><td className="num">{w.in_progress}</td><td className="num">{w.emails_sent}</td>

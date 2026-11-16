@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth, useRefData, useToast } from '../../state/AppState.jsx';
-import { Badge, ConfirmButton, Modal, Spinner } from '../ui.jsx';
+import { Badge, ConfirmButton, Modal, Spinner, Who } from '../ui.jsx';
 import { HealthSignals, ProgressBar, ProjectForm, projectBody } from '../../pages/Projects.jsx';
 import { STATUS_LABEL, STATUS_TONE, dateWords, progressWords } from '../../lib/projects.js';
 
@@ -174,7 +174,7 @@ function ProjectLine({ p }) {
         <span className="row wrap" style={{ gap: 6 }}><Badge tone={STATUS_TONE[p.status]}>{STATUS_LABEL[p.status]}</Badge><HealthSignals numbers={p.numbers} compact /></span>
       </span>
       <ProgressBar numbers={p.numbers} />
-      <span className="small muted">{progressWords(p.numbers)}{p.lead_name ? ` · Lead: ${p.lead_name}` : ''}</span>
+      <span className="small muted">{progressWords(p.numbers)}{p.lead_name && <> · Lead: <Who id={p.lead_user_id} name={p.lead_name} color={p.lead_color} size={16} /></>}</span>
     </li>
   );
 }

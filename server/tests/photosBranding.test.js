@@ -136,8 +136,12 @@ test('P1: a photo is stored clean at every size, shown only to signed-in people,
   }
 
   // anyone signed in sees it; nobody else; old versions are not served
-  const versions = ok(await call('GET', '/photos/versions', { token: tokens.ravi })).versions;
-  assert.deepEqual(versions, [{ id: ids.isha, v: 1 }]);
+  const list = ok(await call('GET', '/photos/versions', { token: tokens.ravi }));
+  assert.deepEqual(list.versions, [{ id: ids.isha, v: 1 }]);
+  // everyone's colour comes with it, so a person shown by id alone keeps their own colour
+  const { rows: [isha] } = await query('SELECT avatar_color FROM users WHERE id = $1', [ids.isha]);
+  assert.ok(list.colours.some((x) => x.id === ids.isha && x.c === isha.avatar_color), 'colours include each person');
+  assert.ok(list.colours.every((x) => Object.keys(x).sort().join() === 'c,id'), 'only id and colour, nothing else about a person');
   const pic = await call('GET', `/photos/${ids.isha}/128?v=1`, { token: tokens.ravi });
   assert.equal(pic.status, 200);
   assert.equal(pic.headers.get('content-type'), 'image/webp');

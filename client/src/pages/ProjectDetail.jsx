@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, ConfirmButton, Modal, Spinner } from '../components/ui.jsx';
+import { Avatar, Badge, ConfirmButton, Modal, Spinner, Who } from '../components/ui.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import { HealthSignals, ProgressBar, ProjectForm, projectBody } from './Projects.jsx';
 import { ProjectLinksCard } from '../components/projects/ProjectLinks.jsx';
@@ -30,7 +30,7 @@ function TaskRow({ t }) {
             <strong className="truncate">{t.title}</strong>
           </span>
           <span className="ws-reason">
-            {t.assignee_name || 'No owner'}{t.department_name ? ` · ${t.department_name}` : ''}{t.health?.text ? ` · ${t.health.label}` : ''}
+            <Who id={t.assignee_id} name={t.assignee_name} size={16} fallback="No owner" />{t.department_name ? ` · ${t.department_name}` : ''}{t.health?.text ? ` · ${t.health.label}` : ''}
           </span>
         </span>
         <Badge tone={t.stage === 'done' ? 'good' : t.health?.code === 'OVERDUE' ? 'critical' : 'neutral'}>{t.status_name}</Badge>
@@ -62,7 +62,7 @@ function OverviewTab({ page, setPage }) {
           {n.lead_update ? (
             <>
               <Badge tone={HEALTH_TONE[n.lead_update.health]}>{HEALTH_LABEL[n.lead_update.health]}</Badge>
-              <span className="small">{n.lead_update.note} <span className="muted">— {n.lead_update.author_name}, {shortDateTime(n.lead_update.at)}</span></span>
+              <span className="small">{n.lead_update.note} <span className="muted">— <Who id={n.lead_update.author_id} name={n.lead_update.author_name} size={16} fallback="someone" />, {shortDateTime(n.lead_update.at)}</span></span>
             </>
           ) : <span className="small muted">No update yet</span>}
         </div>
@@ -265,7 +265,7 @@ function UpdatesTab({ page, setPage }) {
             <li key={u.id} className="pj-update">
               <Badge tone={HEALTH_TONE[u.health]}>{HEALTH_LABEL[u.health]}</Badge>
               <span className="grow" style={{ whiteSpace: 'pre-wrap' }}>{u.note}</span>
-              <span className="small muted">{u.author_name}, {shortDateTime(u.created_at)}</span>
+              <span className="small muted"><Who id={u.author_id} name={u.author_name} size={18} fallback="someone" />, {shortDateTime(u.created_at)}</span>
             </li>
           ))}
         </ul>
@@ -314,7 +314,7 @@ function PeopleTab({ page, setPage }) {
               <tbody>
                 {page.contributors.map((c) => (
                   <tr key={c.id}>
-                    <td><Link to={`/board?project_id=${p.id}&assignee_id=${c.id}`}>{c.full_name}</Link></td>
+                    <td><Link to={`/board?project_id=${p.id}&assignee_id=${c.id}`}><Who id={c.id} name={c.full_name} color={c.avatar_color} size={20} /></Link></td>
                     <td>{c.open}</td><td>{c.overdue ? <span className="pj-overdue">{c.overdue}</span> : 0}</td><td>{c.done}</td>
                   </tr>
                 ))}
@@ -339,7 +339,7 @@ function ActivityTab({ projectId }) {
       {rows.map((a) => (
         <li key={a.id} className="pj-activity">
           <span className="small muted">{shortDateTime(a.created_at)}</span>
-          <span className="grow"><strong>{a.actor_name || 'TaskFlow'}</strong> {activityWords(a, people)}{a.task_label ? <>: <Link to={`?task=${a.task_id}`}>{a.task_label}</Link></> : ''}</span>
+          <span className="grow"><strong><Who id={a.actor_id} name={a.actor_name} color={a.avatar_color} size={18} fallback="TaskFlow" /></strong> {activityWords(a, people)}{a.task_label ? <>: <Link to={`?task=${a.task_id}`}>{a.task_label}</Link></> : ''}</span>
         </li>
       ))}
     </ul>

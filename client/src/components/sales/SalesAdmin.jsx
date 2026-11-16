@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, downloadFile } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../ui.jsx';
 import { FollowUpDigestAdmin } from './FollowUpSettings.jsx';
 import { CallReview, LocationReview } from './ReviewLists.jsx';
 import { CopyButton } from '../marketing/parts.jsx';
@@ -318,7 +318,7 @@ function Assignment({ meta, onSaved }) {
         <h3>People taking leads</h3>
         <div className="table-scroll"><table className="data-table"><thead><tr><th>Person</th><th>Takes new leads</th><th className="num">Open leads</th><th>Most open leads</th></tr></thead>
           <tbody>{data.agents.filter((a) => a.is_active).map((a) => (
-            <tr key={a.user_id}><td>{a.full_name}</td>
+            <tr key={a.user_id}><td><Who id={a.user_id} name={a.full_name} size={20} /></td>
               <td><input type="checkbox" aria-label={`${a.full_name} takes new leads`} checked={a.accepts_new_leads !== false} onChange={(e) => agentPatch(a, { accepts_new_leads: e.target.checked })} /></td>
               <td className="num">{a.open_leads}</td>
               <td><input className="input" style={{ width: 80 }} type="number" min="1" defaultValue={a.max_open_leads ?? ''} aria-label={`${a.full_name} capacity`} onBlur={(e) => { const v = e.target.value === '' ? null : Number(e.target.value); if (v !== (a.max_open_leads ?? null)) agentPatch(a, { max_open_leads: v }); }} placeholder="no limit" /></td></tr>
@@ -358,7 +358,7 @@ function RuleDialog({ meta, rule, onClose, onSaved }) {
             <option value="SPECIALIZATION">By region or speciality, then fewest open</option><option value="SPECIFIC_USER">Always the first available person</option><option value="ACCOUNT_OWNER">The organization’s owner</option>
           </select>
         </Field>
-        <Field label="Among"><div className="row wrap" style={{ gap: 4 }}>{meta.users.filter((u) => u.is_active && u.role !== 'viewer').map((u) => <button key={u.id} type="button" className={`kind-chip${f.user_ids.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggle('user_ids', u.id)}>{u.full_name}</button>)}</div></Field>
+        <Field label="Among"><div className="row wrap" style={{ gap: 4 }}>{meta.users.filter((u) => u.is_active && u.role !== 'viewer').map((u) => <button key={u.id} type="button" className={`kind-chip${f.user_ids.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggle('user_ids', u.id)}><Avatar userId={u.id} name={u.full_name} color={u.avatar_color} size={16} />{u.full_name}</button>)}</div></Field>
         <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={f.is_enabled} onChange={(e) => setF({ ...f, is_enabled: e.target.checked })} /> On</label>
       </div>
     </Modal>
@@ -506,7 +506,7 @@ function Catalogue({ meta }) {
           <input className="input" placeholder="Discount % or more" aria-label="Minimum discount" inputMode="decimal" value={r.min_discount_pct} onChange={(e) => setR({ ...r, min_discount_pct: e.target.value })} />
           <input className="input" placeholder={`Total or more (${meta.settings.calendar?.currency || 'INR'})`} aria-label="Minimum total" inputMode="decimal" value={r.min_total} onChange={(e) => setR({ ...r, min_total: e.target.value })} />
         </div>
-        <div className="row wrap" style={{ gap: 4 }}>{meta.users.filter((u) => u.is_active && u.role !== 'member' && u.role !== 'viewer').map((u) => <button key={u.id} type="button" className={`kind-chip${r.approver_user_ids.includes(u.id) ? ' is-active' : ''}`} onClick={() => setR({ ...r, approver_user_ids: r.approver_user_ids.includes(u.id) ? r.approver_user_ids.filter((x) => x !== u.id) : [...r.approver_user_ids, u.id] })}>{u.full_name}</button>)}</div>
+        <div className="row wrap" style={{ gap: 4 }}>{meta.users.filter((u) => u.is_active && u.role !== 'member' && u.role !== 'viewer').map((u) => <button key={u.id} type="button" className={`kind-chip${r.approver_user_ids.includes(u.id) ? ' is-active' : ''}`} onClick={() => setR({ ...r, approver_user_ids: r.approver_user_ids.includes(u.id) ? r.approver_user_ids.filter((x) => x !== u.id) : [...r.approver_user_ids, u.id] })}><Avatar userId={u.id} name={u.full_name} color={u.avatar_color} size={16} />{u.full_name}</button>)}</div>
         <div><button type="button" className="btn btn-sm" disabled={r.name.trim().length < 2 || (r.min_discount_pct === '' && r.min_total === '')} onClick={() => save(toast, api.sales.post('/approval-rules', { name: r.name, min_discount_pct: r.min_discount_pct === '' ? null : Number(r.min_discount_pct), min_total: r.min_total === '' ? null : r.min_total, approver_user_ids: r.approver_user_ids, currency: meta.settings.calendar?.currency || 'INR' })).then(() => { setR({ name: '', min_discount_pct: '', min_total: '', approver_user_ids: [] }); load(); }).catch(() => {})}>Add rule</button></div>
       </div>
       <div className="card card-pad stack-sm">
@@ -712,7 +712,7 @@ function Remediation({ meta }) {
           )}
           <div className="table-scroll"><table className="data-table"><thead><tr><th><input type="checkbox" aria-label="Select all" onChange={(e) => setPicked(e.target.checked ? new Set(list.map((o) => o.id)) : new Set())} /></th><th>Organization</th><th>Suggestion</th><th>Why</th><th className="num">Open deals</th><th>Owner</th></tr></thead>
             <tbody>{list.map((o) => <tr key={o.id} className={o.flagged ? 'is-late' : ''}><td><input type="checkbox" aria-label={`Select ${o.name}`} checked={picked.has(o.id)} onChange={() => setPicked((s) => { const n = new Set(s); if (n.has(o.id)) n.delete(o.id); else n.add(o.id); return n; })} /></td>
-              <td><Link to={`/accounts/${o.id}`}>{o.name}</Link></td><td>{o.suggested_category ? CATEGORY[o.suggested_category]?.label : '—'}</td><td className="small">{o.suggestion_reason}</td><td className="num">{o.open_deals}</td><td>{o.owner_name || '—'}</td></tr>)}</tbody></table></div>
+              <td><Link to={`/accounts/${o.id}`}>{o.name}</Link></td><td>{o.suggested_category ? CATEGORY[o.suggested_category]?.label : '—'}</td><td className="small">{o.suggestion_reason}</td><td className="num">{o.open_deals}</td><td><Who id={o.owner_user_id} name={o.owner_name} size={18} fallback="—" /></td></tr>)}</tbody></table></div>
         </>
       )}
       <div className="small muted">{meta.settings.routing?.legacyUnclassified === 'EXCLUDE' ? 'Until confirmed they are left out of pipelines and reports.' : 'Until confirmed they stay in pipelines and reports as before.'}</div>
@@ -746,7 +746,7 @@ function Audit() {
     <div className="stack-sm">
       <input className="input" style={{ maxWidth: 300 }} placeholder="Search actions and summaries" aria-label="Search audit" value={q} onChange={(e) => setQ(e.target.value)} />
       {!list ? <Spinner /> : <div className="table-scroll"><table className="data-table"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Record</th><th>Summary</th><th>Why</th></tr></thead>
-        <tbody>{list.map((e) => <tr key={e.id}><td>{when(e.created_at)}</td><td>{e.actor_name || 'system'}</td><td>{e.action.toLowerCase().replace(/_/g, ' ')}</td><td className="small">{e.entity_type ? `${e.entity_type.toLowerCase()} ${e.entity_id ?? ''}` : ''}</td><td className="small">{e.summary}</td><td className="small">{e.reason}</td></tr>)}</tbody></table></div>}
+        <tbody>{list.map((e) => <tr key={e.id}><td>{when(e.created_at)}</td><td><Who id={e.actor_id} name={e.actor_name} size={18} fallback="system" /></td><td>{e.action.toLowerCase().replace(/_/g, ' ')}</td><td className="small">{e.entity_type ? `${e.entity_type.toLowerCase()} ${e.entity_id ?? ''}` : ''}</td><td className="small">{e.summary}</td><td className="small">{e.reason}</td></tr>)}</tbody></table></div>}
     </div>
   );
 }
@@ -868,7 +868,7 @@ export function Imports({ meta }) {
         <div className="card-pad stack-sm">
           {!jobs ? <Spinner /> : jobs.jobs.length === 0 ? <div className="empty small">None yet.</div> : jobs.jobs.map((j) => (
             <button key={j.id} type="button" className="link-row small" onClick={() => api.sales.get(`/imports/${j.id}`).then((d) => { setJob(d.job); setDetail(d); }).catch(toast.error)}>
-              <strong>#{j.id}</strong><span className="grow truncate">{j.entity.toLowerCase()}{j.preset ? ` (${PRESET_NAME[j.preset] || j.preset})` : ''} · {j.filename} · {j.created_by_name}</span><Badge>{j.status.toLowerCase()}</Badge><span className="muted">{dayOf(j.created_at)}</span>
+              <strong>#{j.id}</strong><span className="grow truncate">{j.entity.toLowerCase()}{j.preset ? ` (${PRESET_NAME[j.preset] || j.preset})` : ''} · {j.filename} · <Who id={j.created_by} name={j.created_by_name} size={16} /></span><Badge>{j.status.toLowerCase()}</Badge><span className="muted">{dayOf(j.created_at)}</span>
             </button>
           ))}
         </div>

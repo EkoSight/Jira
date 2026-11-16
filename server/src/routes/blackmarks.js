@@ -424,7 +424,7 @@ router.get(
     if (!wide && mark.user_id !== req.currentUser.id) throw forbidden('You can only see your own marks');
     const { rows: corrections } = await query(
       `SELECT c.id, c.request_id, c.kind, c.status, c.summary, c.work_date, c.decided_at, c.decision_note, c.reversed_at, c.reverse_reason,
-              d.full_name AS decided_by_name, x.full_name AS reversed_by_name, r.action AS request_action, r.name AS holiday_name
+              c.decided_by, c.reversed_by, d.full_name AS decided_by_name, x.full_name AS reversed_by_name, r.action AS request_action, r.name AS holiday_name
          FROM holiday_corrections c JOIN holiday_requests r ON r.id = c.request_id
          LEFT JOIN users d ON d.id = c.decided_by LEFT JOIN users x ON x.id = c.reversed_by
         WHERE (c.target_type = 'BLACK_MARK' AND c.target_id = $1)
@@ -433,7 +433,7 @@ router.get(
       [mark.id, mark.occurrence_key],
     );
     const { rows: trail } = await query(
-      `SELECT a.id, a.action, a.reason, a.before, a.after, a.source, a.created_at, u.full_name AS actor_name
+      `SELECT a.id, a.action, a.reason, a.before, a.after, a.source, a.created_at, a.actor_id, u.full_name AS actor_name
          FROM attendance_audit a LEFT JOIN users u ON u.id = a.actor_id
         WHERE a.entity_type = 'BLACK_MARK' AND a.entity_id = $1 ORDER BY a.created_at`,
       [String(mark.id)],

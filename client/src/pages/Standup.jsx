@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal } from '../components/ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Who } from '../components/ui.jsx';
 import { LoadState } from '../components/LoadState.jsx';
 import { useLoad } from '../lib/useLoad.js';
 import { todayIn } from '../lib/attendance.js';
@@ -334,7 +334,7 @@ function ReviewTab({ initialDate }) {
                       const st = STATUS[r.status];
                       return (
                         <tr key={r.id}>
-                          <td>{r.full_name}{r.role_title ? <div className="small muted">{r.role_title}</div> : null}</td>
+                          <td><Who id={r.user_id} name={r.full_name} size={20} />{r.role_title ? <div className="small muted">{r.role_title}</div> : null}</td>
                           <td><Badge tone={st.tone}>{st.label}</Badge>{r.reason && <div className="small muted">{reasonWords(r.reason)}</div>}</td>
                           <td className="tnum">{s ? timeOf(s.first_submitted_at) : '—'}{s?.current_version > 1 && <div className="small muted">{s.current_version} versions</div>}</td>
                           <td>
@@ -356,7 +356,7 @@ function ReviewTab({ initialDate }) {
                             )}
                           </td>
                           <td className="small">
-                            {r.resolution ? <>{r.resolution.toLowerCase().replace('_', ' ')}{r.resolution_note ? ` — ${r.resolution_note}` : ''}<div className="muted">{r.resolved_by_name}</div></>
+                            {r.resolution ? <>{r.resolution.toLowerCase().replace('_', ' ')}{r.resolution_note ? ` — ${r.resolution_note}` : ''}<div className="muted"><Who id={r.resolved_by} name={r.resolved_by_name} size={16} /></div></>
                               : ['MISSING', 'INACCESSIBLE', 'LATE'].includes(r.status) && <button type="button" className="btn btn-sm" onClick={() => setResolving(r)}>Follow up</button>}
                           </td>
                         </tr>
@@ -377,7 +377,7 @@ function ReviewTab({ initialDate }) {
                     </div>
                   ))}
                   {b.excluded.map((e) => (
-                    <div key={e.id} className="small muted">{e.full_name} — not included: {reasonWords(e.reason)}</div>
+                    <div key={e.id} className="small muted"><Who id={e.user_id} name={e.full_name} size={16} /> — not included: {reasonWords(e.reason)}</div>
                   ))}
                 </section>
               )}
@@ -475,12 +475,12 @@ function PeopleTab() {
             {members.length === 0 && <tr><td colSpan={4} className="small muted">Nobody yet.</td></tr>}
             {members.map((m) => (
               <tr key={m.id} className={m.active ? '' : 'att-off'}>
-                <td>{m.full_name}<div className="small muted">{m.role_title || ''}{!m.active ? ' · left the standup' : ''}{m.user_active === false ? ' · account deactivated' : ''}</div></td>
+                <td><Who id={m.user_id} name={m.full_name} size={20} /><div className="small muted">{m.role_title || ''}{!m.active ? ' · left the standup' : ''}{m.user_active === false ? ' · account deactivated' : ''}</div></td>
                 <td className="small">{m.user_id ? `${m.user_email}` : m.shared_account_id ? `shared login: ${m.shared_account_email}` : 'Chat only'}</td>
                 <td className="small">
                   <Badge tone={IDENTITY[m.identity_status].tone}>{IDENTITY[m.identity_status].label}</Badge>
                   <div className="muted">{m.chat_email || m.user_email || ''}{m.chat_user_name || m.linked_chat_user ? ` · ${m.chat_user_name || m.linked_chat_user}` : ''}</div>
-                  {m.identity_note && <div className="muted">“{m.identity_note}” — {m.verified_by_name}</div>}
+                  {m.identity_note && <div className="muted">“{m.identity_note}” — <Who id={m.identity_verified_by} name={m.verified_by_name} size={16} fallback="someone" /></div>}
                 </td>
                 <td className="att-row-actions">
                   {m.identity_status !== 'VERIFIED' && m.active && <button type="button" className="btn btn-sm" onClick={() => setVerifying(m)}>Verify</button>}
@@ -639,7 +639,7 @@ function SetupTab() {
         <Field label="Who gets the private follow-up" hint="They need the “standup review” permission. Names stay in TaskFlow; Chat gets counts only.">
           <div className="row wrap" style={{ gap: 6 }}>
             {(users || []).filter((u) => u.is_active !== false && ['super_admin', 'admin', 'manager'].includes(u.role)).map((u) => (
-              <button key={u.id} type="button" className={`kind-chip${form.escalateTo.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggleReviewer(u.id)}>{u.full_name}</button>
+              <button key={u.id} type="button" className={`kind-chip${form.escalateTo.includes(u.id) ? ' is-active' : ''}`} onClick={() => toggleReviewer(u.id)}><Avatar userId={u.id} name={u.full_name} color={u.avatar_color} size={16} />{u.full_name}</button>
             ))}
           </div>
         </Field>

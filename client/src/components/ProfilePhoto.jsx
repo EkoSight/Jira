@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
-import { Avatar, Spinner } from './ui.jsx';
+import { Avatar, Spinner, Who } from './ui.jsx';
 import PhotoEditor from './PhotoEditor.jsx';
 import { setPhotoVersion } from '../lib/photos.js';
 
@@ -81,7 +81,7 @@ export default function ProfilePhoto() {
           <div key={p.id} className="mkt-callout small row wrap" style={{ gap: 12 }}>
             <SuggestionPicture id={p.id} />
             <div className="stack-xs" style={{ flex: 1, minWidth: 200 }}>
-              <strong>{p.proposed_by_name || 'An administrator'} suggested this photo for you.</strong>
+              <strong><Who id={p.proposed_by} name={p.proposed_by_name} size={18} fallback="An administrator" /> suggested this photo for you.</strong>
               {p.note && <span>“{p.note}”</span>}
               <span className="muted">It is not used unless you accept it. Declining deletes it.</span>
               <div className="row" style={{ gap: 6 }}>

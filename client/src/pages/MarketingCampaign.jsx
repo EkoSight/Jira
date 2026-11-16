@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import { Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner, Who } from '../components/ui.jsx';
 import EmailBuilder, { cleanDesign } from '../components/marketing/EmailBuilder.jsx';
 import { AiAssist, CampaignBadge, LangSwitch, useMarketingMeta } from '../components/marketing/parts.jsx';
 import { CampaignReport } from '../components/marketing/MarketingReports.jsx';
@@ -212,10 +212,10 @@ export default function MarketingCampaign() {
             {campaign.task_ref && <Link className="task-ref" to={`?task=${campaign.task_id}`} title={campaign.task_title}>{campaign.task_ref}</Link>}
           </div>
           <div className="small muted">
-            {campaign.owner_name && <>Owner {campaign.owner_name} · </>}
+            {campaign.owner_name && <>Owner <Who id={campaign.owner_user_id} name={campaign.owner_name} size={16} /> · </>}
             {campaign.deadline && <>Due {formatDate(campaign.deadline, { withTime: true })} · </>}
             {campaign.scheduled_at && campaign.status === 'SCHEDULED' && <>Goes {formatDate(campaign.scheduled_at, { withTime: true })} · </>}
-            {campaign.approved_by_name && <>Approved by {campaign.approved_by_name} · </>}
+            {campaign.approved_by_name && <>Approved by <Who id={campaign.approved_by} name={campaign.approved_by_name} size={16} /> · </>}
             {campaign.recipient_count !== null && campaign.recipient_count !== undefined && <>{campaign.recipient_count} recipients</>}
           </div>
           {campaign.review_note && campaign.status === 'DRAFT' && <div className="mkt-callout is-warning small">{campaign.review_note}</div>}
@@ -436,7 +436,7 @@ export default function MarketingCampaign() {
             )}
             {campaign.status === 'IN_REVIEW' && (
               <>
-                <div className="small">Sent for approval by {campaign.submitted_by_name} {formatDate(campaign.submitted_at, { withTime: true })}.</div>
+                <div className="small">Sent for approval by <Who id={campaign.submitted_by} name={campaign.submitted_by_name} size={16} fallback="someone" /> {formatDate(campaign.submitted_at, { withTime: true })}.</div>
                 {can('marketing.approve') && !isSubmitter && (
                   <div className="stack-sm">
                     <textarea className="textarea" rows={2} placeholder="A note (needed if you ask for changes)" value={note} onChange={(e) => setNote(e.target.value)} />
@@ -449,8 +449,8 @@ export default function MarketingCampaign() {
                 {isSubmitter && <div className="small muted">Someone else with approval rights approves it; they have been notified.</div>}
               </>
             )}
-            {['APPROVED', 'SCHEDULED'].includes(campaign.status) && <div className="small">Approved by {campaign.approved_by_name} {formatDate(campaign.approved_at, { withTime: true })}{campaign.review_note ? ` — “${campaign.review_note}”` : ''}.</div>}
-            {STARTED.includes(campaign.status) && <div className="small">Approved by {campaign.approved_by_name || '—'}; started {formatDate(campaign.started_at, { withTime: true })}.</div>}
+            {['APPROVED', 'SCHEDULED'].includes(campaign.status) && <div className="small">Approved by <Who id={campaign.approved_by} name={campaign.approved_by_name} size={16} fallback="someone" /> {formatDate(campaign.approved_at, { withTime: true })}{campaign.review_note ? ` — “${campaign.review_note}”` : ''}.</div>}
+            {STARTED.includes(campaign.status) && <div className="small">Approved by <Who id={campaign.approved_by} name={campaign.approved_by_name} size={16} fallback="—" />; started {formatDate(campaign.started_at, { withTime: true })}.</div>}
           </div>
 
           {can('marketing.send') && ['APPROVED', 'SCHEDULED'].includes(campaign.status) && (

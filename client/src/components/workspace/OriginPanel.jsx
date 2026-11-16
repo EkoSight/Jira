@@ -11,7 +11,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../../api/client.js';
 import { useRefData, useToast } from '../../state/AppState.jsx';
-import { Modal, Spinner } from '../ui.jsx';
+import { Modal, Spinner, Who } from '../ui.jsx';
 import { whenWords } from '../../lib/workspace.js';
 
 export function OriginPanel({ kind, id, canEdit = false, accountId = null }) {
@@ -26,7 +26,7 @@ export function OriginPanel({ kind, id, canEdit = false, accountId = null }) {
   useEffect(() => { if (editing && accountId) api.accountContacts(accountId).then((r) => setContacts(r.contacts || [])).catch(() => setContacts([])); }, [editing, accountId]);
   if (o === null) return <Spinner label="Loading where it came from" />;
   if (o === false) return null;
-  const introduced = o.introduced_by_user_name ? `${o.introduced_by_user_name} (colleague)` : o.introduced_by_contact_name ? `${o.introduced_by_contact_name} (contact)` : 'Not recorded';
+  const introduced = o.introduced_by_user_name ? <><Who id={o.introduced_by_user_id} name={o.introduced_by_user_name} size={16} /> (colleague)</> : o.introduced_by_contact_name ? `${o.introduced_by_contact_name} (contact)` : 'Not recorded';
   const save = async () => {
     try {
       await api.put(`/workspace/origin/${kind}/${id}`, {
@@ -45,9 +45,11 @@ export function OriginPanel({ kind, id, canEdit = false, accountId = null }) {
     kind !== 'lead' && ['Source', o.source || 'Not recorded'],
     ['Referral (as written)', o.referral || '—'],
     ['Introduced by', introduced],
-    ['Created', `${o.created_by_name || 'Unknown'} · ${whenWords({ at: o.created_at })}`],
-    ['Owner now', o.owner_name || 'Nobody'],
-    kind !== 'lead' && o.helpers?.length && ['Helping', o.helpers.join(', ')],
+    ['Created', <><Who id={o.created_by} name={o.created_by_name} size={16} fallback="Unknown" /> · {whenWords({ at: o.created_at })}</>],
+    ['Owner now', <Who id={o.owner_user_id} name={o.owner_name} size={16} fallback="Nobody" />],
+    kind !== 'lead' && o.helpers?.length && ['Helping', o.helper_people?.length
+      ? <span className="row wrap" style={{ gap: 8, justifyContent: 'flex-end' }}>{o.helper_people.map((h) => <Who key={h.id} id={h.id} name={h.name} size={16} />)}</span>
+      : o.helpers.join(', ')],
     kind === 'lead' && ['Last time they reached us', o.last_incoming_at ? whenWords({ at: o.last_incoming_at }) : 'None recorded'],
     kind === 'lead' && ['Last two-way contact', o.last_contacted_at ? whenWords({ at: o.last_contacted_at }) : 'None recorded'],
   ].filter(Boolean);
@@ -64,7 +66,7 @@ export function OriginPanel({ kind, id, canEdit = false, accountId = null }) {
             <dt className="small muted">Changes of owner</dt>
             <dd style={{ margin: 0 }}>
               <ul className="small" style={{ margin: '4px 0 0', paddingLeft: 18 }}>
-                {o.assignments.map((a, i) => <li key={i}>{a.from_name || a.from_value || 'nobody'} → {a.to_name || a.to_value} · by {a.by_name || 'the system'} · {whenWords({ at: a.created_at })}{a.reason ? ` · ${a.reason}` : ''}</li>)}
+                {o.assignments.map((a, i) => <li key={i}>{a.from_name ? <Who id={a.from_id} name={a.from_name} size={16} /> : (a.from_value || 'nobody')} → {a.to_name ? <Who id={a.to_id} name={a.to_name} size={16} /> : a.to_value} · by <Who id={a.by_id} name={a.by_name} size={16} fallback="the system" /> · {whenWords({ at: a.created_at })}{a.reason ? ` · ${a.reason}` : ''}</li>)}
               </ul>
             </dd>
           </div>
@@ -126,10 +128,10 @@ export function HandoverCheck({ opportunityId, toUserId, toName, onClose }) {
       <div className="stack">
         <p className="small muted" style={{ margin: 0 }}>{d.note} Personal reminders stay with the people who set them.</p>
         {d.tasks.length > 0 && <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}><legend className="field-label">Open tasks</legend>
-          {d.tasks.map((t) => <label key={t.id} className="row small" style={{ gap: 6 }}><input type="checkbox" checked={tasks.includes(t.id)} onChange={() => toggle(tasks, setTasks, t.id)} />{t.ref} {t.title} · {t.assignee_name || 'nobody'}</label>)}
+          {d.tasks.map((t) => <label key={t.id} className="row small" style={{ gap: 6 }}><input type="checkbox" checked={tasks.includes(t.id)} onChange={() => toggle(tasks, setTasks, t.id)} />{t.ref} {t.title} · <Who id={t.assignee_id} name={t.assignee_name} size={16} fallback="nobody" /></label>)}
         </fieldset>}
         {d.meetings.length > 0 && <fieldset className="stack-sm" style={{ border: 0, padding: 0, margin: 0 }}><legend className="field-label">Meetings</legend>
-          {d.meetings.map((m) => <label key={m.id} className="row small" style={{ gap: 6 }}><input type="checkbox" checked={meetings.includes(m.id)} onChange={() => toggle(meetings, setMeetings, m.id)} />{m.title} · {m.owner_name || 'nobody'}</label>)}
+          {d.meetings.map((m) => <label key={m.id} className="row small" style={{ gap: 6 }}><input type="checkbox" checked={meetings.includes(m.id)} onChange={() => toggle(meetings, setMeetings, m.id)} />{m.title} · <Who id={m.owner_user_id || m.owner_id} name={m.owner_name} size={16} fallback="nobody" /></label>)}
         </fieldset>}
       </div>
     </Modal>

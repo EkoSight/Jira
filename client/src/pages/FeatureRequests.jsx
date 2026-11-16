@@ -234,7 +234,7 @@ export default function FeatureRequests() {
                     )}
 
                     <div className="row wrap small muted" style={{ gap: 8 }}>
-                      <Avatar name={request.created_by_name || '?'} color={request.avatar_color} size={20} />
+                      <Avatar userId={request.created_by} name={request.created_by_name || '?'} color={request.avatar_color} size={20} />
                       <span>{request.created_by_name || 'Someone'}</span>
                       {request.department_name && <span>· {request.department_name}</span>}
                       <span>· {relativeTime(request.created_at)}</span>

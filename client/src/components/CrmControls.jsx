@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, downloadFile } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Spinner } from './ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Spinner, Who } from './ui.jsx';
 import EscalateDialog from './EscalateDialog.jsx';
 import { exactMoney, financialPeriod, formatMoney, todayInIndia } from '../lib/crm.js';
 import { WORKLOAD_STATUS, formatDate, loadSummary } from '../lib/format.js';
@@ -59,7 +59,7 @@ function DuplicateCluster({ item, canDismiss, onDismissed }) {
             <span key={a.id} className="row" style={{ gap: 6 }}>
               {index > 0 && <span className="muted">·</span>}
               <button type="button" className="btn-link" onClick={() => open({ account_id: a.id })}>{a.name}</button>
-              <span className="small muted">{a.deals} deal{a.deals === 1 ? '' : 's'}{a.owner_name ? ` · ${a.owner_name}` : ''}</span>
+              <span className="small muted">{a.deals} deal{a.deals === 1 ? '' : 's'}{a.owner_name && <> · <Who id={a.owner_user_id} name={a.owner_name} size={16} /></>}</span>
             </span>
           ))}
         </div>
@@ -114,7 +114,7 @@ function QualityCheck({ check, expanded, onToggle, canDismiss, onChanged }) {
                 <div className="small">{item.detail}</div>
               </div>
               <span className="small muted dq-owner">
-                {item.owner_name ? `${item.owner_name} can fix it` : 'nobody named to fix it'}
+                {item.owner_name ? <><Who id={item.owner_user_id} name={item.owner_name} size={16} /> can fix it</> : 'nobody named to fix it'}
               </span>
             </div>
           )))}
@@ -317,8 +317,8 @@ export function PipelineWorkload() {
             <div className="grow" style={{ minWidth: 0 }}>
               <WorkItem item={item} todayDate={data.today} />
               <div className="small muted" style={{ paddingLeft: 2 }}>
-                {item.reason}{item.owner_name ? ` · owed by ${item.owner_name}` : ''}
-                {' · '}{item.escalate_to_name ? `escalates to ${item.escalate_to_name}` : 'no escalation point set'}
+                {item.reason}{item.owner_name && <> · owed by <Who id={item.owner_user_id} name={item.owner_name} size={16} /></>}
+                {' · '}{item.escalate_to_name ? <>escalates to <Who id={item.escalate_to} name={item.escalate_to_name} size={16} /></> : 'no escalation point set'}
               </div>
             </div>
             {item.opportunity_id && (item.escalated_today
@@ -657,7 +657,7 @@ export function AuditTrail() {
                   {e.opportunity_name && e.account_name && e.account_name !== e.opportunity_name && (
                     <span className="muted"> · {e.account_name}</span>
                   )}
-                  <span className="muted"> · {e.actor_name || 'Someone'}</span>
+                  <span className="muted"> · <Who id={e.actor_id} name={e.actor_name} size={16} fallback="Someone" /></span>
                 </div>
                 {e.reason && <div className="small history-why">“{e.reason}”</div>}
               </div>

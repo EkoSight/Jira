@@ -98,7 +98,12 @@ export default function TaskCard({ task, onOpen, onOpenParent, draggable, onDrag
 
           <span style={{ marginLeft: 'auto' }}>
             {task.assignee_name ? (
-              <Avatar userId={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={22} />
+              <span className="who-stack">
+                <Avatar userId={task.assignee_id} name={task.assignee_name} color={task.assignee_color} size={22} title={`Owner: ${task.assignee_name}`} />
+                {task.follower_name && (
+                  <Avatar userId={task.follower_id} name={task.follower_name} color={task.follower_color} size={22} title={`Also working on it: ${task.follower_name}`} />
+                )}
+              </span>
             ) : (
               <Badge tone="warning">Unassigned</Badge>
             )}

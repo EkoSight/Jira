@@ -1160,7 +1160,7 @@ router.get(
         listThreads('TASK', id),
         stepsOf(id).then((rows) => ({ rows })),
         query(
-          `SELECT t.id, t.ref, t.title, t.completed_at, s.stage, s.name AS status_name,
+          `SELECT t.id, t.ref, t.title, t.completed_at, s.stage, s.name AS status_name, t.assignee_id,
                   u.full_name AS assignee_name, u.avatar_color AS assignee_color
              FROM tasks t
              JOIN workflow_statuses s ON s.id = t.status_id

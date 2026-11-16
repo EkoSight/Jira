@@ -94,7 +94,7 @@ export function WorkloadCard({ workload, goToBoard, title = 'Who is working on w
                 >
                   <td>
                     <div className="row">
-                      <Avatar name={member.full_name} color={member.avatar_color} size={26} />
+                      <Avatar userId={member.id} name={member.full_name} color={member.avatar_color} size={26} />
                       <div>
                         <div className="row wrap" style={{ gap: 6, fontWeight: 600 }}>
                           {member.full_name}
@@ -239,7 +239,7 @@ export default function Dashboard({ offerWorkspace = false }) {
                   <span className="grow truncate">
                     <span className="task-ref">{task.ref}</span> {task.title}
                   </span>
-                  {task.assignee && <Avatar name={task.assignee} color={task.avatar_color} size={20} />}
+                  {task.assignee && <Avatar userId={task.assignee_id} name={task.assignee} color={task.avatar_color} size={20} />}
                   <Badge tone={due.tone}>{due.text}</Badge>
                 </button>
               );
@@ -306,7 +306,7 @@ export default function Dashboard({ offerWorkspace = false }) {
               style={{ background: 'none', border: 0, width: '100%', textAlign: 'left', cursor: 'pointer' }}
               onClick={() => setOpenTask(item.task_id)}
             >
-              <Avatar name={item.actor || '?'} color={item.avatar_color || '#94a3b8'} size={22} />
+              <Avatar userId={item.actor_id} name={item.actor || '?'} color={item.actor ? item.avatar_color : '#94a3b8'} size={22} />
               <span className="grow truncate">
                 <strong>{item.actor || 'System'}</strong> {describeActivity(item)} on{' '}
                 <span className="task-ref">{item.ref}</span> {item.title}

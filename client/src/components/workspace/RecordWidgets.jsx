@@ -10,7 +10,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
-import { Badge, Modal } from '../ui.jsx';
+import { Badge, Modal, Who } from '../ui.jsx';
 import { SCOPE_LABEL } from '../../../../shared/workspaceWidgets.js';
 import { WidgetFrame, registerWidget, useWidgetData } from './Widgets.jsx';
 import { whenWords } from '../../lib/workspace.js';
@@ -159,7 +159,7 @@ export function DecisionRow({ d }) {
       <Link className="ws-row" to={d.url}>
         <span className="grow" style={{ minWidth: 0 }}>
           <strong className="truncate" style={{ display: 'block' }}>{d.label}: {d.what}</strong>
-          <span className="ws-reason">{d.who ? `Asked by ${d.who} · ` : ''}waiting since {whenWords({ at: d.since })}</span>
+          <span className="ws-reason">{d.who && <>Asked by <Who id={d.who_id} name={d.who} size={16} /> · </>}waiting since {whenWords({ at: d.since })}</span>
         </span>
         <span className="btn btn-sm" aria-hidden="true">Open</span>
       </Link>
@@ -189,7 +189,7 @@ export function WaitingRow({ w }) {
             <strong className="truncate">{w.record.label}</strong>
           </span>
           <span className="ws-reason" style={{ display: 'block' }}>
-            {w.what} · from {w.from}{w.since ? ` · since ${whenWords({ date: w.since })}` : ''}{w.promised ? ` · promised ${whenWords({ date: w.promised })}` : ''}{w.next_check ? ` · next check ${whenWords({ date: w.next_check })}` : ''}
+            {w.what} · from {w.from_user_id ? <Who id={w.from_user_id} name={w.from} size={16} /> : w.from}{w.since ? ` · since ${whenWords({ date: w.since })}` : ''}{w.promised ? ` · promised ${whenWords({ date: w.promised })}` : ''}{w.next_check ? ` · next check ${whenWords({ date: w.next_check })}` : ''}
           </span>
         </span>
       </Link>
@@ -329,7 +329,7 @@ function ProjectsWidget({ widget, refreshKey }) {
           {g.tasks.length > 0 && (
             <ul className="ws-list">
               {g.tasks.map((t) => (
-                <li key={t.id}><Link className="ws-row" to={`?task=${t.id}`}><span className="grow truncate"><span className="task-ref">{t.ref}</span> {t.title}{!mine && t.assignee_name ? <span className="ws-reason"> · {t.assignee_name}</span> : null}</span><Badge tone={t.health?.tone || 'neutral'}>{t.health?.text || 'Open'}</Badge></Link></li>
+                <li key={t.id}><Link className="ws-row" to={`?task=${t.id}`}><span className="grow truncate"><span className="task-ref">{t.ref}</span> {t.title}{!mine && t.assignee_name ? <span className="ws-reason"> · <Who id={t.assignee_id} name={t.assignee_name} size={16} /></span> : null}</span><Badge tone={t.health?.tone || 'neutral'}>{t.health?.text || 'Open'}</Badge></Link></li>
               ))}
             </ul>
           )}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import { formatDate } from '../lib/format.js';
 import { todayIn } from '../lib/attendance.js';
 import {
@@ -149,7 +149,7 @@ function EntryStatus({ row }) {
     return (
       <span>
         <Badge>Cancelled</Badge>
-        <span className="muted"> by {row.cancelled_by_name || 'someone'}{row.cancel_reason ? ` — ${row.cancel_reason}` : ''}</span>
+        <span className="muted"> by <Who id={row.cancelled_by} name={row.cancelled_by_name} size={16} fallback="someone" />{row.cancel_reason ? ` — ${row.cancel_reason}` : ''}</span>
       </span>
     );
   }
@@ -158,7 +158,7 @@ function EntryStatus({ row }) {
       <Badge tone="good">In force</Badge>
       <span className="muted">
         {row.approved_by_name
-          ? ` approved by ${row.approved_by_name}${row.published_at ? `, announced ${formatDate(row.published_at)}` : ''}`
+          ? <> approved by <Who id={row.approved_by} name={row.approved_by_name} size={16} />{row.published_at ? `, announced ${formatDate(row.published_at)}` : ''}</>
           : ' added before approvals were required'}
       </span>
     </span>
@@ -183,8 +183,8 @@ function RequestRow({ request: r, onOpen, note }) {
           {r.kind === 'CLOSURE' && <Badge tone="serious">Closure</Badge>}
         </div>
         <div className="small muted">
-          #{r.id} · proposed by {r.proposed_by_name || 'someone'} {formatDate(r.proposed_at)} — “{r.reason}”
-          {r.decided_by_name ? ` · ${r.status.toLowerCase()} by ${r.decided_by_name}` : ''}
+          #{r.id} · proposed by <Who id={r.proposed_by} name={r.proposed_by_name} size={16} fallback="someone" /> {formatDate(r.proposed_at)} — “{r.reason}”
+          {r.decided_by_name && <> · {r.status.toLowerCase()} by <Who id={r.decided_by} name={r.decided_by_name} size={16} /></>}
           {r.self_approved ? ' (their own change)' : ''}
           {note ? ` · ${note}` : ''}
         </div>
@@ -370,10 +370,10 @@ function RequestDialog({ id, onClose, onChanged }) {
               {r.action === 'CANCEL' ? 'Ends' : 'Replaces'}: {data.targets.map((t) => `${shortDate(t.holiday_date)} ${t.name} (${COVERAGE_LABEL[t.coverage]}, ${scopeWords(t)})`).join('; ')}
             </div>
           )}
-          <div className="small">“{r.reason}” — {r.proposed_by_name}, {formatDate(r.proposed_at, { withTime: true })}</div>
+          <div className="small">“{r.reason}” — <Who id={r.proposed_by} name={r.proposed_by_name} size={16} fallback="someone" />, {formatDate(r.proposed_at, { withTime: true })}</div>
           {r.decided_by_name && (
             <div className="small muted">
-              {REQUEST_STATUS[r.status].label} by {r.decided_by_name}, {formatDate(r.decided_at, { withTime: true })}
+              {REQUEST_STATUS[r.status].label} by <Who id={r.decided_by} name={r.decided_by_name} size={16} />, {formatDate(r.decided_at, { withTime: true })}
               {r.self_approved ? ' — their own change' : ''}{r.decision_note ? `: “${r.decision_note}”` : ''}
             </div>
           )}
@@ -457,7 +457,7 @@ function RequestDialog({ id, onClose, onChanged }) {
             <summary className="small">Audit trail ({data.audit.length})</summary>
             <ul className="small hol-audit">
               {data.audit.map((a) => (
-                <li key={a.id}>{formatDate(a.created_at, { withTime: true })} — {a.actor_name || 'TaskFlow'}: {a.action.toLowerCase().replace(/_/g, ' ')} {a.entity_type === 'HOLIDAY_CORRECTION' ? `correction #${a.entity_id}` : ''}{a.reason ? ` — “${a.reason}”` : ''}</li>
+                <li key={a.id}>{formatDate(a.created_at, { withTime: true })} — <Who id={a.actor_id} name={a.actor_name} size={16} fallback="TaskFlow" />: {a.action.toLowerCase().replace(/_/g, ' ')} {a.entity_type === 'HOLIDAY_CORRECTION' ? `correction #${a.entity_id}` : ''}{a.reason ? ` — “${a.reason}”` : ''}</li>
               ))}
             </ul>
           </details>
@@ -495,10 +495,10 @@ function CorrectionRow({ c, mayAct, busy, act }) {
         <div className="small">{c.summary}</div>
         {(c.decided_by_name || c.decision_note) && (
           <div className="small muted">
-            {c.decided_by_name ? `${status.label} by ${c.decided_by_name} ${formatDate(c.decided_at)}` : ''}{c.decision_note ? ` — ${c.decision_note}` : ''}
+            {c.decided_by_name && <>{status.label} by <Who id={c.decided_by} name={c.decided_by_name} size={16} /> {formatDate(c.decided_at)}</>}{c.decision_note ? ` — ${c.decision_note}` : ''}
           </div>
         )}
-        {c.reversed_by_name && <div className="small muted">Reversed by {c.reversed_by_name} {formatDate(c.reversed_at)} — {c.reverse_reason}</div>}
+        {c.reversed_by_name && <div className="small muted">Reversed by <Who id={c.reversed_by} name={c.reversed_by_name} size={16} /> {formatDate(c.reversed_at)} — {c.reverse_reason}</div>}
       </div>
       {mayAct && c.status === 'PROPOSED' && (
         <div className="row" style={{ gap: 6 }}>
@@ -540,7 +540,7 @@ export function HolidayCorrectionsQueue() {
         <div className="small muted">A holiday was added, changed or cancelled after these records were made. Each changes only if you apply it, and can be reversed.</div>
         {mine.map((c) => (
           <div key={c.id}>
-            <div className="small muted">{c.user_name || 'Someone'} · holiday request #{c.request_id}</div>
+            <div className="small muted"><Who id={c.user_id} name={c.user_name} size={16} fallback="Someone" /> · holiday request #{c.request_id}</div>
             <CorrectionRow c={c} mayAct busy={busy} act={act} />
           </div>
         ))}
@@ -563,10 +563,10 @@ function EntryHistoryDialog({ id, onClose }) {
           {data.requests.length === 0 && <div className="small muted">Added before approvals were required, by {data.entry.created_by ? 'an administrator' : 'TaskFlow'}.</div>}
           <ul className="small hol-audit">
             {data.requests.map((r) => (
-              <li key={`r${r.id}`}>Request #{r.id} ({ACTION_LABEL[r.action].toLowerCase()}): proposed by {r.proposed_by_name} {formatDate(r.proposed_at)} — “{r.reason}”; {REQUEST_STATUS[r.status].label.toLowerCase()}{r.decided_by_name ? ` by ${r.decided_by_name} ${formatDate(r.decided_at)}` : ''}</li>
+              <li key={`r${r.id}`}>Request #{r.id} ({ACTION_LABEL[r.action].toLowerCase()}): proposed by <Who id={r.proposed_by} name={r.proposed_by_name} size={16} fallback="someone" /> {formatDate(r.proposed_at)} — “{r.reason}”; {REQUEST_STATUS[r.status].label.toLowerCase()}{r.decided_by_name && <> by <Who id={r.decided_by} name={r.decided_by_name} size={16} /> {formatDate(r.decided_at)}</>}</li>
             ))}
             {data.audit.map((a) => (
-              <li key={`a${a.id}`}>{formatDate(a.created_at, { withTime: true })} — {a.actor_name || 'TaskFlow'}: {a.action.toLowerCase()}{a.reason ? ` — “${a.reason}”` : ''}</li>
+              <li key={`a${a.id}`}>{formatDate(a.created_at, { withTime: true })} — <Who id={a.actor_id} name={a.actor_name} size={16} fallback="TaskFlow" />: {a.action.toLowerCase()}{a.reason ? ` — “${a.reason}”` : ''}</li>
             ))}
           </ul>
         </div>

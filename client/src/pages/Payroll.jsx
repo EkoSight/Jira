@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, downloadFile } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Modal } from '../components/ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Who } from '../components/ui.jsx';
 import { MonthLedger } from '../components/Attendance.jsx';
 import { LoadState } from '../components/LoadState.jsx';
 import {
@@ -400,7 +400,7 @@ function PayrollPerson({ month, user, onClose, onChanged }) {
                       <td className="tnum">{money(b.attendance_sensitive, b.currency)}</td>
                       <td className="tnum">{money(b.fixed_components, b.currency)}</td>
                       <td className="small">{b.note}</td>
-                      <td className="small muted">{b.created_by_name}</td>
+                      <td className="small muted"><Who id={b.created_by} name={b.created_by_name} size={16} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -420,10 +420,10 @@ function PayrollPerson({ month, user, onClose, onChanged }) {
                 {data.versions.map((v) => (
                   <li key={v.id}>
                     Version {v.version}: {(RECORD_STATUS[v.status] || {}).label}
-                    {v.submitted_by_name && ` · submitted by ${v.submitted_by_name}`}
-                    {v.approved_by_name && ` · approved by ${v.approved_by_name}`}
-                    {v.locked_by_name && ` · locked by ${v.locked_by_name}`}
-                    {v.reopened_by_name && ` · reopened by ${v.reopened_by_name}: “${v.reopen_reason}”`}
+                    {v.submitted_by_name && <> · submitted by <Who id={v.submitted_by} name={v.submitted_by_name} size={16} /></>}
+                    {v.approved_by_name && <> · approved by <Who id={v.approved_by} name={v.approved_by_name} size={16} /></>}
+                    {v.locked_by_name && <> · locked by <Who id={v.locked_by} name={v.locked_by_name} size={16} /></>}
+                    {v.reopened_by_name && <> · reopened by <Who id={v.reopened_by} name={v.reopened_by_name} size={16} />: “{v.reopen_reason}”</>}
                     {v.export_count > 0 && ` · exported ${v.export_count}×`}
                   </li>
                 ))}

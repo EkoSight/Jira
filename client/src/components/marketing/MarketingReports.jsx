@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, downloadFile } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { EmptyState, Icon, Spinner } from '../ui.jsx';
+import { EmptyState, Icon, Spinner, Who } from '../ui.jsx';
 import { BarList, TrendChart } from '../charts.jsx';
 import { formatDate } from '../../lib/format.js';
 import { percent, personName, skipWords } from '../../lib/marketing.js';
@@ -106,7 +106,7 @@ export function CampaignReport({ campaignId }) {
                     <tr key={f.id}>
                       <td>{personName(f)}</td><td>{f.reason.toLowerCase()}</td>
                       <td>{f.task_id ? <Link className="task-ref" to={`?task=${f.task_id}`}>{f.task_ref}</Link> : '—'} {f.task_stage === 'done' && <span className="badge badge-good">done</span>}</td>
-                      <td>{f.assignee_name || '—'}</td>
+                      <td><Who id={f.assignee_id} name={f.assignee_name} size={18} fallback="—" /></td>
                     </tr>
                   ))}
                 </tbody>

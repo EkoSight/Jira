@@ -295,7 +295,7 @@ export async function confirmHandoff(client, id, { actor, externalId = null, not
 export async function remediationQueue() {
   const { rows } = await query(
     `SELECT a.id, a.name, a.type, a.lead_category, a.routing_status, a.suggested_category, a.suggestion_reason,
-            s.name AS segment_name, u.full_name AS owner_name, a.state,
+            s.name AS segment_name, a.owner_user_id, u.full_name AS owner_name, a.state,
             (SELECT COUNT(*)::int FROM opportunities o WHERE o.account_id = a.id AND o.is_archived = FALSE AND o.status IN ('ACTIVE','ON_HOLD','NURTURE')) AS open_deals
        FROM accounts a
        LEFT JOIN crm_segments s ON s.id = a.segment_id

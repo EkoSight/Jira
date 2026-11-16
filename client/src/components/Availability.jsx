@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Link } from 'react-router-dom';
-import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import { LeaveDialog } from './Attendance.jsx';
 import { useLoad } from '../lib/useLoad.js';
 import { LoadState } from './LoadState.jsx';
@@ -345,7 +345,7 @@ export function AwayCard({ onChanged }) {
               <ul className="plain-list">
                 {data.away_today.map((entry) => (
                   <li key={entry.id} className="row" style={{ gap: 8 }}>
-                    <Avatar name={entry.full_name} color={entry.avatar_color} size={22} />
+                    <Avatar userId={entry.user_id} name={entry.full_name} color={entry.avatar_color} size={22} />
                     <span className="grow small">
                       <strong>{entry.user_id === user.id ? 'You' : entry.full_name}</strong>
                       <span className="muted"> · {describeEntry(entry, data.today)}</span>
@@ -363,7 +363,7 @@ export function AwayCard({ onChanged }) {
               <ul className="plain-list">
                 {data.upcoming.map((entry) => (
                   <li key={entry.id} className="row" style={{ gap: 8 }}>
-                    <Avatar name={entry.full_name} color={entry.avatar_color} size={22} />
+                    <Avatar userId={entry.user_id} name={entry.full_name} color={entry.avatar_color} size={22} />
                     <span className="grow small">
                       <strong>{entry.user_id === user.id ? 'You' : entry.full_name}</strong>
                       <span className="muted"> · {describeEntry(entry, data.today)}</span>
@@ -487,7 +487,7 @@ export function TeamCalendar({ departmentId = '' }) {
                 <tr key={person.id}>
                   <td className="cal-person">
                     <span className="row" style={{ gap: 6 }}>
-                      <Avatar name={person.full_name} color={person.avatar_color} size={20} />
+                      <Avatar userId={person.id} name={person.full_name} color={person.avatar_color} size={20} />
                       <span className="small truncate">{person.id === user.id ? `${person.full_name} (you)` : person.full_name}</span>
                     </span>
                   </td>
@@ -522,14 +522,14 @@ export function TeamCalendar({ departmentId = '' }) {
           <ul className="plain-list" style={{ marginTop: 6 }}>
             {data.entries.map((entry) => (
               <li key={entry.id} className="row" style={{ gap: 8 }}>
-                <Avatar name={entry.full_name} color={entry.avatar_color} size={20} />
+                <Avatar userId={entry.user_id} name={entry.full_name} color={entry.avatar_color} size={20} />
                 <span className="grow">
                   <strong>{entry.full_name}</strong>
                   <span className="muted"> · {describeEntry(entry, data.today)}</span>
                   {entry.note && <span className="muted"> · {entry.note}</span>}
                 </span>
                 <span className="muted">
-                  {entry.created_by !== entry.user_id && entry.created_by_name ? `recorded by ${entry.created_by_name} · ` : ''}
+                  {entry.created_by !== entry.user_id && entry.created_by_name && <>recorded by <Who id={entry.created_by} name={entry.created_by_name} size={16} /> · </>}
                   {formatDate(entry.created_at)}
                 </span>
               </li>

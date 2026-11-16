@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Spinner } from '../components/ui.jsx';
+import { Badge, EmptyState, Spinner, Who } from '../components/ui.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import { formatDate, fromDateTimeLocal } from '../lib/format.js';
 
@@ -242,7 +242,7 @@ export default function Review() {
             {t.pending_change && <Badge tone="warning">Request waiting</Badge>}
           </div>
           <div className="row wrap small muted" style={{ gap: 6 }}>
-            {!t.mine && <><Avatar userId={t.assignee_id} name={t.assignee_name || '?'} color={t.assignee_color} size={18} /> {t.assignee_name || 'No owner'} ·{' '}</>}
+            {!t.mine && <><Who id={t.assignee_id} name={t.assignee_name} color={t.assignee_color} size={18} fallback="No owner" /> ·{' '}</>}
             Was due {formatDate(t.due_date, { withTime: true })}
             {t.due_date_changes > 0 && ` · moved ${t.due_date_changes} time${t.due_date_changes === 1 ? '' : 's'}`}
             {t.next_action && ` · Next: ${t.next_action}`}
@@ -296,7 +296,7 @@ export default function Review() {
                   <button type="button" className="link-button" onClick={() => setOpenTask(c.task_id)}>{c.ref} {c.title}</button>
                   <div className="small muted">
                     {c.kind === 'DEFER' ? `Defer, review on ${c.review_date}` : `New deadline ${formatDate(c.to_due, { withTime: true })} (was ${formatDate(c.from_due, { withTime: true })})`}
-                    {' '}· asked by {c.requested_by_name}{c.owner_name && c.owner_name !== c.requested_by_name ? ` for ${c.owner_name}` : ''} · “{c.reason}”
+                    {' '}· asked by <Who id={c.requested_by} name={c.requested_by_name} size={16} fallback="someone" />{c.owner_name && c.owner_name !== c.requested_by_name && <> for <Who id={c.owner_id} name={c.owner_name} size={16} /></>} · “{c.reason}”
                   </div>
                 </div>
                 <div className="row" style={{ gap: 6 }}>
@@ -309,7 +309,7 @@ export default function Review() {
               <div key={`b${b.id}`} className="review-row">
                 <div className="grow">
                   <button type="button" className="link-button" onClick={() => setOpenTask(b.task_id)}>{b.ref} {b.title}</button>
-                  <div className="small muted">Blocked: {b.reason} · recorded by {b.recorded_by_name}. Accepting it pauses black marks while it lasts.</div>
+                  <div className="small muted">Blocked: {b.reason} · recorded by <Who id={b.recorded_by} name={b.recorded_by_name} size={16} fallback="someone" />. Accepting it pauses black marks while it lasts.</div>
                 </div>
                 <div className="row" style={{ gap: 6 }}>
                   <button type="button" className="btn btn-sm btn-primary" onClick={() => decide(`/task-review/blocks/${b.id}/accept`, 'Block accepted')}>Accept</button>

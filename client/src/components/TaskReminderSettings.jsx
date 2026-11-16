@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useRefData, useToast } from '../state/AppState.jsx';
-import { Badge, Field } from './ui.jsx';
+import { Badge, Field, Who } from './ui.jsx';
 import { formatDate } from '../lib/format.js';
 
 const MODE_WORDS = {
@@ -113,7 +113,7 @@ function Connections() {
           <tbody>
             {data.people.map((p) => (
               <tr key={p.id}>
-                <td>{p.full_name}</td>
+                <td><Who id={p.id} name={p.full_name} size={20} /></td>
                 <td>{p.department || '—'}</td>
                 <td><Badge tone={p.connected ? 'good' : 'warning'}>{p.connected ? 'connected' : p.wrong_account ? 'wrong account' : 'not connected'}</Badge></td>
                 <td>{p.instant ? 'on' : 'off'}</td>
@@ -164,7 +164,7 @@ function Audit() {
           <tbody>
             {data.people.map((p) => (
               <tr key={p.id}>
-                <td>{p.full_name}</td>
+                <td><Who id={p.id} name={p.full_name} size={20} /></td>
                 <td className="tnum">{p.summary_sent}</td>
                 <td className="tnum">{p.summary_bell_only}</td>
                 <td className="tnum">{p.summary_skipped}</td>

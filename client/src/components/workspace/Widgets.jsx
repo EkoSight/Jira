@@ -11,7 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useAuth } from '../../state/AppState.jsx';
-import { Badge, Icon, Spinner } from '../ui.jsx';
+import { Badge, Icon, Spinner, Who } from '../ui.jsx';
 import { TodayAttendanceCard } from '../Attendance.jsx';
 import { OverviewStats, WorkloadCard } from '../../pages/Dashboard.jsx';
 import { healthLabel } from '../../../../shared/deadlineHealth.js';
@@ -235,7 +235,7 @@ function RecognitionWidget({ widget }) {
       <ul className="ws-list">
         {list.map((k) => (
           <li key={k.id} className="ws-row ws-static">
-            <span className="grow truncate">{k.from_name}: {k.message}</span>
+            <span className="grow truncate"><Who id={k.from_user} name={k.from_name} color={k.from_color} size={18} />: {k.message}</span>
             <span className="small muted">{whenWords({ date: localDay(k.created_at, 'Asia/Kolkata') })}</span>
           </li>
         ))}

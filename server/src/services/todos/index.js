@@ -904,7 +904,7 @@ export async function recordSteps(user, type, id) {
     }));
     if (['DEAL', 'APPLICATION', 'MEETING'].includes(type)) {
       const { rows: a } = await query(
-        `SELECT a.action, a.title, a.created_at, u.full_name AS actor_name FROM record_step_activity a LEFT JOIN users u ON u.id = a.actor_id
+        `SELECT a.action, a.title, a.created_at, a.actor_id, u.full_name AS actor_name FROM record_step_activity a LEFT JOIN users u ON u.id = a.actor_id
           WHERE a.record_type = $1 AND a.record_id = $2 ORDER BY a.created_at DESC, a.id DESC LIMIT 50`, [type, recordId]);
       activity = a;
     }

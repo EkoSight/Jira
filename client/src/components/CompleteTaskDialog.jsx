@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
-import { Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import { Attachments } from './TaskExtras.jsx';
 import { NextActionFields, nextActionDraft, nextActionProblem } from './DealParts.jsx';
 import { completionPrompt, outcomeProblem, readsLikeAPlan } from '../lib/completion.js';
@@ -266,7 +266,7 @@ export default function CompleteTaskDialog({ task, targetStatusId, onClose, onCo
               <div className="row-between wrap small">
                 <span className="muted">
                   Next on {deal?.name}: {deal?.next_step || 'nothing set'}
-                  {deal?.next_step_owner_name ? ` · ${deal.next_step_owner_name}` : ''}
+                  {deal?.next_step_owner_name && <> · <Who id={deal.next_step_owner_id} name={deal.next_step_owner_name} size={16} /></>}
                   {deal?.next_step_due ? ` · by ${formatDate(deal.next_step_due)}` : ''}
                 </span>
                 <button type="button" className="btn-link small" onClick={() => setGiveNext(true)}>Change it</button>

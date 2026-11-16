@@ -15,12 +15,11 @@ is `SOIL_DOCTOR_LOGO_ANIMATION.md`.
   for attendance, pay or performance, and you can delete it at any time."
   Nothing in attendance, check-in, payroll or performance reads it, and there
   is no face recognition or identity matching anywhere.
-- **Where it shows.** Wherever a screen already knew whose avatar it was
-  drawing (33 places: the sidebar, task cards, the board, discussions, Team,
-  CRM owners and followers, goals, attendance, payroll, performance and more).
-  Elsewhere, and whenever there is no photo or it fails to load, the initials
-  stay. A photo is never matched by name, so a customer who shares a name with
-  a colleague never gets their face.
+- **Where it shows.** Everywhere a colleague is named (owner's request, 16
+  November 2026). See "Photos wherever a name appears" below. With no photo, or
+  when one fails to load, the person's initials show on their own colour. A
+  photo is never matched by name, so a customer who shares a name with a
+  colleague never gets their face.
 - **Accepted files.** JPEG, PNG and WebP up to 10 MB, chosen from the gallery
   or taken with the camera. The camera's rotation is respected. An iPhone HEIC
   that the browser cannot open gets instructions instead of an error.
@@ -39,6 +38,64 @@ is `SOIL_DOCTOR_LOGO_ANIMATION.md`.
   - **Uploading on someone's behalf** is a *suggestion*. It becomes their photo
     only when they press "Use it", and that acceptance is recorded as their
     agreement. They can decline it, and the administrator can withdraw it.
+
+### Photos wherever a name appears
+
+The owner asked that "the people thumbnail/picture should be visible
+everywhere in every task, board, wherever their name appears". It now does.
+
+**How.**
+
+- A small person chip, `Who` in `client/src/components/ui.jsx`: the photo (or
+  initials), then the name. It sits inside sentences such as "Created by …",
+  "asked by …" and "approved by …", and in table cells.
+- Every round picture (`Avatar`) now gets the person's id, so it shows their
+  photo. The one exception is a customer's contact, who is not a colleague.
+- Where a screen received only a name, the server now also sends the person's
+  id beside it. These are extra fields in the response; nothing was removed or
+  renamed.
+- The list of who has a photo also brings everyone's colour. A person shown by
+  id alone keeps their own colour behind their initials, the same everywhere.
+
+**Where, by area.**
+
+| Area | Who now has a picture |
+| --- | --- |
+| Board and task cards | The owner, and the second person stacked beside them |
+| A task | Owner, second person, created by, reported by, tagged people, step owners and who ticked them, discussion openers, who it waits on, who closed it, deadline changes and blocks (who asked, decided, recorded or cleared), reminders, history, subtask owners, the completion record |
+| My tasks, overdue review | "Supporting …" lines; who asked for each deadline change or block, and for whom |
+| Projects | Task owners, the lead's latest update, updates, contributors, activity, the lead on linked projects |
+| Steps on a record, home page | Step owners and step history; "Needs my decision" (who asked); "Waiting on others" (a colleague); kudos; tasks under My projects |
+| Where it came from (leads, deals) | Created by, owner now, introduced by a colleague, helpers, each change of owner |
+| Sales | Lead owner, lead activity, ownership history, lead lists, follow-up tasks, quotation approvals, call records and edits, the duplicate-call review, broadcasts, phone devices, dialler modes, complaints, opt-outs, follow-up settings, people taking leads, the audit log, imports, reports and targets, people-picker chips |
+| CRM | Deal people (owner, next move, escalation), deal history, handovers, requirements, commitments, the weekly review, controls, data quality, nudges and who put them aside, shared resources, meetings, the account's activity |
+| Attendance, holidays | Leave and corrections, who was told, away lists and the calendar, policy acceptance, reporting managers, holiday requests, decisions, cancellations and the audit trail |
+| Standup, goals, recognition | Standup reviews, members and who verified them; goal people, check-ins and activity; the leaderboard, kudos wall, hall of fame and "Awarded by" |
+| Black marks, payroll, settings | The mark's owner, who raised, waived, decided or reversed it, appeals; payroll versions and who set the salary basis; Chat and reminder settings; photo suggestions |
+| Marketing | Campaign owner, who submitted and approved it, automations, segments, consent history, follow-up owners |
+
+**The award card.** The winner's photo is drawn into the card, so it is in the
+downloaded picture too.
+
+**Weekly reviews.** A weekly review is saved when it is written. Reviews written
+before this change name people without their ids, so they show initials; new
+ones show photos.
+
+**Not changed.** Drop-down lists (a `<select>`) cannot hold pictures, so
+choosing an owner is still a plain list. The chosen person's photo shows once
+it is saved. Notifications name no person.
+
+**Checked (16 November 2026).**
+
+- Three made-up people (example.com) were given abstract shape pictures, with
+  no faces.
+- In the browser: their photos on board cards; in a task's owner field and its
+  history after a real change; in project tasks, people and activity; on Team;
+  and at phone width in dark mode. 18 of 18 checks passed.
+- Every main page and its tabs drew without a script error, for an
+  administrator and for a member.
+- The server test checks that the photo list carries everyone's colour, and
+  only id and colour.
 
 ### The face-focused editor
 

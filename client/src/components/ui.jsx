@@ -1,7 +1,7 @@
 import { Children, Component, cloneElement, isValidElement, useEffect, useId, useState } from 'react';
 import { initials } from '../lib/format.js';
 import { BASE, fetchBlobUrl } from '../api/client.js';
-import { usePhotoUrl } from '../lib/photos.js';
+import { usePersonColour, usePhotoUrl } from '../lib/photos.js';
 import { textOn } from '../../../shared/brandTheme.js';
 
 /**
@@ -72,9 +72,11 @@ const initialsColour = (color) => {
  * A person: their photo when they have one (pass userId), otherwise their
  * initials on their colour. A picture that cannot load falls back to initials.
  */
-export function Avatar({ name, color = '#3b82f6', size = 26, title, userId }) {
+export function Avatar({ name, color, size = 26, title, userId }) {
   const url = usePhotoUrl(userId, size);
+  const ownColour = usePersonColour(userId);
   const [failed, setFailed] = useState(null);
+  color = color || ownColour || '#3b82f6';
   if (url && failed !== url) {
     return (
       <img
@@ -99,6 +101,21 @@ export function Avatar({ name, color = '#3b82f6', size = 26, title, userId }) {
       aria-hidden="true"
     >
       {initials(name)}
+    </span>
+  );
+}
+
+/**
+ * A person named in a line: their photo (or initials) and then their name.
+ * Pass `id` so the photo shows. With no name, shows `fallback` as plain text.
+ * `children` replaces the name text (for "you", or a name with extra words).
+ */
+export function Who({ id, name, color, size = 18, fallback = null, children, title }) {
+  if (!name) return fallback;
+  return (
+    <span className="who" title={title}>
+      <Avatar userId={id} name={name} color={color} size={size} />
+      <span className="who-name">{children ?? name}</span>
     </span>
   );
 }

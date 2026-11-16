@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, EmptyState, Icon, Modal, Spinner, Who } from './ui.jsx';
 import { formatDate, relativeTime, PRIORITY_TONE, PRIORITY_LABEL } from '../lib/format.js';
 
 /**
@@ -104,7 +104,7 @@ function MarkRow({ mark }) {
         </span>
         <span className="small muted">
           {mark.rule_name ? `${mark.rule_name} · ` : ''}{mark.reason}
-          {mark.source === 'manual' && mark.raised_by_name ? ` · raised by ${mark.raised_by_name}` : ''}
+          {mark.source === 'manual' && mark.raised_by_name && <> · raised by <Who id={mark.created_by} name={mark.raised_by_name} size={16} /></>}
         </span>
         <span className="small">{markTiming(mark)}</span>
       </span>
@@ -118,11 +118,11 @@ function MarkRow({ mark }) {
 function KudosRow({ item }) {
   return (
     <div className="evidence-row is-static">
-      <Avatar name={item.from_name || 'Someone'} color={item.from_color} size={26} />
+      <Avatar userId={item.from_user} name={item.from_name || 'Someone'} color={item.from_color} size={26} />
       <span className="evidence-main">
         <span className="evidence-title">{item.message}</span>
         <span className="small muted">
-          {item.from_name || 'Someone'} · {relativeTime(item.created_at)}
+          <Who id={item.from_user} name={item.from_name} color={item.from_color} size={16} fallback="Someone" /> · {relativeTime(item.created_at)}
           {item.task_ref ? ` · ${item.task_ref}` : ''}
         </span>
       </span>

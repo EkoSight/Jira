@@ -155,7 +155,7 @@ export async function recordCrmHistory(client, contact, { key, subject, body = n
 export async function listFollowUps({ campaignId = null, limit = 200 } = {}) {
   const { rows } = await query(
     `SELECT f.*, c.email, c.first_name, c.last_name, c.organization, t.ref AS task_ref, t.title AS task_title,
-            t.due_date, ws.stage AS task_stage, ws.name AS task_status, u.full_name AS assignee_name,
+            t.due_date, ws.stage AS task_stage, ws.name AS task_status, t.assignee_id, u.full_name AS assignee_name,
             cam.name AS campaign_name, w.name AS workflow_name
        FROM mkt_followups f
        JOIN mkt_contacts c ON c.id = f.contact_id

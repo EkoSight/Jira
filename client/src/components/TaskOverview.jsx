@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useRefData } from '../state/AppState.jsx';
-import { Avatar, Badge, Icon } from './ui.jsx';
+import { Avatar, Badge, Icon, Who } from './ui.jsx';
 import { AwayBadge } from './Availability.jsx';
 import { threadKind, replyCount } from '../lib/threads.js';
 import {
@@ -33,11 +33,11 @@ function Fact({ label, children }) {
   );
 }
 
-function Person({ name, color, awayEntry }) {
+function Person({ id, name, color, awayEntry }) {
   if (!name) return <span className="muted">Nobody</span>;
   return (
     <span className="row wrap" style={{ gap: 6 }}>
-      <Avatar name={name} color={color} size={22} />
+      <Avatar userId={id} name={name} color={color} size={22} />
       <span>{name}</span>
       <AwayBadge entry={awayEntry} compact />
     </span>
@@ -140,7 +140,7 @@ export default function TaskOverview({
 
       <div className="task-facts">
         <Fact label="Owner">
-          <Person name={task.assignee_name} color={task.assignee_color} awayEntry={away(task.assignee_id)} />
+          <Person id={task.assignee_id} name={task.assignee_name} color={task.assignee_color} awayEntry={away(task.assignee_id)} />
         </Fact>
         <Fact label="Deadline">
           {task.due_date ? (
@@ -164,7 +164,7 @@ export default function TaskOverview({
         </Fact>
         {task.follower_name && (
           <Fact label="Also working on it">
-            <Person name={task.follower_name} color={task.follower_color} awayEntry={away(task.follower_id)} />
+            <Person id={task.follower_id} name={task.follower_name} color={task.follower_color} awayEntry={away(task.follower_id)} />
           </Fact>
         )}
         <Fact label="Department">
@@ -228,7 +228,7 @@ export default function TaskOverview({
                 </span>
                 {last && (
                   <span className="small muted truncate" style={{ display: 'block' }}>
-                    {last.author_name}: {last.body}
+                    {last.author_name && <><Who id={last.author_id} name={last.author_name} color={last.avatar_color} size={16} />: </>}{last.body}
                   </span>
                 )}
               </span>
@@ -241,8 +241,8 @@ export default function TaskOverview({
       </section>
 
       <div className="row wrap small muted" style={{ gap: 14 }}>
-        <span>Created by {task.created_by_name || 'someone'} · {formatDate(task.created_at)}</span>
-        {task.reporter_name && task.reporter_name !== task.created_by_name && <span>Reported by {task.reporter_name}</span>}
+        <span>Created by <Who id={task.created_by} name={task.created_by_name} size={16} fallback="someone" /> · {formatDate(task.created_at)}</span>
+        {task.reporter_name && task.reporter_name !== task.created_by_name && <span>Reported by <Who id={task.reporter_id} name={task.reporter_name} size={16} /></span>}
         {task.completed_at && <span>Completed {formatDate(task.completed_at, { withTime: true })}</span>}
       </div>
     </div>

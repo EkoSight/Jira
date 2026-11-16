@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../components/ui.jsx';
 import { BarList } from '../components/charts.jsx';
 import TaskDialog from '../components/TaskDialog.jsx';
 import { formatDate, monthKey, monthLabel } from '../lib/format.js';
@@ -107,11 +107,11 @@ function MarkSourceDialog({ markId, onClose, onOpenTask }) {
           <div className="hol-summary">
             <div className="row wrap" style={{ gap: 6 }}>
               {data.mark.status === 'waived' ? <Badge>Waived</Badge> : <Badge tone="critical">Active</Badge>}
-              <strong>{data.mark.full_name}</strong>
+              <strong><Who id={data.mark.user_id} name={data.mark.full_name} size={20} /></strong>
               <span className="tnum">{Number(data.mark.points)} pt</span>
             </div>
             <div>{data.mark.reason}</div>
-            <div className="small muted">Recorded {formatDate(data.mark.occurred_at, { withTime: true })} · {data.mark.source === 'manual' ? `raised by ${data.mark.created_by_name || 'someone'}` : 'by the automatic scan'}</div>
+            <div className="small muted">Recorded {formatDate(data.mark.occurred_at, { withTime: true })} · {data.mark.source === 'manual' ? <>raised by <Who id={data.mark.created_by} name={data.mark.created_by_name} size={16} fallback="someone" /></> : 'by the automatic scan'}</div>
           </div>
           <dl className="bm-evidence small">
             {data.mark.task_ref && (
@@ -160,8 +160,8 @@ function MarkSourceDialog({ markId, onClose, onOpenTask }) {
                     <span className="small muted">holiday request #{c.request_id}{c.holiday_name ? ` — ${c.holiday_name}` : ''}</span>
                   </div>
                   <div className="small">{c.summary}</div>
-                  {c.decided_by_name && <div className="small muted">{CORRECTION_STATUS[c.status].label} by {c.decided_by_name} {formatDate(c.decided_at)}{c.decision_note ? ` — ${c.decision_note}` : ''}</div>}
-                  {c.reversed_at && <div className="small muted">Reversed by {c.reversed_by_name} {formatDate(c.reversed_at)} — {c.reverse_reason}</div>}
+                  {c.decided_by_name && <div className="small muted">{CORRECTION_STATUS[c.status].label} by <Who id={c.decided_by} name={c.decided_by_name} size={16} /> {formatDate(c.decided_at)}{c.decision_note ? ` — ${c.decision_note}` : ''}</div>}
+                  {c.reversed_at && <div className="small muted">Reversed by <Who id={c.reversed_by} name={c.reversed_by_name} size={16} fallback="someone" /> {formatDate(c.reversed_at)} — {c.reverse_reason}</div>}
                 </div>
                 <Link className="btn btn-sm btn-ghost" to="/settings?tab=attendance&section=holidays" onClick={onClose}>Open holidays</Link>
               </div>
@@ -170,7 +170,7 @@ function MarkSourceDialog({ markId, onClose, onOpenTask }) {
               <ul className="small hol-audit">
                 {data.audit.map((a) => (
                   <li key={`a${a.id}`}>
-                    {formatDate(a.created_at, { withTime: true })} — {a.actor_name || 'TaskFlow'} {a.action.toLowerCase()} it{a.reason ? `: “${a.reason}”` : ''}
+                    {formatDate(a.created_at, { withTime: true })} — <Who id={a.actor_id} name={a.actor_name} size={16} fallback="TaskFlow" /> {a.action.toLowerCase()} it{a.reason ? `: “${a.reason}”` : ''}
                     {a.action === 'RESTORED' && a.before?.waived_reason ? ` (it had been waived: “${a.before.waived_reason}”)` : ''}
                   </li>
                 ))}
@@ -209,12 +209,12 @@ function Appeals({ onOpenSource }) {
             <tbody>
               {data.appeals.map((a) => (
                 <tr key={a.id}>
-                  <td>{a.full_name}</td>
+                  <td><Who id={a.user_id} name={a.full_name} size={20} /></td>
                   <td className="small"><span className="task-ref">{a.task_ref || '—'}</span> {a.mark_reason} · {a.points} pt</td>
                   <td className="small">{a.reason}{a.evidence_url ? <> · <a href={a.evidence_url} target="_blank" rel="noreferrer">evidence</a></> : null}</td>
                   <td className="small">
                     <Badge tone={a.status === 'OPEN' ? 'warning' : a.status === 'WAIVED' ? 'good' : 'neutral'}>{a.status.toLowerCase()}</Badge>
-                    {a.decided_by_name && <div className="muted">{a.decided_by_name}: {a.decision_reason}</div>}
+                    {a.decided_by_name && <div className="muted"><Who id={a.decided_by} name={a.decided_by_name} size={16} />: {a.decision_reason}</div>}
                   </td>
                   <td className="nowrap">
                     <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpenSource(a.mark_id)}>Source</button>
@@ -363,7 +363,7 @@ export default function BlackMarks() {
             {flagged.map((member) => (
               <div key={member.user_id} className="row-between wrap" style={{ gap: 8 }}>
                 <div className="row">
-                  <Avatar name={member.full_name} size={26} />
+                  <Avatar userId={member.user_id} name={member.full_name} size={26} />
                   <div>
                     <div style={{ fontWeight: 600 }}>{member.full_name}</div>
                     <div className="small muted">{member.department || 'No department'}</div>
@@ -429,7 +429,7 @@ export default function BlackMarks() {
                     <tr key={member.user_id}>
                       <td>
                         <div className="row">
-                          <Avatar name={member.full_name} size={26} />
+                          <Avatar userId={member.user_id} name={member.full_name} size={26} />
                           <div>
                             <div style={{ fontWeight: 600 }}>{member.full_name}</div>
                             <div className="small muted">{member.department || 'No department'}</div>
@@ -505,7 +505,7 @@ export default function BlackMarks() {
                   <tr key={mark.id}>
                     <td>
                       <div className="row">
-                        <Avatar name={mark.full_name} color={mark.avatar_color} size={24} />
+                        <Avatar userId={mark.user_id} name={mark.full_name} color={mark.avatar_color} size={24} />
                         <span>{mark.full_name}</span>
                       </div>
                     </td>
@@ -599,7 +599,7 @@ export default function BlackMarks() {
                 <tbody>
                   {recheck.map((m) => (
                     <tr key={m.mark_id}>
-                      <td>{m.full_name}</td>
+                      <td><Who id={m.user_id} name={m.full_name} size={20} /></td>
                       <td><span className="task-ref">{m.task_ref}</span> <span className="small">{m.rule_name}</span></td>
                       <td className="small">{(m.reason_words || []).map((w) => <div key={w}>{w}</div>)}</td>
                       <td className="small nowrap">{formatDate(m.due, { withTime: true })}</td>

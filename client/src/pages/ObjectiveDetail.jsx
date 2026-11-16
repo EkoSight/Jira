@@ -566,7 +566,7 @@ function GoalRail({ objective, keyResults, tasks, childGoals, canEdit, onOverrid
             <div className="stack-sm">
               {people.map((person) => (
                 <div key={person.id} className="row">
-                  <Avatar name={person.name} color={person.color} size={22} />
+                  <Avatar userId={person.id} name={person.name} color={person.color} size={22} />
                   <span className="grow truncate small">{person.name}</span>
                   <span className="small muted">
                     {person.key_results > 0 && `${person.key_results} KR`}
@@ -694,7 +694,7 @@ function ActivityFeed({ activity }) {
         <div className="stack-sm">
           {activity.map((item) => (
             <div key={item.id} className="activity-row">
-              <Avatar name={item.actor_name || 'TaskFlow'} color={item.actor_color} size={22} />
+              <Avatar userId={item.actor_id} name={item.actor_name || 'TaskFlow'} color={item.actor_color} size={22} />
               <div className="grow" style={{ minWidth: 0 }}>
                 <div className="small">
                   {/* no actor means TaskFlow itself did it, not an anonymous person */}

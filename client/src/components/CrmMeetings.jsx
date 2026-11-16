@@ -239,7 +239,7 @@ function ScheduleDialog({ accountId, opportunities, contacts, meeting, onClose, 
                   <button key={user.id} type="button"
                     className={`kind-chip${internal.has(user.id) ? ' is-active' : ''}`}
                     onClick={() => toggle(setInternal)(user.id)}>
-                    {user.full_name}
+                    <Avatar userId={user.id} name={user.full_name} color={user.avatar_color} size={16} /> {user.full_name}
                   </button>
                 ))}
               </div>
@@ -477,7 +477,7 @@ export default function CrmMeetings({ accountId, opportunities, contacts, canEdi
               <div className="row wrap" style={{ gap: 8 }}>
                 {meeting.participants.map((p, index) => (
                   <span key={`${p.user_id || 'c'}-${p.contact_id || index}`} className="row" style={{ gap: 5 }}>
-                    <Avatar name={p.name || '?'} color={p.color} size={20} />
+                    <Avatar userId={p.external ? null : p.user_id} name={p.name || '?'} color={p.color} size={20} />
                     <span className="small">
                       {p.name}
                       {p.external && <span className="muted"> · theirs</span>}

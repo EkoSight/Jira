@@ -289,7 +289,7 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
                           ? <span className="muted">amount not recorded</span>
                           : exactMoney(row.agreed_value, row.currency)}
                       </span>
-                      {row.owner_name && <Avatar name={row.owner_name} color={row.owner_color} size={20} />}
+                      {row.owner_name && <Avatar userId={row.owner_user_id} name={row.owner_name} color={row.owner_color} size={20} />}
                     </li>
                   ))}
                 </ul>
@@ -310,7 +310,7 @@ export default function CrmDashboard({ departmentId, ownerId, segmentId }) {
                           {row.won_deal ? ` · signed ${row.won_deal}` : ' · no deal marked won'}
                         </div>
                       </span>
-                      {row.owner_name && <Avatar name={row.owner_name} color={row.owner_color} size={20} />}
+                      {row.owner_name && <Avatar userId={row.owner_user_id} name={row.owner_name} color={row.owner_color} size={20} />}
                     </li>
                   ))}
                 </ul>

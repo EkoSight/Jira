@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useToast } from '../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../components/ui.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../components/ui.jsx';
 import {
   CallButtons, CallStatusBadge, CategoryBadge, DestinationBadge, DueBadge, FollowUpActions, FollowUpDialog, LeadFieldInputs, LeadStatusBadge,
   Stars, WhatsAppPanel,
@@ -315,7 +315,7 @@ export default function SalesLead() {
       <div className="grid-3 sales-facts">
         <div className="card card-pad stack-xs">
           <span className="stat-label">Owner</span>
-          <strong>{lead.owner_name || 'Nobody yet'}</strong>
+          <strong><Who id={lead.owner_user_id} name={lead.owner_name} color={lead.owner_color} size={24} fallback="Nobody yet" /></strong>
           {data.can.assign && inTaskflow && (
             <select className="select" aria-label="Reassign" value="" onChange={(e) => {
               const v = e.target.value; if (!v) return;
@@ -417,7 +417,7 @@ export default function SalesLead() {
                 </div>
                 {a.body && <div className="small" style={{ whiteSpace: 'pre-wrap' }}>{a.body}</div>}
                 <div className="small muted">
-                  <span className="tnum">{a.call_id ? exactTime(a.occurred_at) : when(a.occurred_at)}</span>{a.actor_name ? ` · ${a.actor_name}` : ''}
+                  <span className="tnum">{a.call_id ? exactTime(a.occurred_at) : when(a.occurred_at)}</span>{a.actor_name && <> · <Who id={a.actor_id} name={a.actor_name} size={16} /></>}
                   {a.meta?.provider && !a.meta.logged_manually ? ` · from ${a.meta.provider}` : ''}{a.type === 'IMPORT_NOTE' ? ' · came in with an import' : ''}
                 </div>
               </div>
@@ -493,7 +493,7 @@ export default function SalesLead() {
           {data.routing.events.map((e) => <div key={e.id} className="small">{when(e.created_at)} · {e.from_category ? `${CATEGORY[e.from_category]?.short} → ` : ''}{CATEGORY[e.to_category]?.short} ({e.to_destination?.toLowerCase()}) {e.reason ? `· ${e.reason}` : ''} {e.actor_name ? `· ${e.actor_name}` : '· automatic'}</div>)}
           <h3 className="small">Ownership</h3>
           {data.routing.assignments.length === 0 ? <div className="small muted">Never assigned.</div> : data.routing.assignments.map((a) => (
-            <div key={a.id} className="small">{when(a.created_at)} · {a.from_name ? `${a.from_name} → ` : ''}{a.to_name || 'nobody'} · {String(a.method).toLowerCase()}{a.rule_name ? ` by rule “${a.rule_name}”` : ''}{a.reason ? ` · ${a.reason}` : ''}{a.actor_name ? ` · ${a.actor_name}` : ''}</div>
+            <div key={a.id} className="small">{when(a.created_at)} · {a.from_name && <><Who id={a.from_user_id} name={a.from_name} size={16} /> → </>}<Who id={a.to_user_id} name={a.to_name} size={16} fallback="nobody" /> · {String(a.method).toLowerCase()}{a.rule_name ? ` by rule “${a.rule_name}”` : ''}{a.reason ? ` · ${a.reason}` : ''}{a.actor_name && <> · <Who id={a.actor_id} name={a.actor_name} size={16} /></>}</div>
           ))}
           {data.routing.handoff && <div className="small">TeleCRM hand-off: {data.routing.handoff.status.toLowerCase()}{data.routing.handoff.external_id ? ` (${data.routing.handoff.external_id})` : ''}</div>}
         </div>

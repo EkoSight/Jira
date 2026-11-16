@@ -237,7 +237,7 @@ export async function liftCallOptOut({ address, reason, actor }) {
 export async function listOptOuts({ includeLifted = false } = {}) {
   const { rows } = await query(
     `SELECT o.id, o.channel, o.address, o.reason, o.source, o.created_at, o.lifted_at, o.lift_reason, o.complaint, o.complaint_text, o.call_id,
-            u.full_name AS actor_name, lu.full_name AS lifted_by_name,
+            o.actor_id, u.full_name AS actor_name, o.lifted_by, lu.full_name AS lifted_by_name,
             l.id AS lead_id, l.ref AS lead_ref, COALESCE(l.organization_name, l.contact_name) AS lead_name
        FROM crm_optouts o
        LEFT JOIN users u ON u.id = o.actor_id LEFT JOIN users lu ON lu.id = o.lifted_by
@@ -409,7 +409,7 @@ export async function callingReview({ from, to }) {
     query(`SELECT k.id, k.what_they_said, k.created_at, COALESCE(l.organization_name, l.contact_name) AS about
              FROM crm_call_complaints k LEFT JOIN crm_leads l ON l.id = k.lead_id
             WHERE k.created_at >= $1 AND k.created_at < $2 ORDER BY k.created_at`, [from, to]),
-    query(`SELECT c.id, c.hours_override_reason, COALESCE(c.dialled_at, c.started_at) AS at, u.full_name AS agent_name
+    query(`SELECT c.id, c.hours_override_reason, COALESCE(c.dialled_at, c.started_at) AS at, c.agent_user_id, u.full_name AS agent_name
              FROM crm_calls c LEFT JOIN users u ON u.id = c.agent_user_id
             WHERE c.hours_override_reason IS NOT NULL AND COALESCE(c.dialled_at, c.started_at) >= $1 AND COALESCE(c.dialled_at, c.started_at) < $2
             ORDER BY at`, [from, to]),

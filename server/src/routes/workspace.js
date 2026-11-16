@@ -366,7 +366,7 @@ async function originOf(user, kind, rid) {
   if (kind === 'LEAD') {
     const { rows } = await query(
       `SELECT l.id, l.created_at, l.referral, l.entry_channel, l.utm, l.landing_page, l.source_system, l.last_incoming_at, l.last_contacted_at,
-              l.owner_user_id, ow.full_name AS owner_name, cr.full_name AS created_by_name,
+              l.owner_user_id, ow.full_name AS owner_name, l.created_by, cr.full_name AS created_by_name,
               os.name AS original_source, s.name AS latest_source, oc.name AS original_campaign, c.name AS latest_campaign,
               l.introduced_by_user_id, iu.full_name AS introduced_by_user_name, l.introduced_by_contact_id, ic.full_name AS introduced_by_contact_name
          FROM crm_leads l
@@ -377,16 +377,19 @@ async function originOf(user, kind, rid) {
         WHERE l.id = $1`, [rid],
     );
     const { rows: assigned } = await query(
-      `SELECT a.created_at, a.method, a.reason, f.full_name AS from_name, t.full_name AS to_name, ac.full_name AS by_name
+      `SELECT a.created_at, a.method, a.reason, a.from_user_id AS from_id, f.full_name AS from_name, a.to_user_id AS to_id, t.full_name AS to_name,
+              a.actor_id AS by_id, ac.full_name AS by_name
          FROM crm_assignments a LEFT JOIN users f ON f.id = a.from_user_id LEFT JOIN users t ON t.id = a.to_user_id LEFT JOIN users ac ON ac.id = a.actor_id
         WHERE a.entity_type = 'LEAD' AND a.entity_id = $1 ORDER BY a.created_at`, [rid],
     );
     return { ...rows[0], assignments: assigned };
   }
   const { rows } = await query(
-    `SELECT o.id, o.created_at, o.owner_user_id, ow.full_name AS owner_name, cr.full_name AS created_by_name, s.name AS source, l.referral,
+    `SELECT o.id, o.created_at, o.owner_user_id, ow.full_name AS owner_name, o.created_by, cr.full_name AS created_by_name, s.name AS source, l.referral,
             o.source_lead_id, o.introduced_by_user_id, iu.full_name AS introduced_by_user_name, o.introduced_by_contact_id, ic.full_name AS introduced_by_contact_name,
-            ARRAY(SELECT u.full_name FROM opportunity_collaborators oc JOIN users u ON u.id = oc.user_id WHERE oc.opportunity_id = o.id) AS helpers
+            ARRAY(SELECT u.full_name FROM opportunity_collaborators oc JOIN users u ON u.id = oc.user_id WHERE oc.opportunity_id = o.id) AS helpers,
+            COALESCE((SELECT json_agg(json_build_object('id', u.id, 'name', u.full_name) ORDER BY u.full_name)
+                        FROM opportunity_collaborators oc JOIN users u ON u.id = oc.user_id WHERE oc.opportunity_id = o.id), '[]') AS helper_people
        FROM opportunities o
        LEFT JOIN users ow ON ow.id = o.owner_user_id LEFT JOIN users cr ON cr.id = o.created_by
        LEFT JOIN crm_sources s ON s.id = o.source_id LEFT JOIN crm_leads l ON l.id = o.source_lead_id
@@ -394,7 +397,7 @@ async function originOf(user, kind, rid) {
       WHERE o.id = $1`, [rid],
   );
   const { rows: owners } = await query(
-    `SELECT h.created_at, h.from_value, h.to_value, h.reason, u.full_name AS by_name FROM opportunity_history h LEFT JOIN users u ON u.id = h.actor_id
+    `SELECT h.created_at, h.from_value, h.to_value, h.reason, h.actor_id AS by_id, u.full_name AS by_name FROM opportunity_history h LEFT JOIN users u ON u.id = h.actor_id
       WHERE h.opportunity_id = $1 AND h.field IN ('owner', 'owner_user_id') ORDER BY h.created_at`, [rid],
   );
   return { ...rows[0], assignments: owners };

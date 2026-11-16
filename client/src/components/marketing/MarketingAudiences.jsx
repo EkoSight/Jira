@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { EmptyState, Field, Icon, Modal, Spinner, Who } from '../ui.jsx';
 import { OPERATOR_WORDS, emptyRules, needsValue, newCondition, personName } from '../../lib/marketing.js';
 import { AudienceReport } from './MarketingReports.jsx';
 import { forgetMarketingMeta, MembershipBadge } from './parts.jsx';
@@ -280,7 +280,7 @@ export default function MarketingAudiences({ meta, onMetaChanged }) {
         {!segments ? <Spinner /> : segments.length === 0 ? <div className="empty small">A segment picks people by rules — tags, fields, location, engagement, campaign activity, or their organization in the pipeline. Use one to send a campaign to part of an audience.</div> : (
           <div className="table-wrap"><table className="data"><thead><tr><th>Segment</th><th>Within</th><th>Made by</th><th /></tr></thead>
             <tbody>{segments.map((s) => (
-              <tr key={s.id}><td>{s.name}</td><td>{s.audience_name || 'All contacts'}</td><td className="small">{s.created_by_name}</td>
+              <tr key={s.id}><td>{s.name}</td><td>{s.audience_name || 'All contacts'}</td><td className="small"><Who id={s.created_by} name={s.created_by_name} size={16} /></td>
                 <td>{can('marketing.manage') && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setSegmentEdit(s)}>Edit</button>}</td></tr>
             ))}</tbody></table></div>
         )}

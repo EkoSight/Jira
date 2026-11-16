@@ -165,7 +165,7 @@ export async function projectNumbers(user, projects, { c = null } = {}) {
       milestones: milestonesOut.map(({ open, ...m }) => m),
       next_milestone: next && { id: next.id, name: next.name, target_date: next.target_date, open: next.stats.open },
       health_from_tasks: healthFromTasks(project, stats, milestonesOut, clock),
-      lead_update: update && { health: update.health, note: update.note, at: update.created_at, author_name: update.author_name },
+      lead_update: update && { health: update.health, note: update.note, at: update.created_at, author_name: update.author_name, author_id: update.author_id },
       update_age_days: update ? Math.floor((clock.now.getTime() - new Date(update.created_at).getTime()) / 86_400_000) : null,
     });
   }

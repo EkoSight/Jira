@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, BASE, tokenStore } from '../../api/client.js';
 import { useToast } from '../../state/AppState.jsx';
-import { Badge, EmptyState, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from '../ui.jsx';
 import { exactTime } from '../../lib/crmWork.js';
 import { phoneLabel } from '../../lib/sales.js';
 
@@ -307,7 +307,7 @@ function Phones({ setup, onSaved }) {
                       {d.not_synced_for_a_day && !d.revoked_at && <Badge tone="warning">Not synced for over a day</Badge>}
                     </div>
                     <div className="small row wrap" style={{ gap: 6 }}>
-                      <span>{d.signed_in_name ? <>Used by <strong>{d.signed_in_name}</strong></> : <span className="muted">Nobody signed in</span>}</span>
+                      <span>{d.signed_in_name ? <>Used by <strong><Who id={d.signed_in_user_id} name={d.signed_in_name} size={18} /></strong></> : <span className="muted">Nobody signed in</span>}</span>
                       {d.signed_in_name && d.policy_acknowledged === false && <Badge tone="warning">Phone policy not acknowledged</Badge>}
                       {d.sim_number && <span className="muted">SIM {phoneLabel(d.sim_number)}</span>}
                     </div>
@@ -327,7 +327,7 @@ function Phones({ setup, onSaved }) {
                       <ul className="tight-list small warning-text">{d.warnings.map((w) => <li key={w.code}>{w.text} ({w.day})</li>)}</ul>
                     )}
                     {d.last_error && <div className="small critical-text">Last problem: {d.last_error}</div>}
-                    {d.revoked_at && <div className="small muted">Blocked {exactTime(d.revoked_at)} by {d.revoked_by_name || 'an administrator'}{d.revoke_reason ? `: ${d.revoke_reason}` : ''}</div>}
+                    {d.revoked_at && <div className="small muted">Blocked {exactTime(d.revoked_at)} by <Who id={d.revoked_by} name={d.revoked_by_name} size={16} fallback="an administrator" />{d.revoke_reason ? `: ${d.revoke_reason}` : ''}</div>}
                   </div>
                   <div className="row wrap phone-actions" style={{ gap: 4 }}>
                     <button type="button" className="btn btn-sm btn-ghost" onClick={() => { const v = window.prompt('The company’s label for this phone (asset tag)', d.asset_label || ''); if (v !== null) act(api.sales.patch(`/calling/devices/${d.id}`, { asset_label: v.trim() || null }), 'Saved'); }}>Label…</button>
@@ -351,7 +351,7 @@ function Phones({ setup, onSaved }) {
               <li key={m.package} className="small row wrap" style={{ gap: 6 }}>
                 <code>{m.package}</code><Badge tone={MODE[m.mode]?.[1]}>{MODE[m.mode]?.[0]}</Badge>
                 {m.folder_hint && <span className="muted">{m.folder_hint}</span>}
-                <span className="muted">confirmed by {m.confirmed_by_name || 'someone'} {exactTime(m.confirmed_at)}</span>
+                <span className="muted">confirmed by <Who id={m.confirmed_by} name={m.confirmed_by_name} size={16} fallback="someone" /> {exactTime(m.confirmed_at)}</span>
               </li>
             ))}
           </ul>
@@ -417,7 +417,7 @@ function OptOuts() {
                 <div className="small row wrap" style={{ gap: 6 }}>
                   <span className="tnum muted">{exactTime(k.created_at)}</span>
                   {k.lead_id ? <Link to={`/sales/leads/${k.lead_id}`}>{k.about || k.lead_ref}</Link> : <span>{k.about || '—'}</span>}
-                  <span className="muted">recorded by {k.recorded_by_name || 'someone'}</span>
+                  <span className="muted">recorded by <Who id={k.recorded_by} name={k.recorded_by_name} size={16} fallback="someone" /></span>
                 </div>
                 <blockquote className="call-note small">{k.what_they_said}</blockquote>
               </li>
@@ -439,8 +439,8 @@ function OptOuts() {
                   <td className="tnum nowrap">{phoneLabel(o.address)}</td>
                   <td>{o.lead_id ? <Link to={`/sales/leads/${o.lead_id}`}>{o.lead_name || o.lead_ref}</Link> : <span className="muted">—</span>}</td>
                   <td className="tnum nowrap">{exactTime(o.created_at)}</td>
-                  <td className="small">{o.complaint ? <Badge tone="critical">Complaint</Badge> : String(o.source || '').toLowerCase().replace(/_/g, ' ')}{o.actor_name ? ` · ${o.actor_name}` : ''}</td>
-                  <td className="small">{o.reason || '—'}{o.lifted_at ? <div className="muted">Lifted {exactTime(o.lifted_at)} by {o.lifted_by_name || 'someone'}: {o.lift_reason}</div> : null}</td>
+                  <td className="small">{o.complaint ? <Badge tone="critical">Complaint</Badge> : String(o.source || '').toLowerCase().replace(/_/g, ' ')}{o.actor_name && <> · <Who id={o.actor_id} name={o.actor_name} size={16} /></>}</td>
+                  <td className="small">{o.reason || '—'}{o.lifted_at ? <div className="muted">Lifted {exactTime(o.lifted_at)} by <Who id={o.lifted_by} name={o.lifted_by_name} size={16} fallback="someone" />: {o.lift_reason}</div> : null}</td>
                   <td>{!o.lifted_at && <button type="button" className="btn btn-sm btn-ghost" onClick={() => lift(o)}>Lift…</button>}</td>
                 </tr>
               ))}</tbody>
@@ -498,7 +498,7 @@ function Review() {
       {data.calls_outside_hours.length > 0 && (
         <section className="card card-pad stack-xs">
           <h3>Calls outside calling hours</h3>
-          {data.calls_outside_hours.map((c) => <div key={c.id} className="small"><span className="tnum muted">{exactTime(c.at)}</span> · call #{c.id} by {c.agent_name || 'someone'}: {c.hours_override_reason}</div>)}
+          {data.calls_outside_hours.map((c) => <div key={c.id} className="small"><span className="tnum muted">{exactTime(c.at)}</span> · call #{c.id} by <Who id={c.agent_user_id} name={c.agent_name} size={16} fallback="someone" />: {c.hours_override_reason}</div>)}
         </section>
       )}
       {Object.keys(data.callbacks_past_limits || {}).length > 0 && (

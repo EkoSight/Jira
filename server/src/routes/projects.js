@@ -271,7 +271,7 @@ router.get('/:id/activity', asyncHandler(async (req, res) => {
   const visible = taskVisibilitySql(req.currentUser, params);
   // a task line names the task only when this person can see it
   const { rows } = await query(
-    `SELECT a.id, a.action, a.detail, a.created_at, u.full_name AS actor_name, u.avatar_color,
+    `SELECT a.id, a.action, a.detail, a.created_at, a.actor_id, u.full_name AS actor_name, u.avatar_color,
             CASE WHEN a.task_id IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = a.task_id AND ${visible}) THEN a.task_id END AS task_id,
             CASE WHEN a.task_id IS NOT NULL AND EXISTS (SELECT 1 FROM tasks t WHERE t.id = a.task_id AND ${visible})
                  THEN (SELECT ref || ' ' || title FROM tasks WHERE id = a.task_id) END AS task_label

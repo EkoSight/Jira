@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { useAttendance } from '../state/attendance.jsx';
-import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import {
   CORRECTION_KINDS, CORRECTION_LABEL, CORRECTION_STATUS, DAY_PART, FLAG_LABEL, LEAVE_CATEGORIES, blockerLabel,
   dayExtraState, earlyArrivalNote, extraBreakdown,
@@ -932,7 +932,7 @@ export function CorrectionList({ items, onCancel, onDecide, showWho = false }) {
         const st = CORRECTION_STATUS[c.status];
         return (
           <div key={c.id} className="att-item">
-            {showWho && <Avatar name={c.full_name} color={c.avatar_color} size={26} />}
+            {showWho && <Avatar userId={c.user_id} name={c.full_name} color={c.avatar_color} size={26} />}
             <div className="grow">
               <div className="row wrap" style={{ gap: 6 }}>
                 {showWho && <strong>{c.full_name}</strong>}
@@ -964,7 +964,7 @@ export function LeaveList({ items, onCancel, onDecide, onSubmit, showWho = false
         const range = r.start_date === r.end_date ? dayName(r.start_date) : `${dayName(r.start_date)} – ${dayName(r.end_date)}`;
         return (
           <div key={r.id} className="att-item">
-            {showWho && <Avatar name={r.full_name} color={r.avatar_color} size={26} />}
+            {showWho && <Avatar userId={r.user_id} name={r.full_name} color={r.avatar_color} size={26} />}
             <div className="grow">
               <div className="row wrap" style={{ gap: 6 }}>
                 {showWho && <strong>{r.full_name}</strong>}
@@ -978,7 +978,7 @@ export function LeaveList({ items, onCancel, onDecide, onSubmit, showWho = false
               {(r.paid_days > 0 || r.unpaid_days > 0) && (
                 <div className="small">{r.paid_days} paid · {r.unpaid_days} unpaid</div>
               )}
-              {r.email_reference && <div className="small muted">Says they told {r.notified_name || 'someone'} earlier: {r.email_reference} (their claim — TaskFlow did not send or see this email)</div>}
+              {r.email_reference && <div className="small muted">Says they told <Who id={r.notified_user_id} name={r.notified_name} size={16} fallback="someone" /> earlier: {r.email_reference} (their claim — TaskFlow did not send or see this email)</div>}
               {r.review_note && <div className="small">Reviewer: {r.review_note}</div>}
             </div>
             {onSubmit && r.status === 'DRAFT' && <button type="button" className="btn btn-sm" onClick={() => onSubmit(r)}>Submit</button>}

@@ -161,13 +161,13 @@ router.get('/overdue', asyncHandler(async (req, res) => {
 router.get('/waiting', asyncHandler(async (req, res) => {
   const all = hasPermission(req.currentUser, 'task.edit.any');
   const { rows: changes } = await query(
-    `SELECT c.*, t.ref, t.title, t.due_date, u.full_name AS requested_by_name, o.full_name AS owner_name
+    `SELECT c.*, t.ref, t.title, t.due_date, u.full_name AS requested_by_name, t.assignee_id AS owner_id, o.full_name AS owner_name
        FROM task_deadline_changes c JOIN tasks t ON t.id = c.task_id LEFT JOIN users u ON u.id = c.requested_by LEFT JOIN users o ON o.id = t.assignee_id
       WHERE c.status = 'PENDING' AND ${APPROVER_SQL} ORDER BY c.requested_at`,
     [req.currentUser.id, all],
   );
   const { rows: blocks } = await query(
-    `SELECT b.*, t.ref, t.title, t.due_date, u.full_name AS recorded_by_name, o.full_name AS owner_name
+    `SELECT b.*, t.ref, t.title, t.due_date, u.full_name AS recorded_by_name, t.assignee_id AS owner_id, o.full_name AS owner_name
        FROM task_blocks b JOIN tasks t ON t.id = b.task_id LEFT JOIN users u ON u.id = b.recorded_by LEFT JOIN users o ON o.id = t.assignee_id
       WHERE b.status = 'PENDING' AND ${APPROVER_SQL} ORDER BY b.recorded_at`,
     [req.currentUser.id, all],

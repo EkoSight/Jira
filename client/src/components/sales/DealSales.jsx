@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, fetchBlobUrl } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { Badge, Field, Icon, Modal, Spinner } from '../ui.jsx';
+import { Badge, Field, Icon, Modal, Spinner, Who } from '../ui.jsx';
 import {
   ACCEPTANCE, PARTY_ROLE, PAYMENT_MODE, QUOTE_STATUS, dayOf, localDay, money, useSalesMeta,
 } from '../../lib/sales.js';
@@ -206,7 +206,7 @@ function QuoteView({ deal, quoteId, csr, canWork, onClose, onChanged }) {
           <Badge tone={st.tone}>{st.label}</Badge>
           <strong className="tnum">{money(q.total, q.currency)}</strong>
           <span className="small muted">valid until {dayOf(q.valid_until)}</span>
-          {q.approval_required && q.approval_current && <Badge tone="good">Approved{q.approved_by_name ? ` by ${q.approved_by_name}` : ''}</Badge>}
+          {q.approval_required && q.approval_current && <Badge tone="good">Approved{q.approved_by_name && <> by <Who id={q.approved_by} name={q.approved_by_name} size={16} /></>}</Badge>}
         </div>
         {q.approval_reasons?.length > 0 && <div className="small muted">Needs approval because: {q.approval_reasons.join('; ')}</div>}
         {pending && <div className="mkt-callout is-warning small">Waiting for {pending.approver_names?.join(' or ') || 'an approver'}.</div>}
@@ -235,7 +235,7 @@ function QuoteView({ deal, quoteId, csr, canWork, onClose, onChanged }) {
         {q.approvals.length > 0 && (
           <div className="stack-xs">
             <h3 className="small">Approval history</h3>
-            {q.approvals.map((a) => <div key={a.id} className="small muted">{dayOf(a.requested_at)} · asked by {a.requested_by_name} · {a.status.toLowerCase()}{a.decided_by_name ? ` by ${a.decided_by_name}` : ''}{a.comment ? ` — ${a.comment}` : ''}</div>)}
+            {q.approvals.map((a) => <div key={a.id} className="small muted">{dayOf(a.requested_at)} · asked by <Who id={a.requested_by} name={a.requested_by_name} size={16} fallback="someone" /> · {a.status.toLowerCase()}{a.decided_by_name && <> by <Who id={a.decided_by} name={a.decided_by_name} size={16} /></>}{a.comment ? ` — ${a.comment}` : ''}</div>)}
           </div>
         )}
       </div>

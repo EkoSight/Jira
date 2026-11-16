@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from 'react';
 import { api } from '../../api/client.js';
 import { useAuth, useToast } from '../../state/AppState.jsx';
-import { Badge, Field, Modal, Spinner } from '../ui.jsx';
+import { Badge, Field, Modal, Spinner, Who } from '../ui.jsx';
 import { CALL_OUTCOME } from '../../lib/sales.js';
 import {
   INDIAN_STATES, LOCATION_FIELDS, NOT_PROVIDED, RECORDED_VIA, exactTime, locationRows, pinProblem,
@@ -159,7 +159,7 @@ export function LeadCalls({ calls, importedAttempts = 0, onOpen }) {
                 <tr key={c.id} className={c.voided_at ? 'is-voided' : ''}>
                   <td><button type="button" className="btn-link tnum" onClick={() => onOpen(c.id)} aria-label={`Open call ${c.id}`}>#{c.id}</button></td>
                   <td className="tnum nowrap">{exactTime(c.started_at || c.created_at)}</td>
-                  <td>{c.agent_name || '—'}</td>
+                  <td><Who id={c.agent_user_id} name={c.agent_name} size={18} fallback="—" /></td>
                   <td>
                     <span className="row wrap" style={{ gap: 4 }}>
                       {outcomeLabel(c)}
@@ -246,13 +246,13 @@ export function CallDialog({ callId, onClose, onChanged }) {
         <div className="stack">
           {c.voided_at && (
             <div className="mkt-callout is-warning small">
-              Marked as an accidental repeat by {c.voided_by_name || 'someone'} on {exactTime(c.voided_at)}: {c.void_reason}. It is kept here and not counted.
+              Marked as an accidental repeat by <Who id={c.voided_by} name={c.voided_by_name} size={16} fallback="someone" /> on {exactTime(c.voided_at)}: {c.void_reason}. It is kept here and not counted.
             </div>
           )}
           <dl className="sales-dl">
             <div className="sales-dl-row"><dt>When</dt><dd className="tnum">{exactTime(c.started_at || c.created_at)}</dd></div>
             <div className="sales-dl-row"><dt>Saved</dt><dd className="tnum">{exactTime(c.created_at)}</dd></div>
-            <div className="sales-dl-row"><dt>By</dt><dd>{c.agent_name || '—'}</dd></div>
+            <div className="sales-dl-row"><dt>By</dt><dd><Who id={c.agent_user_id} name={c.agent_name} size={18} fallback="—" /></dd></div>
             <div className="sales-dl-row"><dt>Outcome</dt><dd>{outcomeLabel(c)}</dd></div>
             <div className="sales-dl-row"><dt>Direction</dt><dd>{c.direction === 'INBOUND' ? 'They called' : 'We called'}</dd></div>
             {c.dialled_at && <div className="sales-dl-row"><dt>Dialled</dt><dd className="tnum">{exactTime(c.dialled_at)}</dd></div>}
@@ -316,7 +316,7 @@ export function CallDialog({ callId, onClose, onChanged }) {
               <ul className="call-edits small">
                 {data.edits.map((e) => (
                   <li key={e.id}>
-                    <span className="tnum muted">{exactTime(e.edited_at)}</span> · {e.edited_by_name || 'someone'} changed {e.field === 'duration_sec' ? 'the length' : e.field === 'counted' ? 'whether it counts' : 'the note'}
+                    <span className="tnum muted">{exactTime(e.edited_at)}</span> · <Who id={e.edited_by} name={e.edited_by_name} size={16} fallback="someone" /> changed {e.field === 'duration_sec' ? 'the length' : e.field === 'counted' ? 'whether it counts' : 'the note'}
                     {e.reason ? ` (${e.reason})` : ''}
                     <div className="call-edit-diff"><del>{e.before || '(empty)'}</del> → <ins>{e.after || '(empty)'}</ins></div>
                   </li>

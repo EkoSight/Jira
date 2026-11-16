@@ -1017,7 +1017,7 @@ at most 10 MB, JPEG, PNG or WebP. HEIC → 400 `HEIC`; a picture under 32 px →
 
 | Method | Route | Permission |
 |---|---|---|
-| GET | `/photos/versions` | signed in — `{ versions: [{ id, v }] }`, who has a photo and its version |
+| GET | `/photos/versions` | signed in — `{ versions: [{ id, v }], colours: [{ id, c }] }`: who has a photo and its version, and everyone's avatar colour (id and colour only) |
 | GET | `/photos/:userId/:size?v=` | signed in — WebP at 64, 128, 256 or 512. With `v` it is cached privately for a year |
 | GET | `/photos/me` | signed in — `{ photo, last, proposals, notice, sizes, max_mb }`; `last` carries a removal reason |
 | POST | `/photos/me` | signed in — your own photo; withdraws pending suggestions for you |

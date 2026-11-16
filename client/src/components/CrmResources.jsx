@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import { formatDate, relativeTime } from '../lib/format.js';
 
 /**
@@ -456,7 +456,7 @@ export default function CrmResources({ accountId, opportunities, contacts, canEd
                     <span>{hostOf(r.url)}</span>
                     {r.folder_name && <><span>·</span><span>{r.folder_name}</span></>}
                     {r.opportunity_name && <><span>·</span><span>{r.opportunity_name}</span></>}
-                    {r.added_by_name && <><span>·</span><span>added by {r.added_by_name}</span></>}
+                    {r.added_by_name && <><span>·</span><span>added by <Who id={r.created_by} name={r.added_by_name} size={16} /></span></>}
                     {r.share_count > 0 && (
                       <><span>·</span>
                         <span>sent {r.share_count}×, last {relativeTime(r.last_shared_at)}</span></>
@@ -528,7 +528,7 @@ export default function CrmResources({ accountId, opportunities, contacts, canEd
             <ul className="plain-list">
               {shares.map((s) => (
                 <li key={s.id} className="row" style={{ gap: 8 }}>
-                  {s.shared_by_name && <Avatar name={s.shared_by_name} size={20} />}
+                  {s.shared_by_name && <Avatar userId={s.shared_by} name={s.shared_by_name} size={20} />}
                   <span className="grow" style={{ minWidth: 0 }}>
                     <strong style={{ fontSize: 13 }}>{s.resource_title}</strong>
                     {s.version_label && <span className="muted small"> · {s.version_label}</span>}

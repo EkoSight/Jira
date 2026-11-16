@@ -254,7 +254,7 @@ export async function upcomingDeadlines({ days = 7, limit = 25, ...scope } = {})
     `SELECT t.id, t.ref, t.title, t.priority, t.due_date, t.progress,
             s.name AS status, s.stage, s.color AS status_color,
             d.name AS department, d.color AS department_color,
-            u.full_name AS assignee, u.avatar_color,
+            t.assignee_id, u.full_name AS assignee, u.avatar_color,
             (t.due_date < now() AND t.deferral_id IS NULL) AS is_overdue, t.review_date, t.deferral_id
        FROM tasks t
        JOIN workflow_statuses s ON s.id = t.status_id
@@ -284,7 +284,7 @@ export async function recentActivity({ limit = 20, ...scope } = {}) {
   const { rows } = await query(
     `SELECT a.id, a.action, a.field, a.from_value, a.to_value, a.created_at,
             t.id AS task_id, t.ref, t.title,
-            u.full_name AS actor, u.avatar_color
+            a.actor_id, u.full_name AS actor, u.avatar_color
        FROM task_activity a
        JOIN tasks t ON t.id = a.task_id
        LEFT JOIN users u ON u.id = a.actor_id

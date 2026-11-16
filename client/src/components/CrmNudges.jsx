@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useToast } from '../state/AppState.jsx';
-import { Avatar, Badge, CompanyLogo, Field, Icon, Modal, Spinner } from './ui.jsx';
+import { Avatar, Badge, CompanyLogo, Field, Icon, Modal, Spinner, Who } from './ui.jsx';
 import { crmSignalMeta } from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
 
@@ -216,7 +216,7 @@ export default function CrmNudges({ departmentId, compact = false }) {
                 )}
               </div>
               {signal.owner_name && (
-                <Avatar name={signal.owner_name} color={signal.owner_color} size={22}
+                <Avatar userId={signal.owner_user_id} name={signal.owner_name} color={signal.owner_color} size={22}
                   title={`${signal.owner_name} leads this`} />
               )}
               <button type="button" className="btn btn-sm btn-ghost"
@@ -235,7 +235,7 @@ export default function CrmNudges({ departmentId, compact = false }) {
           <div className="row wrap" style={{ gap: 8 }}>
             {data.by_person.map((person) => (
               <span key={person.user_id} className="row owner-pill" style={{ gap: 6 }}>
-                <Avatar name={person.name} color={person.color} size={20} />
+                <Avatar userId={person.user_id} name={person.name} color={person.color} size={20} />
                 <span className="small">{person.name}</span>
                 <Badge tone={person.critical > 0 ? 'critical' : 'warning'}>{person.total}</Badge>
               </span>
@@ -262,7 +262,7 @@ export default function CrmNudges({ departmentId, compact = false }) {
                     </strong>
                     <div className="small muted">
                       until {formatDate(snooze.until)}
-                      {snooze.created_by_name && ` · ${snooze.created_by_name}`}
+                      {snooze.created_by_name && <> · <Who id={snooze.created_by} name={snooze.created_by_name} size={16} /></>}
                     </div>
                     <div className="small">{snooze.reason}</div>
                   </span>

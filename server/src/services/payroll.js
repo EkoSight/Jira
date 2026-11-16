@@ -109,6 +109,7 @@ export async function history(month, userId) {
     `SELECT p.id, p.version, p.status, p.submitted_at, p.approved_at, p.locked_at, p.reopened_at, p.reopen_reason,
             p.export_count, sb.full_name AS submitted_by_name, ab.full_name AS approved_by_name,
             lb.full_name AS locked_by_name, rb.full_name AS reopened_by_name,
+            p.submitted_by, p.approved_by, p.locked_by, p.reopened_by,
             p.snapshot -> 'salary' -> 'attendance_adjusted_earnings' AS earnings
        FROM payroll_results p
        LEFT JOIN users sb ON sb.id = p.submitted_by LEFT JOIN users ab ON ab.id = p.approved_by

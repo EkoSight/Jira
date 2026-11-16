@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../api/client.js';
 import { useToast } from '../../state/AppState.jsx';
-import { Badge, Field, Spinner } from '../ui.jsx';
+import { Badge, Field, Spinner, Who } from '../ui.jsx';
 import { exactTime, LOCATION_FIELDS } from '../../lib/crmWork.js';
 import { lengthWords } from '../../lib/phoneCalls.js';
 import { CallDialog } from './LeadWork.jsx';
@@ -56,7 +56,7 @@ export function CallReview() {
                   <td><button type="button" className="btn-link tnum" onClick={() => setOpen(m.call_id)}>Call #{m.call_id}</button></td>
                   <td className="tnum nowrap">{exactTime(m.started_at)}</td>
                   <td><Link to={`/sales/leads/${m.lead_id}`}>Lead {m.lead_id}</Link></td>
-                  <td>{m.agent_name || '—'}</td>
+                  <td><Who id={m.agent_user_id} name={m.agent_name} size={18} fallback="—" /></td>
                   <td>{String(m.outcome || '').toLowerCase().replace(/_/g, ' ')}</td>
                   <td className="small">{m.connected ? `Connected · ${lengthWords(m.talk_sec, m.duration_source)}` : 'Nobody answered'}<div className="muted">{m.advice}</div></td>
                 </tr>
@@ -77,7 +77,7 @@ export function CallReview() {
                   <div className="row wrap" style={{ gap: 6 }}>
                     <Badge tone={tone}>{label}</Badge>
                     <Link to={`/sales/leads/${g.lead_id}`}>Lead {g.lead_id}</Link>
-                    <span className="small muted">{g.entries[0].agent_name || 'someone'} · {g.entries.length} entries within {g.seconds_apart}s</span>
+                    <span className="small muted"><Who id={g.entries[0].agent_user_id} name={g.entries[0].agent_name} size={16} fallback="someone" /> · {g.entries.length} entries within {g.seconds_apart}s</span>
                   </div>
                   <div className="small">{g.advice}</div>
                   <div className="table-scroll">
