@@ -13,6 +13,7 @@ import {
 } from './TaskExtras.jsx';
 import CompleteTaskDialog from './CompleteTaskDialog.jsx';
 import RecordSteps from './todos/RecordSteps.jsx';
+import { FromParentTask } from './projects/StartFromExisting.jsx';
 import { announceTodosChanged, doneWords } from '../lib/todos.js';
 import DiscussionPanel from './DiscussionPanel.jsx';
 import CompletionRecord from './CompletionRecord.jsx';
@@ -388,6 +389,8 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const chosenProject = projectOptions.find((p) => String(p.id) === String(form.project_id));
   // giving a project task to someone from another department asks whether to add them
   const [memberAsk, setMemberAsk] = useState(null);
+  // "Turn this task into a project": a reviewed preview, nothing changes until confirmed
+  const [makingProject, setMakingProject] = useState(false);
   useEffect(() => {
     setMemberAsk(null);
     if (!form.project_id || !form.assignee_id) return;
@@ -1012,6 +1015,14 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                     </select>
                   </Field>
                 )}
+                {projectsOn && !isNew && canEdit && task && !task.project_id && !task.parent_task_id && !task.project_hidden
+                  && (detail?.subtasks?.length || 0) > 0 && (can('project.create') || can('project.manage.any')) && (
+                  <div className="small" style={{ gridColumn: '1 / -1' }}>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setMakingProject(true)}>
+                      Turn this task and its {detail.subtasks.length} subtask{detail.subtasks.length === 1 ? '' : 's'} into a project…
+                    </button>
+                  </div>
+                )}
                 {isNew && goalsAvailable && chosenProject?.key_results?.length > 0 && (
                   <fieldset className="field" style={{ border: 0, padding: 0, margin: 0, gridColumn: '1 / -1' }}>
                     <legend className="field-label">This project supports these key results</legend>
@@ -1303,6 +1314,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
           onSaved?.(result.task);
         }}
       />
+    )}
+    {makingProject && detail?.task && (
+      <FromParentTask taskId={detail.task.id} onClose={() => setMakingProject(false)} onCreated={() => { setMakingProject(false); onClose?.(); }} />
     )}
     </>
   );

@@ -11,6 +11,7 @@ import { Avatar, Badge, ConfirmButton, Modal, Spinner } from '../components/ui.j
 import TaskDialog from '../components/TaskDialog.jsx';
 import { HealthSignals, ProgressBar, ProjectForm, projectBody } from './Projects.jsx';
 import { ProjectLinksCard } from '../components/projects/ProjectLinks.jsx';
+import { TakeOut } from '../components/projects/StartFromExisting.jsx';
 import RecordSteps, { StepsCount } from '../components/todos/RecordSteps.jsx';
 import {
   HEALTH_LABEL, HEALTH_TONE, OPEN_STATUSES, STATUS_LABEL, STATUS_TONE, activityWords, byMilestone, dateWords, progressWords,
@@ -146,6 +147,7 @@ function TasksTab({ page, reload }) {
   const [tasks, setTasks] = useState(null);
   const [creating, setCreating] = useState(false);
   const [adding, setAdding] = useState(false);
+  const [takingOut, setTakingOut] = useState(false);
   const load = useCallback(() => { api.tasks({ project_id: p.id, limit: 1000 }).then((r) => setTasks(r.tasks)).catch(() => setTasks([])); }, [p.id]);
   useEffect(load, [load]);
   const groups = useMemo(() => byMilestone((tasks || []).filter((t) => t.stage !== 'cancelled'), n.milestones), [tasks, n.milestones]);
@@ -178,7 +180,13 @@ function TasksTab({ page, reload }) {
         />
       )}
       {adding && <AddExisting projectId={p.id} onClose={() => setAdding(false)} onDone={() => { setAdding(false); load(); reload(); }} />}
-      {canManage && <p className="small muted" style={{ margin: 0 }}>To take a task out, open it and choose No project.</p>}
+      {takingOut && <TakeOut projectId={p.id} tasks={tasks || []} onClose={() => setTakingOut(false)} onDone={() => { setTakingOut(false); load(); reload(); }} />}
+      {canManage && (
+        <p className="small muted row wrap" style={{ margin: 0, gap: 6 }}>
+          To take one task out, open it and choose No project.
+          {tasks?.length > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setTakingOut(true)}>Take tasks out…</button>}
+        </p>
+      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, Modal, Spinner } from '../components/ui.jsx';
+import { FromTag } from '../components/projects/StartFromExisting.jsx';
 import {
   HEALTH_LABEL, HEALTH_TONE, STATUS_LABEL, STATUS_TONE, byDepartment, dateWords, progressWords,
 } from '../lib/projects.js';
@@ -166,6 +167,7 @@ export default function Projects() {
   const search = params.get('search') || '';
   const [state, setState] = useState({ loading: true, error: null, data: null });
   const [creating, setCreating] = useState(false);
+  const [fromTag, setFromTag] = useState(false);
   const [draft, setDraft] = useState(search);
 
   useEffect(() => {
@@ -192,7 +194,12 @@ export default function Projects() {
           <h1 style={{ margin: 0 }}>Projects</h1>
           <div className="small muted">Each department&apos;s projects: who leads them, how far along they are, and what is next</div>
         </div>
-        {d?.can_create && <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>New project</button>}
+        {d?.can_create && (
+          <span className="row wrap" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-sm" onClick={() => setFromTag(true)}>Make a project from a tag</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => setCreating(true)}>New project</button>
+          </span>
+        )}
       </div>
 
       <div className="row wrap" style={{ gap: 8 }}>
@@ -230,6 +237,7 @@ export default function Projects() {
         </section>
       ))}
       {creating && <NewProject onClose={() => setCreating(false)} />}
+      {fromTag && <FromTag onClose={() => setFromTag(false)} />}
       {user && !can('project.create') && !can('project.manage.any') && d && <div className="small muted">Managers and above create projects. A project&apos;s lead manages their own.</div>}
     </div>
   );

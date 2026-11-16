@@ -48,6 +48,8 @@ shows "This widget is no longer available", with Remove.
 
 | Widget | Shows | Data from |
 | --- | --- | --- |
+| Today's plan | A page of your notebook: today's to-dos, steps and pinned tasks, an empty line to write on, and "Open notebook". At the top of every template. Behind the To-dos switch (`docs/TODOS.md`) | `/todos/today` |
+| My projects | Each project with your open tasks in it, "No project" last; leads also see unassigned and overdue counts. Managers can widen it to their department, and people who see every task to all. In the Managers, Leadership and Partnerships templates, and in the catalogue for everyone. Behind the Projects switch (`docs/PROJECTS.md`) | `/workspace/widgets/projects` |
 | Summary | Needs attention, overdue, due today, waiting on others, decisions | `/workspace/widgets/summary` |
 | Needs attention | One ordered list from every module (below) | `/workspace/attention` |
 | Needs my decision | Approvals waiting on you | `/workspace/decisions` |
@@ -107,6 +109,12 @@ A save from an older version than the one stored is refused. The person sees
 The layout is kept on the server for each person. This tab keeps a copy only
 so the page paints at once, and signing out clears it.
 
+**A new widget is offered, never forced.** People following a template got
+Today's plan at the top with the template. People who had saved their own
+layout see one banner, "Add Today's plan to your workspace?", with **Add**
+(it goes at the top) and **No thanks**. The answer is remembered and the
+banner does not come back. Their saved layout is not changed without it.
+
 On a phone, widgets stack in their saved order at full width.
 
 ## Templates (Settings → Workspace)
@@ -150,6 +158,9 @@ Each module contributes its items through one shape, using its own rule:
 - **applications:** deadline, status check, and no next action;
 - **meetings:** today, to arrange, and no outcome recorded;
 - **key results:** the OKR attention engine;
+- **projects:** for the lead, a milestone due, the target date passed, an
+  update due, or tasks with no owner; for the department's managers (and
+  admins), "Project has no active lead";
 - **today's standup;**
 - **decisions;**
 - **the person's own "remind me" reminders.**
@@ -318,7 +329,10 @@ change it.
 | Deal next action due | the next action's date, unless a task tracks it (then the task reminders cover it) | on |
 | Deal waiting: their date has come | the waiting-until date | on |
 | Revisit a deal on hold | the revisit date | on |
-| Remind me about this | the time you choose; private to you | always |
+| Project milestone coming up | 3 calendar days before a milestone that still has open tasks, to the project's lead only | on |
+| Project target date coming up | 7 days before the target date of an active project that is not finished, to its lead only | on |
+| Time for a project update | when an active project has had no lead's update for 14 days, to its lead only | on |
+| Remind me about this | the time you choose; private to you. Also on your own to-dos ("Remind me"): ticking or removing the line cancels it; moving the line to another day does not move the reminder | always |
 
 **Calendar days, not hours.** A deadline of 29 March 2027, 17:00 London is
 21:30 IST. Its 3-day reminder is on 26 March at 09:00 IST, not 72 hours

@@ -37,8 +37,8 @@ duplicate.
 | POST | `/tasks/:id/restore` | `task.delete` |
 | POST | `/tasks/:id/comments` | `task.comment` |
 | DELETE | `/tasks/:taskId/comments/:commentId` | author, or `task.edit.any` |
-| POST | `/tasks/:id/checklist` | edit access |
-| PATCH | `/tasks/:taskId/checklist/:itemId` | edit access |
+| POST | `/tasks/:id/checklist` | can see the task — `{ title, owner_user_id?, planned_on?, planned_time? }` (a step; see "To-dos") |
+| PATCH | `/tasks/:taskId/checklist/:itemId` | can see the task — `{ title?, is_done?, owner_user_id?, planned_on?, planned_time? }`. Renaming needs edit access; ticking records `done_by` and `done_at`. The reply's `ask_complete` is set when every step is done |
 | DELETE | `/tasks/:taskId/checklist/:itemId` | edit access |
 | POST | `/tasks/:id/attachments/link` | task access — `{ url, title }` |
 | POST | `/tasks/:id/attachments/upload` | task access — multipart `file` |
@@ -72,7 +72,8 @@ label. Files are streamed back through the API so the same task permissions appl
 **List filters** (query string, all optional):
 
 `department_id`, `status_id`, `stage`, `priority` (comma separated),
-`assignee_id` (or `none`), `task_type`, `tag`, `search`, `overdue=true`,
+`assignee_id` (or `none`), `project_id` (or `none`), `milestone_id` (or `none`),
+`task_type`, `tag`, `search`, `overdue=true`,
 `due_within_days`, `open=true`, `archived=true`,
 `sort` (`position` | `due_date` | `priority` | `created` | `updated`), `limit`.
 
@@ -1059,14 +1060,15 @@ See `DEADLINES_REMINDERS.md`. Deadline health comes from `shared/deadlineHealth.
 
 ## Deadline changes, deferrals, blocks and the overdue review
 
-Under `/task-review`. TaskFlow has no separate projects: a project is a task
-with subtasks. Filtering by a project shows the task itself and its subtasks.
-Goals are objectives reached through the key results a task is linked to;
-archived goals are left out.
+Under `/task-review`. `project_id` filters by a real project (see
+"Projects"), counting only projects the caller can see. The older grouping of
+a parent task with its subtasks is the `parent_id` facet ("Parent task"),
+which shows the task itself and its subtasks. Goals are objectives reached
+through the key results a task is linked to; archived goals are left out.
 
 | Method | Route | Permission |
 |---|---|---|
-| GET | `/overdue` | signed in — your overdue tasks and those you can approve (`mine` per task). Filters, each narrowing; a comma list within one is "any of": `project_id`, `goal_id`, `department_id`, `assignee_id` (or `none`), `supporter_id`, `reporter_id`, `account_id`, `opportunity_id`, `tag`, `priority`, `stage`, `task_type`, `overdue_days` (at least N days late), `waiting=1`, `search`, `scope=mine/team/all` (default all), `sort=newest/priority` (default oldest first). Replies `{ tasks (up to 500), total, matching, mine, team, all_mine, all_team, capped, facets }`; `facets` has, per filter, every `{ value, label, count }`, where `count` is how many the choice would show with the other filters and the scope applied. Filters never widen what you can see |
+| GET | `/overdue` | signed in — your overdue tasks and those you can approve (`mine` per task). Filters, each narrowing; a comma list within one is "any of": `project_id`, `parent_id`, `goal_id`, `department_id`, `assignee_id` (or `none`), `supporter_id`, `reporter_id`, `account_id`, `opportunity_id`, `tag`, `priority`, `stage`, `task_type`, `overdue_days` (at least N days late), `waiting=1`, `search`, `scope=mine/team/all` (default all), `sort=newest/priority` (default oldest first). Replies `{ tasks (up to 500), total, matching, mine, team, all_mine, all_team, capped, facets }`; `facets` has, per filter, every `{ value, label, count }`, where `count` is how many the choice would show with the other filters and the scope applied. Filters never widen what you can see |
 | GET | `/waiting` | signed in — deadline changes, deferrals and blocks waiting for your decision, and your own waiting requests |
 | POST | `/preview` | signed in — `{ items: [{ task_id, action: NEW_DATE/BLOCKED/DONE/DEFER, due?, reason?, review_date?, next_action?, dependency_text?, evidence?, evidence_url? }] }` → what each would do; writes nothing |
 | POST | `/apply` | the same body; each item applied or asked for, with its result |
@@ -1119,7 +1121,8 @@ reminders or preferences. See `docs/MY_WORKSPACE.md`.
 
 | Method | Route | Permission |
 |---|---|---|
-| GET | `/workspace` | signed in — `{ version, source: TEMPLATE/CUSTOM, template, widgets (each with available, why, retired), home, home_choice, catalogue, scope_label, timezone }` |
+| GET | `/workspace` | signed in — `{ version, source: TEMPLATE/CUSTOM, template, widgets (each with available, why, retired), home, home_choice, catalogue, scope_label, timezone, offers }`. `offers` lists one-time questions still unanswered, such as `todos` ("Add Today's plan to your workspace?") for people with their own saved layout |
+| POST | `/workspace/offers/:key` | signed in — `{ answer: ADD / NO }`. ADD puts the widget at the top of your saved layout; either answer is remembered and the offer is not shown again |
 | PUT | `/workspace/layout` | signed in — `{ version, widgets, force? }`. A newer saved version answers 409 `LAYOUT_CONFLICT` unless `force` (the person confirmed "Keep mine"). A widget you may not use cannot be added (400 `WIDGET_NOT_AVAILABLE`); one already there stays, shown as not available |
 | POST | `/workspace/layout/reset` | signed in — back to your team's template; nothing else changes |
 | PUT | `/workspace/home` | signed in — `{ home: WORKSPACE / OVERVIEW / null }` (null follows the rollout) |
@@ -1140,7 +1143,7 @@ reminders or preferences. See `docs/MY_WORKSPACE.md`.
 | POST | `/workspace/handover-reassign` | `task.assign` and a part in the deal — `{ opportunity_id, to_user_id, task_ids, meeting_ids }`; only the chosen ones, only on that deal |
 | GET | `/workspace/reminders` | signed in — every rule that can reach you (new and older), your choices, channels (email and push: false), your own reminders, timezone |
 | PUT | `/workspace/reminders/rules/:key` | signed in — `{ enabled, at_time?, chat? }`; off cancels only your pending reminders of that rule |
-| GET / POST | `/workspace/reminders/personal` | signed in — your own "remind me" reminders; POST `{ entity_type, entity_id, remind_at, note? }` on a record you can see (404 "Not available" otherwise) |
+| GET / POST | `/workspace/reminders/personal` | signed in — your own "remind me" reminders; POST `{ entity_type, entity_id, remind_at, note? }` on a record you can see (404 "Not available" otherwise). `entity_type` `TODO` is your own to-do only; ticking or removing it cancels the reminder |
 | PUT | `/workspace/reminders/personal/:id` | yours only (someone else's is 404) — "Change my reminder" |
 | POST | `/workspace/reminders/personal/:id/cancel` | yours only |
 | GET | `/workspace/reminders/log?days=` | signed in — your workspace reminders and what happened to each |
@@ -1154,6 +1157,101 @@ reminders or preferences. See `docs/MY_WORKSPACE.md`.
 `GET /auth/me` and the sign-in response now include `timezone` and
 `workspace_home` (whether My workspace is the person's home). `GET /tasks`
 accepts `assigned_by` (work a person created for someone else).
+
+## Projects
+
+Under `/projects`, behind the Projects switch (off: every route answers 404).
+See `docs/PROJECTS.md`. A project nobody may see answers 404, never 403.
+**Manage** means the project's lead, a manager with `project.create` in the
+project's department, or `project.manage.any`. Every page-changing route
+replies with the whole page, as `GET /projects/:id` does.
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/projects` | signed in — `?mine=true&status=open/PLANNED/ACTIVE/ON_HOLD/COMPLETED/CANCELLED&department_id=&lead_id=&search=`. Replies `{ projects (each with numbers), can_create, labels }`. Numbers count the tasks the caller can see |
+| GET | `/projects/options` | signed in — open projects the caller can see, with their milestones and (with goal linking) key results, for pickers |
+| POST | `/projects` | `project.create` (own department) or `project.manage.any` — `{ name, done_looks_like?, department_id, lead_user_id, status?, visibility?: DEPARTMENT/EVERYONE, start_date?, target_date?, member_ids?, opportunity_id? (a won deal or selected application), color? (#RRGGBB, the notebook stamp; none uses the department's) }` |
+| GET | `/projects/:id` | can see it — `{ project, links (key results, origin deal, delivery record, meetings: each only if the caller may see it), numbers, members, contributors, updates, can_manage, can_add_tasks }` |
+| GET | `/projects/:id/activity` | can see it — a task line names the task only for people who can see the task |
+| PATCH | `/projects/:id` | manage — any field above, plus `engagement_id` (null unlinks). Completing or cancelling with open tasks answers 409 `OPEN_TASKS` with the list, until `open_task_actions: [{ task_id, action: KEEP/MOVE/REMOVE, to_project_id? }]` says what happens to each |
+| GET | `/projects/:id/open-tasks` | can see it — open tasks with their deadline health (for a project on hold) |
+| GET | `/projects/:id/member-check?user_id=` | can see it — `{ ask, … }`: whether giving a task to that person should ask "Add them to the project?" |
+| POST / DELETE | `/projects/:id/members`, `/projects/:id/members/:userId` | manage — `{ user_id }`. The lead cannot be removed |
+| POST / PATCH / DELETE | `/projects/:id/milestones`, `/projects/:id/milestones/:mid` | manage — `{ name, description?, target_date?, position?, reached? }`. "Reached" is set by a person. Deleting a milestone leaves its tasks with none |
+| POST | `/projects/:id/updates` | the lead (or `project.manage.any`) — `{ health: ON_TRACK/AT_RISK/OFF_TRACK, note }` |
+| POST | `/projects/:id/tasks` | can see it, and edit each task — `{ task_ids, milestone_id? }`. Subtasks come with their parent |
+| POST | `/projects/:id/tasks/remove` | can see it, and edit each task — `{ task_ids }`: out of the project (the undo of the two tools below) |
+| GET | `/projects/from-task/:taskId/preview` | can see the task — the project a top-level task and its subtasks would make. Writes nothing |
+| POST | `/projects/from-task/:taskId` | may create in the task's department, and edit the task — `{ name?, lead_user_id? }` |
+| GET | `/projects/from-tag/preview?tag=` | signed in — open tasks the caller can see with the tag, each with `can_move` and `why_not`. Writes nothing |
+| POST | `/projects/from-tag` | `{ tag, task_ids, project_id? or project: { name, department_id?, lead_user_id?, status? } }`. A new project needs the create permission |
+| GET | `/projects/from-deal/:oppId/preview` | CRM, can see the deal — the form filled in for "Start a project" on a won deal or selected application. Writes nothing |
+| GET | `/projects/for-deal/:oppId`, `/projects/for-engagement/:engId` | the projects a deal started, or the one linked to a delivery record, that the caller can see |
+| POST / DELETE | `/projects/:id/key-results`, `/projects/:id/key-results/:krId` | Goals, manage — `{ key_result_id }`: context only, never `TASK_ROLLUP` |
+| GET / POST | `/projects/:id/key-results/:krId/link-tasks` | Goals; POST also `okr.link.task` — the preview shows the key result's progress before and after; POST `{ task_ids }` links exactly those |
+
+`GET /tasks` takes `project_id` and `milestone_id` (each also `none`), and each
+task row carries `project_id`, `project_name` (or `project_hidden` when the
+caller cannot see the project), `milestone_id` and `milestone_name`.
+`POST` and `PATCH /tasks` take `project_id` and `milestone_id`; a subtask
+always follows its parent.
+
+## To-dos
+
+Under `/todos`, behind the To-dos switch (off: every route answers 404; the
+data is kept). See `docs/TODOS.md`. **Every route acts for the signed-in
+person only.** Another person's to-do, list, routine, pin, note or step
+answers 404, whatever the caller's role. The one shared view is
+`/record/:type/:id`, for people who can see that record.
+
+A day is `YYYY-MM-DD` in the person's timezone (else the company's);
+`planned_on` also takes `TODAY` and `TOMORROW`, and `null` means Someday. A
+time is `HH:MM`. Links are `{ type, id }` with type `TASK`, `PROJECT`,
+`KEY_RESULT`, `OBJECTIVE`, `DEAL`, `APPLICATION` or `MEETING`; a record the
+caller cannot see answers 404 "That record is not available".
+
+Every item in a reply has one shape, whether it is a to-do, a step or a pin:
+`{ source: TODO/STEP/PIN, key, id, title, done, done_at, planned_on,
+planned_time, position, link, shared, carried_from, starred, stamp,
+updated_at, … }`. With `what_i_did`, done items also carry `chain` (the
+record's project, tasks, key results, objectives and departments), worked
+out when read.
+
+| Method | Route | Notes |
+|---|---|---|
+| GET | `/todos/today` | Today's plan: `{ day, timezone, carried, items, meetings, left, done_count, carried_count, … }`. `left` is the header's count |
+| GET | `/todos/count` | `{ left, day }`: the same function as `/today` |
+| GET | `/todos/day/:day`, `/todos/week/:day` | a notebook page (`today` accepted). Today adds the day's notes, the lines moved away and the person's switches; another day shows what was planned on it, open or done |
+| GET | `/todos/month/:month` | `YYYY-MM`: per day, how many lines and how many open |
+| GET / PUT | `/todos/notes/:day` | the day's private notes; PUT `{ body }` (up to 10,000 characters) |
+| POST | `/todos/notes/:day/to-todo` | `{ line, client_key? }` — one line of the notes becomes a to-do for that day; the note keeps it |
+| GET | `/todos/upcoming`, `/todos/anytime` | the next 14 days; Someday |
+| GET | `/todos/done?q=&limit=&what_i_did=1` | done lines, newest first; `what_i_did` groups them by project, task, goal, department and record |
+| GET | `/todos/plan-suggestions` | Plan my day: due and overdue tasks, steps planned for other days, this week's milestones, today's meetings. Adds nothing |
+| GET | `/todos/parse?text=` | the task reference in a line, if the caller can see it (a removable chip) |
+| GET | `/todos/link-search?q=&type=` | records the caller can link to |
+| PUT | `/todos/prefs` | `{ hide_done?, handwriting?, haptics? }` |
+| POST | `/todos/order` | `{ keys }`: the caller's items in their new order |
+| POST / DELETE | `/todos/pins`, `/todos/pins/:id` | `{ task_id, day? }` — a task the caller can see, pinned to a day (default today). A pin is not a copy; removing it changes nothing on the task |
+| PATCH | `/todos/steps/:id` | a step the caller owns — `{ planned_on?, planned_time?, done? }` |
+| POST | `/todos/steps/:id/unshare` | the person who added the step, or its owner — back to a private to-do; the task's activity keeps "removed a step" |
+| GET / POST | `/todos/lists` | the caller's lists; POST `{ name, link_type?, link_id? }` |
+| GET / PATCH / DELETE | `/todos/lists/:id` | PATCH `{ name?, link? }`; DELETE archives the list |
+| POST | `/todos/lists/:id/use-again` | a copy with every item unticked |
+| GET / POST | `/todos/routines` | POST `{ title, repeat_kind: WORKING_DAYS/WEEKLY/MONTHLY, weekdays? (1–7, Monday first), month_day? (1–31), planned_time?, note?, link_type?, link_id? }` |
+| PATCH | `/todos/routines/:id` | the same fields; future items only |
+| POST | `/todos/routines/:id/stop` | stops it; the items it made stay |
+| GET | `/todos/record/:type/:id` | can see the record — its shared steps (title, who, when; never the note), and `mine` / `mine_count`: the caller's own private to-dos linked to it |
+| POST | `/todos` | `{ title, planned_on?, planned_time?, note?, list_id?, link_type?, link_id?, shared?, client_key?, read_ref? }`. 201, or 200 with `duplicate: true` when `client_key` was already used. `shared` with a link shares it on that record (on a task it becomes a step). Without a link, a task reference the caller can see links it privately |
+| POST | `/todos/batch` | `{ lines (up to 50), client_key?, … }` — pasted lines, one to-do each, after "Add 6 to-dos?" |
+| PATCH | `/todos/:id` | `{ title?, note?, planned_on?, planned_time?, position?, list_id?, link?, done?, starred?, still_want?, changed_at? }`. Moving to another day is recorded, so the old page shows "→ Mon 16 Nov". A `changed_at` older than the last change keeps the newer words and says `stale` |
+| DELETE | `/todos/:id` | removes it and cancels its reminder |
+| POST | `/todos/:id/became-task` | `{ task_id }`, after "Make it a task" saved the task: the line shows "Became WS-40" |
+| GET | `/todos/:id/share-preview` | who would see it if shared, in words. Writes nothing |
+| POST | `/todos/:id/share`, `/todos/:id/unshare` | onto its linked record, or back to private |
+
+Steps are task checklist items (see "Tasks"). The worker makes each routine's
+item once a day at the start of the person's day, and never backfills.
 
 ## Applications
 

@@ -237,8 +237,19 @@ In a direct message to TaskFlow, people can send:
 | `summary` | Sends today's summary now |
 | `stop` | Pauses instant alerts; the morning summary continues |
 | `start` | Turns instant alerts back on |
+| `todo <words>` or `+ <words>` | Adds a private to-do for today; the reply gives the count left and says "Reply `undo` to take it back" |
+| `todos` | Today's plan, numbered (open lines only) |
+| `done 2` | Ticks line 2 of that same list, and names it. A pinned task is not ticked from Chat: tasks are completed in TaskFlow, with their outcome |
+| `undo` | Reverts the last to-do change made from Chat (one step) |
+| `help` (or anything else) | Lists these commands |
 
 Each person can also switch either kind off under **My account**.
+
+A message Google delivers twice acts once: an added to-do uses the message's
+own name as its key, and a tick or undo remembers the message it came from.
+When To-dos are switched off, the to-do commands answer "To-dos are switched
+off in TaskFlow." The morning summary adds one line, "Today's plan: 4 to-dos (1
+carried over)", only to people who already receive it. See `docs/TODOS.md`.
 
 ## Reliability and security
 
