@@ -512,7 +512,7 @@ export const DEFAULT_SETTINGS = {
     // off until an admin has sent a test message and switched it on
     enabled: false,
     // India time, on working days
-    morningSummaryTime: '08:45',
+    morningSummaryTime: '09:00',
     teamSummaryTime: '09:15',
     // which TaskFlow notifications are also sent as a Chat message
     alertTypes: [

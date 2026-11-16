@@ -340,7 +340,7 @@ export async function queueSummaries(now = new Date()) {
   const workingDays = settings.organisation?.workingDays || [1, 2, 3, 4, 5, 6];
   if (!workingDays.includes(weekdayOf(today))) return { queued: 0 };
   const local = hhmm(now, tz);
-  const personalAt = chat.morningSummaryTime || '08:45';
+  const personalAt = chat.morningSummaryTime || '09:00';
   const teamAt = chat.teamSummaryTime || '09:15';
   let queued = 0;
 
@@ -461,7 +461,7 @@ export async function queueBacklogReviews(now = new Date()) {
   const c = await deadlineClock(now, settings);
   const workingDays = settings.organisation?.workingDays || [1, 2, 3, 4, 5, 6];
   if (!firstWorkingDayOfWeek(c.today, workingDays)) return { queued: 0 };
-  const at = settings.googleChat?.morningSummaryTime || '08:45';
+  const at = settings.googleChat?.morningSummaryTime || '09:00';
   const local = hhmm(now, c.timezone);
   if (local < at || local >= s.catchUpUntil || s.mode === 'OFF') return { queued: 0 };
   const { rows: due } = await query(

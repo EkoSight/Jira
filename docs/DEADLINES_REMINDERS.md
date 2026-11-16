@@ -243,24 +243,25 @@ tomorrow before switching to Live.
 
 ## Decisions for you
 
-1. **Backlog.** Without an approved deferral, Backlog work with a deadline
-   still counts for marks; otherwise moving a card to Backlog would avoid
-   them. Confirm?
-2. **A second miss after an approved new deadline** is not marked again (one
-   missed mark per task, as before). Confirm?
+Answered by the owner on 16 November 2026:
+
+1. **Backlog.** Confirmed: without an approved deferral, Backlog work with a
+   deadline still counts for marks.
+2. **A second miss after an approved new deadline** is not marked again.
+   Confirmed.
 3. **Escalation stops when a task changes hands**, and the new owner is not
-   marked for an inherited miss. Confirm?
-4. **Personal summaries.** Anyone with open work gets one every working day,
-   even if it only says "nothing due soon; N later", so every task is
-   mentioned. People not on Chat get it in the bell. Keep, or summarise only
-   when something needs attention?
-5. **Switching to Live.** After looking at Settings → Reminders in test mode,
-   switch to Live; that also stops the old notice. D9: say if the morning
-   summary should move from 08:45 to 09:00.
-6. **Backfill approval.** The person who previewed can also approve. Do you
-   want a second person?
-7. **Department summary spaces.** Set one per department in Google Chat, or
-   the coverage check keeps listing those departments.
+   marked for an inherited miss. Confirmed.
+4. **Personal summaries.** Kept: anyone with open work gets one every working
+   day, even if it only says "nothing due soon; N later".
+5. **Switching to Live.** Yes, after checking Settings → Reminders in test
+   mode; an administrator does this on the live site. The morning summary now
+   defaults to **09:00** (was 08:45). A site that already saved its Google Chat
+   settings keeps the time it saved, so set 09:00 in Settings → Google Chat →
+   Morning summary.
+6. **Backfill approval.** No second person: whoever previewed can approve.
+7. **Department summary spaces.** Yes: set one per department in Google Chat
+   (Settings → Google Chat), or the coverage check keeps listing those
+   departments.
 
 ## Concerns, not changed
 
@@ -287,7 +288,7 @@ tomorrow before switching to Live.
 | D6 | Quiet hours 20:00–08:30 India time; working days only |
 | D7 | Supporters get a section in summaries; never marks |
 | D8 | Not on Chat: bell, and listed to the manager and the department |
-| D9 | Personal summary 08:45, department summary 09:15 (unchanged) |
+| D9 | Personal summary 09:00 (owner, 16 Nov 2026; was 08:45), department summary 09:15 |
 | Due soon | 3 working days (`workload.dueSoonDays`) |
 | Late morning summary | Still sent until 18:00 |
 | Coverage check | Stored daily at 11:00 |

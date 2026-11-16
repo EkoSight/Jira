@@ -28,7 +28,7 @@ const TIME = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
 
 router.get('/settings', manage, asyncHandler(async (req, res) => {
   const settings = await getSettings();
-  res.json({ reminders: await reminderSettings(settings), summaryTimes: { personal: settings.googleChat?.morningSummaryTime || '08:45', department: settings.googleChat?.teamSummaryTime || '09:15' } });
+  res.json({ reminders: await reminderSettings(settings), summaryTimes: { personal: settings.googleChat?.morningSummaryTime || '09:00', department: settings.googleChat?.teamSummaryTime || '09:15' } });
 }));
 
 router.put('/settings', manage, asyncHandler(async (req, res) => {

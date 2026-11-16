@@ -249,7 +249,7 @@ test('9: work due while the owner is on leave goes to their fallback person', as
   assert.ok(!cover[0].body.includes('Family function'), 'never why they are away');
 
   // the summaries that day: Isha's is skipped (away), Raj's covers for her
-  const summaries = await queueSummaries(IST(day, '08:50'));
+  const summaries = await queueSummaries(IST(day, '09:05'));
   assert.ok(summaries.queued >= 1);
   const log = (await query(`SELECT * FROM reminder_summary_log WHERE summary_date = $1 AND kind = 'PERSONAL'`, [day])).rows;
   const isha = log.find((l) => l.user_id === ids.isha);
@@ -272,7 +272,7 @@ test('9: a company holiday: no summaries and no reminders', async (t) => {
   const r = (await reminders(id)).find((x) => x.kind === 'BEFORE_DUE' && x.channel === 'APP');
   assert.equal(r.status, 'SKIPPED');
   assert.match(r.reason, /^Away: a holiday \(Founders Day\)/);
-  await queueSummaries(IST(day, '08:50'));
+  await queueSummaries(IST(day, '09:05'));
   const log = (await query(`SELECT * FROM reminder_summary_log WHERE summary_date = $1 AND kind = 'PERSONAL' AND user_id = $2`, [day, ids.raj])).rows[0];
   assert.equal(log.status, 'SKIPPED');
   assert.match(log.reason, /^Away: a holiday \(Founders Day\)/);
@@ -286,13 +286,13 @@ test('8 and 11: the summary covers supporting, upcoming, blocked and review-due 
   await mkTask({ title: 'Isha due today', owner: ids.isha, due: IST(day, '17:00') });
   await mkTask({ title: 'Isha blocked lab test', owner: ids.isha, due: IST(addDays(day, 5), '12:00'), stage: 'blocked' });
   await mkTask({ title: 'Isha old idea', owner: ids.isha, due: null, stage: 'backlog', review: addDays(day, -1) });
-  const summary = await personalSummary(ids.isha, { now: IST(day, '08:50') });
+  const summary = await personalSummary(ids.isha, { now: IST(day, '09:05') });
   for (const heading of ['*Due today', '*Upcoming, next 3 working days', '*Blocked', '*Review due', '*Supporting (the owner carries the deadline)']) {
     assert.ok(summary.text.includes(heading), `${heading} in the summary`);
   }
   assert.match(summary.text, /Ravi field report/);
 
-  await queueSummaries(IST(day, '08:50'));
+  await queueSummaries(IST(day, '09:05'));
   const log = new Map((await query(`SELECT * FROM reminder_summary_log WHERE summary_date = $1 AND kind = 'PERSONAL'`, [day])).rows.map((l) => [l.user_id, l]));
   assert.equal(log.get(ids.isha).status, 'QUEUED');
   assert.equal(log.get(ids.ravi).status, 'APP_ONLY', 'not connected: the bell carries it');
@@ -312,13 +312,13 @@ test('10: a missed morning is sent later, marked late; a day the server never ma
   await queueSummaries(IST(day, '15:00'));
   const raj = (await query(`SELECT * FROM reminder_summary_log WHERE log_key = $1`, [`personal:${ids.raj}:${day}`])).rows[0];
   assert.equal(raj.late, true);
-  assert.match((await query('SELECT payload FROM chat_outbox WHERE dedupe_key = $1', [raj.outbox_key])).rows[0].payload.text, /Sent late: TaskFlow could not send it at 08:45/);
+  assert.match((await query('SELECT payload FROM chat_outbox WHERE dedupe_key = $1', [raj.outbox_key])).rows[0].payload.text, /Sent late: TaskFlow could not send it at 09:00/);
 
   const missedDay = addDays(D, 29);
   await queueSummaries(IST(missedDay, '19:00'));
   const missed = (await query(`SELECT * FROM reminder_summary_log WHERE log_key = $1`, [`personal:${ids.raj}:${missedDay}`])).rows[0];
   assert.equal(missed.status, 'SKIPPED');
-  assert.equal(missed.reason, 'Missed: TaskFlow could not send it between 08:45 and 18:00');
+  assert.equal(missed.reason, 'Missed: TaskFlow could not send it between 09:00 and 18:00');
 });
 
 test('test mode: only the administrator who switched it on receives anything; the rest is "would send"', async (t) => {
@@ -395,7 +395,7 @@ test('13 and the coverage check: nothing unseen is missed, and every exception h
   // Kiran (Field) is not connected and has nobody to fall back on; Field has an unowned task and no summary space
   await mkTask({ title: 'Kiran site survey', owner: ids.kiran, dept: ids.fld, due: IST(day, '17:00') });
   await mkTask({ title: 'Unowned field job', owner: null, dept: ids.fld, due: IST(day, '17:00') });
-  await queueSummaries(IST(day, '08:50'));
+  await queueSummaries(IST(day, '09:05'));
   await deliverOutbox({ limit: 500 });
   const report = await coverageReport({ now: IST(day, '11:00'), store: true });
   const unseen = new Map(report.unseen_tasks.map((u) => [u.title, u]));

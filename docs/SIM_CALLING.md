@@ -357,8 +357,10 @@ default), and when the default phone app changes.
 ## Decisions for the owner
 
 - **The number leads see** on the privacy notice and the **email for questions
-  and complaints**: typed into Settings from the owner's sheet.
-- **The company name leads hear** (Settings → Words).
+  and complaints**: chosen by the owner (16 Nov 2026). An administrator types
+  them into Settings from the owner's sheet; they are not kept in this
+  repository.
+- **The company name leads hear** (Settings → Words): chosen by the owner.
 - **The Android application id** (`com.ekosight.taskflow` unless changed before
   the first install) and who holds the signing key.
 - Two points interpreted while building:
