@@ -23,6 +23,7 @@ import { getSettings } from '../settings.js';
 import { addDays, localDate } from '../../../../shared/deadlineHealth.js';
 import { taskVisibilitySql } from '../taskAccess.js';
 import { logActivity } from '../activity.js';
+import { planRecord } from '../workspace/reminders.js';
 import { projectActivity } from '../projects/index.js';
 import {
   LINK_TYPES, LINK_WORD, assertLinkable, chainFor, describeLink, describeLinks, meetingsOn,
@@ -38,6 +39,14 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const dayOf = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : null);
 const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 const keyOf = (type, id) => `${type}:${Number(id)}`;
+
+/** Ticking or removing a to-do cancels its own "remind me", and the planned message with it. */
+async function cancelReminders(client, todo) {
+  const { rowCount } = await client.query(
+    `UPDATE personal_reminders SET status = 'CANCELLED', updated_at = now()
+      WHERE entity_type = 'TODO' AND entity_id = $1 AND user_id = $2 AND status = 'ACTIVE'`, [todo.id, todo.owner_user_id]);
+  if (rowCount) await planRecord(client, 'TODO', todo.id);
+}
 
 // ---------------------------------------------------------------- the person's day
 
@@ -79,7 +88,7 @@ function checkTitle(title) {
 
 // ---------------------------------------------------------------- item shapes
 
-const publicLink = (l) => (l ? { type: l.type, id: l.id, label: l.label, url: l.url, word: l.word, visible: l.visible } : null);
+const publicLink = (l) => (l ? { type: l.type, id: l.id, label: l.label, url: l.url, word: l.word, visible: l.visible, ...(l.ref ? { ref: l.ref } : {}) } : null);
 
 function todoItem(r, { today, links, suggestions }) {
   const own = r.link_type ? links.get(keyOf(r.link_type, r.link_id)) : null;
@@ -506,6 +515,7 @@ export async function updateTodo(user, id, input) {
     }
     if (input.done !== undefined && Boolean(input.done) !== Boolean(row.done_at)) {
       set('done_at', input.done ? new Date() : null);
+      if (input.done) await cancelReminders(client, row);
       if (row.shared && row.link_type) await recordActivity(client, user, row.link_type, row.link_id, input.done ? 'step_done' : 'step_reopened', row);
     }
     if (!sets.length) return row;
@@ -527,6 +537,7 @@ export async function removeTodo(user, id) {
     const row = await ownTodo(user, id, client);
     if (row.shared && row.link_type && !row.moved_to_checklist_item_id) await recordActivity(client, user, row.link_type, row.link_id, 'step_removed', row);
     await client.query('UPDATE todos SET archived_at = now(), updated_at = now() WHERE id = $1', [row.id]);
+    await cancelReminders(client, row);
     return { ok: true };
   });
 }

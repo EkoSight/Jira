@@ -9,8 +9,9 @@ import { Spinner } from '../components/ui.jsx';
 import TodayPlan from '../components/todos/TodayPlan.jsx';
 import AddTodo from '../components/todos/AddTodo.jsx';
 import TodoRow from '../components/todos/TodoRow.jsx';
-import { LinkPicker } from '../components/todos/Pickers.jsx';
+import { LinkPicker, RoutineDialog } from '../components/todos/Pickers.jsx';
 import { useTodoActions } from '../components/todos/useTodoActions.jsx';
+import { api } from '../api/client.js';
 import { WHAT_I_DID, announceTodosChanged, dayLabel, relativeDay, todoApi } from '../lib/todos.js';
 
 const VIEWS = [
@@ -128,6 +129,7 @@ function Lists() {
   };
   if (open) return <ListDetail id={open} onBack={() => { setOpen(null); load(); }} onOpen={setOpen} />;
   return (
+    <div className="stack">
     <div className="card card-pad stack">
       <h2 className="td-plan-title">Lists</h2>
       <p className="small muted">
@@ -153,6 +155,54 @@ function Lists() {
           ))}
         </ul>
       </ViewState>
+    </div>
+    <Routines />
+    </div>
+  );
+}
+
+/** Repeating to-dos: made on the person's own working days, never backfilled. */
+function Routines() {
+  const loader = useCallback(() => api.get('/todos/routines'), []);
+  const { data, error, load } = useView(loader);
+  const [editing, setEditing] = useState(null);
+  const stop = async (r) => { await api.post(`/todos/routines/${r.id}/stop`); await load(); };
+  return (
+    <div className="card card-pad stack">
+      <div className="row-between wrap">
+        <h2 className="td-plan-title">Repeating to-dos</h2>
+        <button type="button" className="btn btn-sm" onClick={() => setEditing({})}>New routine</button>
+      </div>
+      <p className="small muted">One item on each of your working days that matches; nothing on your weekly off, holidays or leave, and missed days are not filled in. A routine others must tick, or a manager must see, is a recurring task with steps.</p>
+      <ViewState error={error} data={data}>
+        {data?.routines.length === 0 && <p className="small muted">No routines yet.</p>}
+        <ul className="td-list">
+          {data?.routines.map((r) => (
+            <li key={r.id} className={`td-row${r.stopped ? ' is-done' : ''}`}>
+              <div className="td-row-main">
+                <div className="td-row-text">
+                  <span className="td-title"><span className="td-words">{r.title}</span></span>
+                  <div className="td-meta small">
+                    <span>{r.words}{r.planned_time ? `, ${r.planned_time}` : ''}</span>
+                    <span>{r.made} made</span>
+                    {r.stopped && <span>Stopped; its items are kept</span>}
+                  </div>
+                </div>
+                {!r.stopped && (
+                  <span className="row" style={{ gap: 6 }}>
+                    <button type="button" className="btn btn-sm" onClick={() => setEditing({ routine: r })}>Change</button>
+                    <button type="button" className="btn btn-sm btn-ghost" onClick={() => stop(r)}>Stop</button>
+                  </span>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      </ViewState>
+      {editing && (
+        <RoutineDialog routine={editing.routine || null} onClose={() => setEditing(null)}
+          onSaved={async () => { setEditing(null); await load(); announceTodosChanged(); }} />
+      )}
     </div>
   );
 }

@@ -37,6 +37,11 @@ export const WIDGET_TYPES = {
     settings: ['title', 'density', 'rows'], scopes: ['mine'], endpoint: '/workspace/decisions', drill: '/workspace/decisions',
     description: 'Approvals waiting on you: deadline changes, blocks, leave, extra time, holidays, quotations, handovers, appeals, standup reviews',
   },
+  todos: {
+    version: 1, title: 'Today’s plan', module: 'todos', anyOf: [], widths: ['full', 'half'], added: '2026-11-16',
+    settings: ['title', 'density', 'rows'], scopes: ['mine'], endpoint: '/todos/today', drill: '/todos',
+    description: 'Your to-dos and steps for today, with the add box. Private to you',
+  },
   today: {
     version: 1, title: 'Today', module: null, anyOf: [], needs: 'tracksDay', widths: ['full', 'half'],
     settings: ['title'], scopes: ['mine'], endpoint: '/attendance/today', drill: '/attendance',

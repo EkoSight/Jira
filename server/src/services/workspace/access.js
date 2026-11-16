@@ -11,7 +11,7 @@ import { canSee, crmScope } from '../sales/core.js';
 import { canSeeTask } from '../taskAccess.js';
 import { canSeeProject } from '../projects/index.js';
 
-export const ENTITY_TYPES = ['TASK', 'LEAD', 'DEAL', 'APPLICATION', 'MEETING', 'ACCOUNT', 'KEY_RESULT', 'OBJECTIVE', 'PROJECT'];
+export const ENTITY_TYPES = ['TASK', 'LEAD', 'DEAL', 'APPLICATION', 'MEETING', 'ACCOUNT', 'KEY_RESULT', 'OBJECTIVE', 'PROJECT', 'TODO'];
 
 /** A task: the one rule (services/taskAccess.js), and it must exist. */
 const taskVisible = (user, id) => canSeeTask(user, id);
@@ -64,6 +64,12 @@ export async function canSeeRecord(user, type, id, settings = null) {
       return rows.length > 0;
     }
     case 'PROJECT': return s.projects?.enabled !== false && canSeeProject(user, n);
+    case 'TODO': {
+      // a to-do is its owner's alone, whoever else asks
+      if (s.todos?.enabled === false) return false;
+      const { rows } = await query('SELECT 1 FROM todos WHERE id = $1 AND owner_user_id = $2 AND archived_at IS NULL', [n, user.id]);
+      return rows.length > 0;
+    }
     default: return false;
   }
 }
@@ -81,6 +87,7 @@ export async function recordLabel(type, id) {
     case 'KEY_RESULT': { const r = await one('SELECT title, objective_id FROM key_results WHERE id = $1'); return r && { label: r.title, url: `/goals/${r.objective_id}` }; }
     case 'OBJECTIVE': { const r = await one('SELECT title FROM objectives WHERE id = $1'); return r && { label: r.title, url: `/goals/${id}` }; }
     case 'PROJECT': { const r = await one('SELECT name FROM projects WHERE id = $1'); return r && { label: r.name, url: `/projects/${id}` }; }
+    case 'TODO': { const r = await one('SELECT title FROM todos WHERE id = $1'); return r && { label: r.title, url: '/todos' }; }
     default: return null;
   }
 }

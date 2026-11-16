@@ -12,6 +12,7 @@ import { queueBacklogReviews } from '../services/taskSummaries.js';
 import { coverageReport } from '../services/coverage.js';
 import { deadlineClock } from '../services/deadlines.js';
 import { planSweep, sendDueOccurrences } from '../services/workspace/reminders.js';
+import { makeRoutineTodos } from '../services/todos/routines.js';
 // the planners register themselves with the workspace reminder engine
 import '../services/workspace/personal.js';
 import '../services/workspace/rules.js';
@@ -38,6 +39,8 @@ export async function runReminderTick({ now = new Date(), force = false } = {}) 
     await step('planned', () => replanSweep({ now }), out);
     await step('workspacePlanned', () => planSweep({ now }), out);
   }
+  // repeating to-dos: today's item, once, on the person's working days
+  await step('routines', () => makeRoutineTodos({ now }), out);
   await step('sent', () => sendDueTaskReminders(now), out);
   await step('workspaceSent', () => sendDueOccurrences(now), out);
   await step('fallbacks', () => followUpFailedChats(now), out);

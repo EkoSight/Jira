@@ -100,6 +100,42 @@ export function doneWords(item, today) {
   return `done ${dayLabel(new Date(item.done_at).toISOString().slice(0, 10), today)}`;
 }
 
+/**
+ * "Use today's plan" on the standup form: one line per open to-do or step
+ * linked to a task: the reference, the to-do as the action, the target left
+ * for the person to write, "by" the planned time. Nothing is posted here.
+ */
+export function standupLinesFromPlan(plan, max = 5) {
+  if (!plan) return [];
+  const lines = [];
+  for (const item of [...(plan.carried || []), ...(plan.items || [])]) {
+    if (item.done) continue;
+    const ref = item.source === 'STEP' ? item.task?.ref : item.link?.type === 'TASK' && item.link.visible ? item.link.ref : null;
+    if (!ref || item.source === 'PIN') continue;
+    lines.push({ task: ref, action: item.title, target: '', done_by: item.planned_time || '' });
+    if (lines.length >= max) break;
+  }
+  return lines;
+}
+
+/** The header drawer's shortcut: Alt+N (Option+N on a Mac). */
+export const TODO_SHORTCUT = 'Alt+N';
+
+/** Whether a key press happened while the person was typing somewhere: shortcuts never fire there. */
+export function typingIn(target) {
+  if (!target || typeof target !== 'object') return false;
+  const tag = String(target.tagName || '').toUpperCase();
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true;
+  if (tag === 'INPUT') {
+    const type = String(target.type || 'text').toLowerCase();
+    return !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'color', 'file'].includes(type);
+  }
+  return Boolean(target.isContentEditable);
+}
+
+/** Alt+N by physical key (Option+N types a dead key on a Mac, so the key code is read). */
+export const isTodoShortcut = (e) => Boolean(e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyN');
+
 /** The to-do API, in one place. */
 export const todoApi = {
   today: () => api.get('/todos/today'),

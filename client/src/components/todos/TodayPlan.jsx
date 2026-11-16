@@ -44,7 +44,7 @@ export function useTodayPlan() {
   return { plan, error, load, patchLocal, setPlan };
 }
 
-export default function TodayPlan({ compact = false, showAdd = true, autoFocusAdd = false, addRef = null, limit = null }) {
+export default function TodayPlan({ compact = false, showAdd = true, autoFocusAdd = false, addRef = null, limit = null, showTitle = true }) {
   const { plan, error, load, patchLocal, setPlan } = useTodayPlan();
   const [grouped, setGrouped] = useState(readGroup);
   const [planning, setPlanning] = useState(false);
@@ -99,7 +99,7 @@ export default function TodayPlan({ compact = false, showAdd = true, autoFocusAd
     <div className={`td-plan${compact ? ' is-compact' : ''}`}>
       <div className="td-plan-head">
         <div>
-          <h2 className="td-plan-title">Today’s plan</h2>
+          {showTitle && <h2 className="td-plan-title">Today’s plan</h2>}
           <div className="small muted">{dayLabel(plan.today, plan.today)} · <span className="td-left">{leftWords(plan.left)}</span>{plan.done_count ? ` · ${plan.done_count} done` : ''}</div>
         </div>
         <div className="td-plan-tools">

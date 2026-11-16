@@ -84,7 +84,8 @@ test('the template that applies: department first, then role, then everyone', as
   const asha = ok(await call('GET', '/workspace', { token: tokens.asha }));
   assert.equal(asha.source, 'TEMPLATE');
   assert.equal(asha.template.key, 'everyone', 'no department has a template yet');
-  assert.deepEqual(asha.widgets.map((w) => w.type), ['today', 'attention', 'my_tasks', 'deadlines']);
+  // 040_todos_everywhere.sql puts Today's plan at the top of every template
+  assert.deepEqual(asha.widgets.map((w) => w.type), ['todos', 'today', 'attention', 'my_tasks', 'deadlines']);
   assert.equal(ok(await call('GET', '/workspace', { token: tokens.chen })).template.key, 'managers', 'by role');
   assert.equal(ok(await call('GET', '/workspace', { token: tokens.eli })).template.key, 'leadership');
   // an administrator gives Programmes the partnerships template: it wins over the role
@@ -94,8 +95,8 @@ test('the template that applies: department first, then role, then everyone', as
   const again = ok(await call('GET', '/workspace', { token: tokens.asha }));
   assert.equal(again.template.key, 'partnerships');
   assert.equal(again.template.matched, 'department');
-  // 038_projects.sql adds "My projects" at the end of this template (PD6)
-  assert.deepEqual(again.widgets.map((w) => w.type), ['summary', 'attention', 'meetings', 'applications', 'deals', 'my_tasks', 'waiting', 'projects']);
+  // 038_projects.sql adds "My projects" at the end of this template (PD6); 040 puts Today's plan first
+  assert.deepEqual(again.widgets.map((w) => w.type), ['todos', 'summary', 'attention', 'meetings', 'applications', 'deals', 'my_tasks', 'waiting', 'projects']);
   assert.equal((await query('SELECT count(*)::int AS n FROM user_dashboards')).rows[0].n, 0, 'nothing is copied until someone saves');
 });
 
@@ -186,13 +187,14 @@ test('7: a template change reaches people who never customised, not those who di
   const { templates } = ok(await call('GET', '/workspace/templates', { token: tokens.admin }));
   const p = templates.find((x) => x.key === 'partnerships');
   const changed = { ...p.layout, widgets: [p.layout.widgets[1], p.layout.widgets[0]] };
+  const swapped = changed.widgets.map((w) => w.type);
   ok(await call('PUT', '/workspace/templates/partnerships', { token: tokens.admin, body: { name: p.name, layout: changed, applies_departments: [ids.prg] } }));
-  assert.deepEqual(ok(await call('GET', '/workspace', { token: tokens.asha })).widgets.map((w) => w.type), ['attention', 'summary']);
+  assert.deepEqual(ok(await call('GET', '/workspace', { token: tokens.asha })).widgets.map((w) => w.type), swapped);
   const bela = ok(await call('GET', '/workspace', { token: tokens.bela }));
   assert.equal(bela.source, 'CUSTOM');
-  assert.notDeepEqual(bela.widgets.map((w) => w.type), ['attention', 'summary']);
+  assert.notDeepEqual(bela.widgets.map((w) => w.type), swapped);
   ok(await call('POST', '/workspace/layout/reset', { token: tokens.bela }));
-  assert.deepEqual(ok(await call('GET', '/workspace', { token: tokens.bela })).widgets.map((w) => w.type), ['attention', 'summary']);
+  assert.deepEqual(ok(await call('GET', '/workspace', { token: tokens.bela })).widgets.map((w) => w.type), swapped);
   // a template copies presentation only: no record data, no reminders
   const stored = (await query(`SELECT layout FROM dashboard_templates WHERE key = 'partnerships'`)).rows[0].layout;
   assert.deepEqual(Object.keys(stored), ['widgets']);

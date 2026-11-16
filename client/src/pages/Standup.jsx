@@ -6,6 +6,7 @@ import { Badge, EmptyState, Field, Icon, Modal } from '../components/ui.jsx';
 import { LoadState } from '../components/LoadState.jsx';
 import { useLoad } from '../lib/useLoad.js';
 import { todayIn } from '../lib/attendance.js';
+import { standupLinesFromPlan, todoApi } from '../lib/todos.js';
 
 /**
  * The daily standup: a plan for the day, posted by 09:40.
@@ -62,6 +63,7 @@ const QUALITY = {
 
 function MyStandup() {
   const toast = useToast();
+  const { settings } = useRefData();
   const loaded = useLoad(() => api.standupMe(), []);
   const { data } = loaded;
   const [memberId, setMemberId] = useState('');
@@ -107,6 +109,16 @@ function MyStandup() {
   if (!members.length) return <EmptyState title="You are not on the standup list yet">Ask an admin to add you under Daily standup → People.</EmptyState>;
 
   const setItem = (i, key, value) => setItems((list) => list.map((item, n) => (n === i ? { ...item, [key]: value } : item)));
+  // fills the form from my to-dos and steps linked to tasks; nothing is posted until Submit
+  const usePlan = async () => {
+    try {
+      const lines = standupLinesFromPlan(await todoApi.today(), data?.max_items || 5);
+      if (!lines.length) { toast.info('No open to-dos or steps linked to a task today'); return; }
+      const kept = items.filter((i) => i.task || i.action || i.target || i.done_by);
+      setItems([...kept, ...lines].slice(0, Math.max(data?.max_items || 5, kept.length)));
+      toast.success(`Filled ${lines.length} line${lines.length === 1 ? '' : 's'}. Write what will exist when each is done, then submit.`);
+    } catch (e) { toast.error(e); }
+  };
   const setBlocker = (i, key, value) => setBlockers((list) => list.map((b, n) => (n === i ? { ...b, [key]: value } : b)));
   const save = async () => {
     setSaving(true);
@@ -172,7 +184,12 @@ function MyStandup() {
             {tasks.map((t) => <option key={t.id} value={t.ref}>{t.title}</option>)}
           </datalist>
           <div className="stack-sm">
-            <div className="row-between"><h3>Today’s plan</h3><span className="small muted">{data.min_items}–{data.max_items} items</span></div>
+            <div className="row-between wrap"><h3>Today’s plan</h3>
+              <span className="row" style={{ gap: 8 }}>
+                {settings?.todos?.enabled !== false && <button type="button" className="btn btn-sm" onClick={usePlan}>Use today’s plan</button>}
+                <span className="small muted">{data.min_items}–{data.max_items} items</span>
+              </span>
+            </div>
             {items.map((item, i) => (
               <div key={i} className="standup-item">
                 <span className="standup-num tnum">{i + 1}</span>

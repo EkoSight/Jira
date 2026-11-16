@@ -32,6 +32,7 @@ import { addDays, healthLabel, healthOf, weekdayOf } from '../../../shared/deadl
 import { awayAt, chatRoute, hhmm, offWords, reminderSettings, taskUrl } from './taskReminders.js';
 import { fallbackPeople, managedDepartmentIds, waitingForDecision } from './taskPeople.js';
 
+import { planSummaryLine } from './todos/chat.js';
 const app = (path = '/') => `${config.publicUrl}${path}`;
 const MAX = 6;
 
@@ -202,6 +203,9 @@ export async function personalSummary(userId, { now = new Date(), c = null, cove
   if (lines.length === 1 || (ownedAll.length === 0 && !supporting.length && !covering.length && !unowned.length && !decisionParts.length && !checkIn)) {
     lines.push('\nNothing due today, nothing overdue, and nothing waiting for you.');
   }
+  // to-dos are the person's own: one line with the count, never the words
+  const planLine = await planSummaryLine(userId, now).catch(() => null);
+  if (planLine) lines.push(`\n${planLine}: ${app('/todos')}`);
   lines.push(`\nYour day in TaskFlow: ${app('/my-tasks')}`);
   return {
     text: lines.join('\n'),

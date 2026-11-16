@@ -52,3 +52,37 @@ test('group by project: each line once, "No project" last', () => {
   assert.deepEqual(groups.map((g) => g.label), ['Sample Partner Day', 'Sample Seed Grant 2027', 'No project']);
   assert.equal(groups.flatMap((g) => g.items).length, items.length);
 });
+
+test('36: "Use today\'s plan" fills standup lines from to-dos and steps on tasks only, the target left to write', async () => {
+  const { standupLinesFromPlan } = await import('../src/lib/todos.js');
+  const plan = {
+    carried: [{ source: 'STEP', done: false, title: 'Sample send the annex', planned_time: null, task: { ref: 'WS-12' } }],
+    items: [
+      { source: 'TODO', done: false, title: 'Sample call the venue', planned_time: '15:00', link: { type: 'TASK', visible: true, ref: 'WS-14' } },
+      { source: 'TODO', done: false, title: 'Sample private thought', link: null },
+      { source: 'TODO', done: true, title: 'Sample done already', link: { type: 'TASK', visible: true, ref: 'WS-15' } },
+      { source: 'TODO', done: false, title: 'Sample project line', link: { type: 'PROJECT', visible: true } },
+      { source: 'PIN', done: false, title: 'Sample pinned', task: { ref: 'WS-16' } },
+    ],
+  };
+  assert.deepEqual(standupLinesFromPlan(plan), [
+    { task: 'WS-12', action: 'Sample send the annex', target: '', done_by: '' },
+    { task: 'WS-14', action: 'Sample call the venue', target: '', done_by: '15:00' },
+  ]);
+  assert.equal(standupLinesFromPlan(plan, 1).length, 1, 'never more than the form allows');
+});
+
+test('34: the header shortcut is Alt+N and never fires while typing in a field', async () => {
+  const { isTodoShortcut, typingIn } = await import('../src/lib/todos.js');
+  assert.equal(isTodoShortcut({ altKey: true, code: 'KeyN' }), true);
+  assert.equal(isTodoShortcut({ altKey: true, ctrlKey: true, code: 'KeyN' }), false);
+  assert.equal(isTodoShortcut({ altKey: false, code: 'KeyN' }), false);
+  assert.equal(isTodoShortcut({ altKey: true, shiftKey: true, code: 'KeyN' }), false);
+  assert.equal(typingIn({ tagName: 'INPUT', type: 'text' }), true);
+  assert.equal(typingIn({ tagName: 'INPUT', type: 'search' }), true);
+  assert.equal(typingIn({ tagName: 'TEXTAREA' }), true);
+  assert.equal(typingIn({ tagName: 'DIV', isContentEditable: true }), true);
+  assert.equal(typingIn({ tagName: 'INPUT', type: 'checkbox' }), false);
+  assert.equal(typingIn({ tagName: 'BUTTON' }), false);
+  assert.equal(typingIn(null), false);
+});

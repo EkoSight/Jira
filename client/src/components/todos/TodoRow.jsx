@@ -102,6 +102,8 @@ export default function TodoRow({ item, today, actions, canMoveUp = false, canMo
               {item.source === 'TODO' && !item.shared && <li><button type="button" onClick={run(() => actions.link(item))}>{item.link ? 'Change the link…' : 'Link…'}</button></li>}
               {item.source === 'TODO' && item.link?.visible && !item.shared && <li><button type="button" onClick={run(() => actions.share(item))}>Add to its progress…</button></li>}
               {item.source === 'TODO' && item.shared && <li><button type="button" onClick={run(() => actions.unshare(item))}>Make it private again</button></li>}
+              {item.source === 'TODO' && !item.done && actions.remind && <li><button type="button" onClick={run(() => actions.remind(item))}>Remind me…</button></li>}
+              {item.source === 'TODO' && actions.repeat && <li><button type="button" onClick={run(() => actions.repeat(item))}>Repeat…</button></li>}
               {item.source === 'TODO' && !item.became && <li><button type="button" onClick={run(() => actions.makeTask(item))}>Make it a task…</button></li>}
               {isStep && <li><button type="button" onClick={run(() => actions.unshareStep(item))}>Take back as a private to-do</button></li>}
               {(isStep || isPin) && <li><Link to={`/?task=${item.task.id}`} onClick={() => setOpen(false)}>Open {item.task.ref}</Link></li>}

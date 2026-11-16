@@ -13,7 +13,7 @@ import { requirePermission } from '../middleware/auth.js';
 import { hasPermission } from '../lib/permissions.js';
 import { getSettings, updateSetting } from '../services/settings.js';
 import {
-  ROLLOUT_MODES, REMINDER_MODES, listTemplates, resetLayout, saveLayout, saveTemplate, setHome,
+  ROLLOUT_MODES, REMINDER_MODES, answerOffer, listTemplates, resetLayout, saveLayout, saveTemplate, setHome,
   templateFor, templateUsage, whoIs, workspaceFor, workspaceSettings, catalogueFor,
 } from '../services/workspace/layout.js';
 import { query } from '../db/pool.js';
@@ -58,6 +58,12 @@ router.put('/layout', asyncHandler(async (req, res) => {
     force: z.boolean().optional(),
   }).parse(req.body || {});
   res.json(await saveLayout(req.currentUser, body));
+}));
+
+/** "Add Today's plan to your workspace?": Add, or No thanks. Asked once. */
+router.post('/offers/:key', asyncHandler(async (req, res) => {
+  const { answer } = z.object({ answer: z.enum(['ADD', 'NO']) }).parse(req.body || {});
+  res.json(await answerOffer(req.currentUser, req.params.key, answer));
 }));
 
 router.post('/layout/reset', asyncHandler(async (req, res) => {

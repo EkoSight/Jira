@@ -130,9 +130,16 @@ export async function workspaceFor(user) {
   const home = await homeFor(user, row, settings);
   const catalogue = catalogueFor(who, custom ? row.updated_at : null);
   const byType = new Map(catalogue.map((c) => [c.type, c]));
+  // a saved layout is never changed silently: a new widget meant for everyone
+  // is offered once, and the answer is remembered
+  const offers = {};
+  if (custom && byType.get('todos')?.available && !layout.widgets.some((w) => w.type === 'todos') && !row.offers?.todos) {
+    offers.todos = { question: 'Add Today’s plan to your workspace?', widget: 'todos' };
+  }
   return {
     version: row?.version || 0,
     source: custom ? 'CUSTOM' : 'TEMPLATE',
+    offers,
     template: { key: template.key, name: template.name, matched: template.matched },
     based_on: row?.based_on || null,
     updated_at: row?.updated_at || null,
@@ -187,6 +194,38 @@ export async function saveLayout(user, { version, widgets, force = false }) {
       [user.id, JSON.stringify(layout), template.key],
     );
     return { version: saved[0].version, updated_at: saved[0].updated_at, widgets: layout.widgets };
+  });
+}
+
+/**
+ * The answer to a one-time offer. "Add" puts the widget at the top of the
+ * person's own layout (a new version, like any save); "No thanks" changes
+ * nothing. Either way it is not asked again.
+ */
+export async function answerOffer(user, key, answer) {
+  if (key !== 'todos') throw badRequest('Unknown offer');
+  return withTransaction(async (client) => {
+    const { rows } = await client.query('SELECT * FROM user_dashboards WHERE user_id = $1 FOR UPDATE', [user.id]);
+    const row = rows[0];
+    if (!row?.layout) throw badRequest('There is nothing to offer: your workspace follows its template');
+    if (row.offers?.todos) return { answered: row.offers.todos, version: row.version };
+    let version = row.version;
+    if (answer === 'ADD') {
+      const layout = normaliseLayout(row.layout);
+      if (!layout.widgets.some((w) => w.type === 'todos')) {
+        const used = new Set(layout.widgets.map((w) => w.id));
+        let id = 'td1';
+        for (let n = 2; used.has(id); n += 1) id = `td${n}`;
+        layout.widgets.unshift({ id, type: 'todos', typeVersion: 1, width: 'full', config: {} });
+        const { rows: saved } = await client.query(
+          'UPDATE user_dashboards SET layout = $2, version = version + 1, updated_at = now() WHERE user_id = $1 RETURNING version',
+          [user.id, JSON.stringify(normaliseLayout(layout))]);
+        version = saved[0].version;
+      }
+    }
+    const value = answer === 'ADD' ? 'ADDED' : 'DECLINED';
+    await client.query(`UPDATE user_dashboards SET offers = offers || jsonb_build_object('todos', $2::text) WHERE user_id = $1`, [user.id, value]);
+    return { answered: value, version };
   });
 }
 

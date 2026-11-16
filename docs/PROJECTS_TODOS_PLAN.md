@@ -75,7 +75,13 @@ task's project. The test then expects that path to be the only difference.
     meetings. It is kept apart from `account_activities` because sales
     reports count those rows, and a to-do must never feed a report. Tasks,
     projects and goals use their own activity tables.
-- **`040_notebook.sql`**:
+- **`040_todos_everywhere.sql`** (Part C):
+  - Today's plan at the top of every workspace template;
+  - `user_dashboards.offers`, so the one-time "Add Today's plan to your
+    workspace?" is asked once and saved layouts never change silently;
+  - `todo_chat_undo`, Chat's one-step "undo", remembering the message it
+    came from so a message delivered twice acts once.
+- **`041_notebook.sql`** (Part N; was 040 in the first plan):
   - `todo_day_notes`;
   - `todos.starred`, `projects.color`;
   - the other notebook preferences (handwriting, haptics).

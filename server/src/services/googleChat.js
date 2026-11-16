@@ -49,6 +49,7 @@ export const ALERT_TYPE_LABEL = {
   crm_activity: 'Lead activity',
 };
 
+import { TODO_HELP, parseTodoCommand, todoChatReply } from './todos/chat.js';
 const app = (path = '/') => `${config.publicUrl}${path}`;
 const taskUrl = (taskId) => app(`/?task=${taskId}`);
 
@@ -122,6 +123,7 @@ const HELP = [
   '• `summary` — today’s summary now',
   '• `stop` — pause instant alerts (the morning summary continues)',
   '• `start` — turn instant alerts back on',
+  ...TODO_HELP,
   `Change what you receive in TaskFlow → Settings → My account: ${app('/settings?tab=account')}`,
 ].join('\n');
 
@@ -165,7 +167,7 @@ export async function handleChatEvent(event) {
         });
         return { text: result.text };
       }
-      return replyToCommand(user.id, said);
+      return replyToCommand(user.id, said, { messageName: event.message?.name || null });
     }
     return {};
   }
@@ -199,8 +201,11 @@ export async function handleChatEvent(event) {
   return {};
 }
 
-async function replyToCommand(userId, raw) {
+async function replyToCommand(userId, raw, { messageName = null } = {}) {
   const command = String(raw).trim().toLowerCase().replace(/^\//, '');
+  // to-dos: todo / + / todos / done n / undo (the words of a new to-do keep their case)
+  const todoCommand = parseTodoCommand(raw);
+  if (todoCommand) return todoChatReply(userId, todoCommand, { messageName });
   if (command === 'stop' || command === 'pause') {
     await setPreferences(userId, { instant: false });
     return { text: 'Instant alerts paused. You’ll still get the morning summary. Reply `start` to turn them back on.' };

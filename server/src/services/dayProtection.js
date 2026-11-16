@@ -59,6 +59,24 @@ export async function nextWorkingDay(userId, departmentId, after) {
   return addDays(after, 1);
 }
 
+/**
+ * Whether this person is scheduled to work on this day: their weekly off,
+ * the holidays that cover them, and approved full-day leave, from the same
+ * engine as nextWorkingDay.
+ */
+export async function isWorkingDay(userId, departmentId, day) {
+  const timeline = await policyTimeline();
+  const profile = await getProfile(userId);
+  const holidays = await holidaysBetween(day, day);
+  const { config } = policyOn(timeline, day);
+  const schedule = scheduleOn(day, { config, profile, holidays, departmentId, userId, ignoreStart: true, ignoreEmployment: true });
+  if (schedule.state !== 'WORKDAY') return false;
+  const { rows } = await query(
+    `SELECT 1 FROM leave_requests WHERE user_id = $1 AND status IN ('APPROVED_PAID', 'APPROVED_UNPAID') AND day_part = 'FULL'
+        AND $2::date BETWEEN start_date AND end_date LIMIT 1`, [userId, day]);
+  return rows.length === 0;
+}
+
 /** Open tasks of this person due on these calendar days (in the organisation's timezone). */
 export async function tasksDueBetween(userId, from, to, { now = new Date(), client = null } = {}) {
   const { config } = await currentPolicy(now);

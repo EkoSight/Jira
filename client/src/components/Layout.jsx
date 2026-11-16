@@ -18,12 +18,14 @@ import {
   playChime,
   notificationPermission,
 } from '../lib/alerts.js';
+import TodosHeaderButton from './todos/TodosDrawer.jsx';
 
 const NAV = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/board', label: 'Board', icon: 'board' },
   { to: '/projects', label: 'Projects', icon: 'pipeline', module: 'projects' },
   { to: '/my-tasks', label: 'My tasks', icon: 'list' },
+  { to: '/todos', label: 'To-dos', icon: 'check', module: 'todos' },
   { to: '/review', label: 'Overdue review', icon: 'alert' },
   { to: '/attendance', label: 'Attendance', icon: 'clock' },
   { to: '/standup', label: 'Daily standup', icon: 'list' },
@@ -92,9 +94,9 @@ export default function Layout({ children }) {
   // My workspace as home: "/" is My workspace and the overview keeps its own
   // entry; for everyone else the navigation is exactly as before
   const nav = user?.workspace_home
-    ? [{ to: '/', label: 'My workspace', icon: 'dashboard', end: true }, { to: '/overview', label: 'Overview', icon: 'dashboard' }, ...NAV.slice(1, 4),
+    ? [{ to: '/', label: 'My workspace', icon: 'dashboard', end: true }, { to: '/overview', label: 'Overview', icon: 'dashboard' }, ...NAV.slice(1, 5),
       { to: '/meetings', label: 'Meetings', icon: 'clock' },
-      { to: '/applications', label: 'Applications', icon: 'target', permission: 'crm.view', module: 'crm' }, ...NAV.slice(4)]
+      { to: '/applications', label: 'Applications', icon: 'target', permission: 'crm.view', module: 'crm' }, ...NAV.slice(5)]
     : NAV;
   const visible = nav.filter(allowed);
   // dates in My workspace are shown in the person's timezone, else the company calendar's
@@ -211,6 +213,8 @@ export default function Layout({ children }) {
         <header className="topbar">
           <BrandMark size={28} mode="off" className="topbar-mark" />
           <div className="topbar-title grow truncate">{pageTitle}</div>
+
+          {!gated && <TodosHeaderButton />}
 
           <button
             type="button"

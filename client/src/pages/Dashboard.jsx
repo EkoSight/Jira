@@ -9,6 +9,7 @@ import { AwayBadge, AwayCard } from '../components/Availability.jsx';
 import { TodayAttendanceCard } from '../components/Attendance.jsx';
 import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
 import { MyProjectsCard } from '../components/projects/ProjectLinks.jsx';
+import TodayPlan from '../components/todos/TodayPlan.jsx';
 import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -136,7 +137,7 @@ export function WorkloadCard({ workload, goToBoard, title = 'Who is working on w
 
 export default function Dashboard({ offerWorkspace = false }) {
   const { user, can } = useAuth();
-  const { departments } = useRefData();
+  const { departments, settings } = useRefData();
   const toast = useToast();
   const navigate = useNavigate();
 
@@ -193,6 +194,13 @@ export default function Dashboard({ offerWorkspace = false }) {
           </button>
         </div>
       </div>
+
+      {settings?.todos?.enabled !== false && (
+        <section className="card card-pad td-card" aria-label="Today’s plan">
+          <TodayPlan compact limit={8} />
+          <Link to="/todos" className="small">All to-dos</Link>
+        </section>
+      )}
 
       {offerWorkspace && (
         <div className="card card-pad row-between wrap" role="note">

@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Spinner } from '../ui.jsx';
 import { todoApi } from '../../lib/todos.js';
+import { api } from '../../api/client.js';
 
 const TYPE_LABEL = {
   TASK: 'Tasks', PROJECT: 'Projects', KEY_RESULT: 'Key results', OBJECTIVE: 'Objectives',
@@ -130,6 +131,122 @@ export function TimeDialog({ value, onPick, onClose }) {
         <span>Time (timed lines sort first)</span>
         <input type="time" className="input" value={time} onChange={(e) => setTime(e.target.value)} autoFocus />
       </label>
+    </Modal>
+  );
+}
+
+const localValue = (d) => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0, 16); };
+
+/**
+ * "Remind me" on a to-do: a private reminder at a time, through the same
+ * personal reminders as everywhere else. Ticking or removing the to-do
+ * cancels it; changing the reminder's time plans it again. Off unless set.
+ */
+export function ReminderDialog({ item, onClose }) {
+  const [current, setCurrent] = useState(undefined);
+  const [when, setWhen] = useState(() => {
+    if (item.planned_on) return `${item.planned_on}T${item.planned_time || '09:00'}`;
+    const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return localValue(d);
+  });
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    api.get('/workspace/reminders/personal', { entity_type: 'TODO', entity_id: item.id })
+      .then((r) => { const r0 = r.reminders?.[0] || null; setCurrent(r0); if (r0) setWhen(localValue(r0.remind_at)); })
+      .catch(() => setCurrent(null));
+  }, [item.id]);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const body = { remind_at: new Date(when).toISOString() };
+      if (current) await api.put(`/workspace/reminders/personal/${current.id}`, body);
+      else await api.post('/workspace/reminders/personal', { entity_type: 'TODO', entity_id: item.id, ...body });
+      onClose(current ? 'Reminder moved' : 'Reminder set. Only you will get it');
+    } catch (e) { setError(e.message); setSaving(false); }
+  };
+  const cancel = async () => {
+    try { await api.post(`/workspace/reminders/personal/${current.id}/cancel`); onClose('Reminder cancelled'); } catch (e) { setError(e.message); }
+  };
+  return (
+    <Modal title="Remind me" onClose={() => onClose()} footer={
+      <>
+        {current && <button type="button" className="btn btn-ghost" onClick={cancel}>Cancel the reminder</button>}
+        <button type="button" className="btn" onClick={() => onClose()}>Close</button>
+        <button type="button" className="btn btn-primary" disabled={!when || saving || current === undefined} onClick={save}>{current ? 'Move it' : 'Set reminder'}</button>
+      </>
+    }>
+      <div className="stack-sm">
+        <p className="td-quote">“{item.title}”</p>
+        <label className="td-field">
+          <span>When</span>
+          <input type="datetime-local" className="input" value={when} onChange={(e) => setWhen(e.target.value)} />
+        </label>
+        <p className="small muted">Only you get it, in TaskFlow and in Chat if you use it. Ticking or removing the to-do cancels it.</p>
+        {error && <p role="alert" className="small">{error}</p>}
+      </div>
+    </Modal>
+  );
+}
+
+const WEEKDAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
+
+/**
+ * A repeating to-do. Its items appear on the person's own working days only,
+ * one per day, never backfilled. Editing changes future items only.
+ */
+export function RoutineDialog({ initial = {}, routine = null, onSaved, onClose }) {
+  const [title, setTitle] = useState(routine?.title || initial.title || '');
+  const [kind, setKind] = useState(routine?.repeat_kind || 'WORKING_DAYS');
+  const [days, setDays] = useState(routine?.weekdays || [1]);
+  const [monthDay, setMonthDay] = useState(routine?.month_day || 1);
+  const [time, setTime] = useState(routine?.planned_time || initial.planned_time || '');
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    const body = { title, repeat_kind: kind, weekdays: days, month_day: monthDay, planned_time: time || null };
+    try {
+      if (routine) await api.patch(`/todos/routines/${routine.id}`, body);
+      else await api.post('/todos/routines', { ...body, ...(initial.link?.visible ? { link_type: initial.link.type, link_id: initial.link.id } : {}) });
+      onSaved?.();
+    } catch (e) { setError(e.message); setSaving(false); }
+  };
+  const toggleDay = (d) => setDays((list) => (list.includes(d) ? list.filter((x) => x !== d) : [...list, d].sort()));
+  return (
+    <Modal title={routine ? 'Change the routine' : 'Repeat'} onClose={onClose} footer={
+      <>
+        <button type="button" className="btn" onClick={onClose}>Cancel</button>
+        <button type="button" className="btn btn-primary" disabled={!title.trim() || saving || (kind === 'WEEKLY' && !days.length)} onClick={save}>{routine ? 'Save for future days' : 'Repeat it'}</button>
+      </>
+    }>
+      <div className="stack-sm">
+        <label className="td-field"><span>What repeats</span><input className="input" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} /></label>
+        <fieldset className="td-fieldset">
+          <legend>How often</legend>
+          <label className="td-switch"><input type="radio" name="td-repeat" checked={kind === 'WORKING_DAYS'} onChange={() => setKind('WORKING_DAYS')} /> Every working day</label>
+          <label className="td-switch"><input type="radio" name="td-repeat" checked={kind === 'WEEKLY'} onChange={() => setKind('WEEKLY')} /> Weekly on chosen days</label>
+          {kind === 'WEEKLY' && (
+            <div className="td-chips" role="group" aria-label="Days of the week">
+              {WEEKDAYS.map(([d, w]) => (
+                <label key={d} className="td-chip"><input type="checkbox" checked={days.includes(d)} onChange={() => toggleDay(d)} /> {w}</label>
+              ))}
+            </div>
+          )}
+          <label className="td-switch"><input type="radio" name="td-repeat" checked={kind === 'MONTHLY'} onChange={() => setKind('MONTHLY')} /> Monthly on a date</label>
+          {kind === 'MONTHLY' && (
+            <label className="td-field"><span>Date of the month (the month’s last day when it is shorter)</span>
+              <input type="number" className="input" min={1} max={31} value={monthDay} onChange={(e) => setMonthDay(Number(e.target.value))} />
+            </label>
+          )}
+        </fieldset>
+        <label className="td-field"><span>Time (optional)</span><input type="time" className="input" value={time} onChange={(e) => setTime(e.target.value)} /></label>
+        <p className="small muted">
+          Items appear on your own working days only: never on your weekly off, a holiday or approved leave, and missed days are not filled in.
+          A routine that others must tick, or a manager must see, is a recurring task with steps.
+        </p>
+        {routine && <p className="small muted">Changes apply from the next item; what was already made stays as it is.</p>}
+        {error && <p role="alert" className="small">{error}</p>}
+      </div>
     </Modal>
   );
 }

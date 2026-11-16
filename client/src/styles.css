@@ -4594,3 +4594,26 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 @media (prefers-reduced-motion: reduce) {
   .td-row, .td-menu { transition: none; }
 }
+
+/* ---------------------------------------------------------------- to-dos everywhere (Part C) */
+.td-head-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; white-space: nowrap; }
+.td-head-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--brand); color: var(--on-brand); font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.td-head-count.is-zero { background: var(--surface-3); color: var(--ink-2); }
+.td-head-left { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 560px) {
+  .td-head-label { display: none; }
+  .td-head-btn { padding: 0 8px; min-width: 44px; min-height: 44px; }
+}
+.td-drawer-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(11, 11, 11, 0.32); display: flex; justify-content: flex-end; }
+.td-drawer {
+  width: min(460px, 100vw); height: 100%; background: var(--surface); box-shadow: var(--shadow-lg);
+  display: flex; flex-direction: column; animation: td-drawer-in 160ms ease-out;
+}
+.td-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.td-drawer-body { padding: 14px 16px 24px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 12px; }
+@keyframes td-drawer-in { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .td-drawer { animation: none; } }
+.td-card { display: flex; flex-direction: column; gap: 8px; }
+.td-widget { padding: 4px 14px 14px; }
+.td-fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.td-fieldset legend { font-size: 12.5px; color: var(--ink-2); padding: 0 4px; }

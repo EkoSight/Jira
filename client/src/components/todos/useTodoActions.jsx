@@ -10,7 +10,7 @@ import { api } from '../../api/client.js';
 import { useRefData, useToast } from '../../state/AppState.jsx';
 import CompleteTaskDialog from '../CompleteTaskDialog.jsx';
 import TaskDialog from '../TaskDialog.jsx';
-import { DayDialog, LinkPicker, ShareDialog, TimeDialog } from './Pickers.jsx';
+import { DayDialog, LinkPicker, ReminderDialog, RoutineDialog, ShareDialog, TimeDialog } from './Pickers.jsx';
 import { announceTodosChanged, todoApi } from '../../lib/todos.js';
 
 const prefillFor = (item) => {
@@ -97,6 +97,8 @@ export function useTodoActions({ reload, patchLocal, today }) {
     unshare: async (item) => { try { await todoApi.unshare(item.id); say('Private again'); await changed(); } catch (e) { failed(e); } },
     unshareStep: async (item) => { try { await todoApi.unshareStep(item.id); say('Taken back as a private to-do'); await changed(); } catch (e) { failed(e); } },
     makeTask: (item) => setDialog({ kind: 'task', item }),
+    remind: (item) => setDialog({ kind: 'remind', item }),
+    repeat: (item) => setDialog({ kind: 'repeat', item }),
     keep: (item) => change(item, { still_want: true }, 'Kept'),
     remove: async (item) => { try { await todoApi.remove(item.id); say(`Removed “${item.title}”`); await changed(); } catch (e) { failed(e); } },
     complete: (item) => openCompletion(item.task.id),
@@ -130,6 +132,12 @@ export function useTodoActions({ reload, patchLocal, today }) {
               await changed();
             }
           }} />
+      )}
+      {dialog?.kind === 'repeat' && (
+        <RoutineDialog initial={dialog.item} onClose={close} onSaved={() => { close(); say('It repeats now; find it under Lists → Repeating to-dos'); }} />
+      )}
+      {dialog?.kind === 'remind' && (
+        <ReminderDialog item={dialog.item} onClose={(words) => { close(); if (words) say(words); }} />
       )}
       {dialog?.kind === 'complete' && (
         <CompleteTaskDialog task={dialog.task} targetStatusId={dialog.statusId} onClose={close} onCompleted={async () => { close(); await changed(); }} />

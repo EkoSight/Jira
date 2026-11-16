@@ -11,6 +11,7 @@ import {
   unshareStep, unshareTodo, updateList, updateMyStep, updateTodo, upcoming, useListAgain,
 } from '../services/todos/index.js';
 import { referenceIn, searchLinks } from '../services/todos/links.js';
+import { createRoutine, listRoutines, stopRoutine, updateRoutine } from '../services/todos/routines.js';
 
 const router = Router();
 
@@ -72,6 +73,13 @@ router.get('/lists/:id', asyncHandler(async (req, res) => res.json(await listDet
 router.patch('/lists/:id', asyncHandler(async (req, res) => res.json(await updateList(req.currentUser, idOf(req.params.id), req.body || {}))));
 router.post('/lists/:id/use-again', asyncHandler(async (req, res) => res.status(201).json(await useListAgain(req.currentUser, idOf(req.params.id)))));
 router.delete('/lists/:id', asyncHandler(async (req, res) => res.json(await archiveList(req.currentUser, idOf(req.params.id)))));
+
+// ---------------------------------------------------------------- routines (repeating to-dos)
+
+router.get('/routines', asyncHandler(async (req, res) => res.json(await listRoutines(req.currentUser))));
+router.post('/routines', asyncHandler(async (req, res) => res.status(201).json(await createRoutine(req.currentUser, req.body || {}))));
+router.patch('/routines/:id', asyncHandler(async (req, res) => res.json(await updateRoutine(req.currentUser, idOf(req.params.id), req.body || {}))));
+router.post('/routines/:id/stop', asyncHandler(async (req, res) => res.json(await stopRoutine(req.currentUser, idOf(req.params.id)))));
 
 // ---------------------------------------------------------------- a record's steps
 

@@ -269,6 +269,15 @@ export default function MyWorkspace({ initial = null, onHomeChange }) {
     }
   };
 
+  // the one-time offer: "Add" changes the saved layout, "No thanks" changes nothing; asked once either way
+  const answerOffer = async (answer) => {
+    try {
+      await api.post('/workspace/offers/todos', { answer });
+      await load();
+      toast.success(answer === 'ADD' ? 'Today’s plan is at the top of your workspace' : 'We won’t ask again');
+    } catch (err) { toast.error(err); }
+  };
+
   const chooseHome = async (home) => {
     try {
       const r = await api.put('/workspace/home', { home });
@@ -325,6 +334,16 @@ export default function MyWorkspace({ initial = null, onHomeChange }) {
           {!editing && <Link className="btn btn-sm btn-ghost" to="/overview">Company overview</Link>}
         </div>
       </div>
+
+      {!editing && ws.offers?.todos && (
+        <div className="card card-pad row-between wrap ws-note" role="note">
+          <span className="small"><strong>{ws.offers.todos.question}</strong> Your to-dos and steps for today, with the add box, at the top. Only you see it. Your layout changes only if you add it.</span>
+          <span className="row" style={{ gap: 8 }}>
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => answerOffer('ADD')}>Add</button>
+            <button type="button" className="btn btn-sm" onClick={() => answerOffer('NO')}>No thanks</button>
+          </span>
+        </div>
+      )}
 
       {!editing && !ws.home.workspace && (
         <div className="card card-pad row-between wrap ws-note" role="note">

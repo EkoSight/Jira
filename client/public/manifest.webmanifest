@@ -58,6 +58,12 @@
   },
   "shortcuts": [
     {
+      "name": "Add a to-do",
+      "short_name": "Add a to-do",
+      "description": "Open today's plan with the add box ready",
+      "url": "/todos?add=1"
+    },
+    {
       "name": "My tasks",
       "short_name": "My tasks",
       "url": "/my-tasks"
