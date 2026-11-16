@@ -144,9 +144,9 @@ is `SOIL_DOCTOR_LOGO_ANIMATION.md`.
 | Personal look | Match my device, with the organisation's colours |
 | Personal accents | Forest `#145A32`, Soil `#8B5E3B`, Deep soil `#593C28`, Ocean `#1F5E8C`, Plum `#6B3A7D`, Slate `#3D4B5C` |
 | Branding refresh | When the app comes back into view, and every 2 minutes |
-| Mark | The supplied Soil Doctor mark (SVG), unchanged |
+| Mark | TaskFlow's own mark since 16 Nov 2026: the Soil Doctor soil layers cut into a tick on the deep green (`docs/TASKFLOW_MARK.md`). It was the Soil Doctor mark, which made the two apps look the same. Customer-facing emails, pages and quotations keep the Soil Doctor mark |
 | Wordmark | The supplied raster (WebP, 2000×592), unchanged, on a light plate in dark mode |
-| Icons | 32 and 48 favicons. Apple touch 180, on white at 84%. 192 and 512. Maskable 512, on white at 72% |
+| Icons | 32 and 48 favicons. 192 and 512. For the bundled mark, Apple touch 180 and maskable 512 are deep green to the edges (the mark at 100% and 90%). An uploaded mark: Apple touch on white at 84%, maskable on white at 72% |
 | Upload | JPEG, PNG or WebP, up to 10 MB. At least 32 px a side. A warning under 256 px |
 | Stored sizes | WebP at 64, 128, 256 and 512, plus the original at most 2048 px (WebP, quality 90) |
 | Photo caching | Private, a year, immutable, under versioned addresses. The list of who has a photo refreshes every 5 minutes and when the app comes back into view |

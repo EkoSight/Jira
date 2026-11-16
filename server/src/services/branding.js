@@ -5,8 +5,8 @@
  *     browser previews with. A colour that cannot be made readable, or that
  *     looks like a status colour, is refused with the nearest passing shade.
  *   - **Logos** an administrator uploads: a mark, a wordmark, and dark-mode
- *     versions of each. Until then the Soil Doctor ones bundled with TaskFlow
- *     are used. An SVG is checked for anything that could run (scripts, event
+ *     versions of each. Until then TaskFlow's own mark and the Soil Doctor
+ *     wordmark bundled with TaskFlow are used. An SVG is checked for anything that could run (scripts, event
  *     handlers, external links, embedded pages) and refused if it has any; it
  *     is also served with a policy that would stop a script anyway. Pictures
  *     are re-encoded.
@@ -27,8 +27,12 @@ import { audit } from './attendance.js';
 import { DEFAULT_BRANDING, buildPalette, checkBranding, normaliseHex } from '../../../shared/brandTheme.js';
 
 const BUNDLED = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../assets/brand');
+// TaskFlow's own mark (docs/TASKFLOW_MARK.md): Soil Doctor's soil layers cut into a tick, on
+// TaskFlow's deep green. The Soil Doctor mark stays bundled for what customers see (emails,
+// public pages, quotations), which keep the Soil Doctor brand.
+const DEFAULT_MARK_VERSION = 'tf1';
 const DEFAULT_ASSETS = {
-  mark: { file: path.join(BUNDLED, 'soil-doctor-mark.svg'), mime: 'image/svg+xml' },
+  mark: { file: path.join(BUNDLED, 'taskflow-mark.svg'), mime: 'image/svg+xml' },
   markDark: null,
   wordmark: { file: path.join(BUNDLED, 'soil-doctor-wordmark.webp'), mime: 'image/webp' },
   wordmarkDark: null,
@@ -41,6 +45,12 @@ export const ICONS = {
   'icon-192.png': { size: 192 },
   'icon-512.png': { size: 512 },
   'maskable-512.png': { size: 512, background: '#FFFFFF', scale: 0.72 },
+};
+// the bundled mark is a full deep green tile: its Apple touch and maskable icons are deep green to the
+// edges (the phone rounds or crops them), not the white an uploaded round logo is placed on
+const DEFAULT_ICON_SPECS = {
+  'apple-touch-180.png': { background: '#073F2A', scale: 1 },
+  'maskable-512.png': { background: '#073F2A', scale: 0.9 },
 };
 const MAX_ASSET_BYTES = 2 * 1024 * 1024;
 const brandDir = () => path.join(uploadDir, 'branding');
@@ -62,7 +72,7 @@ export async function currentBranding() {
 const assetUrl = (prefix, kind, b) => {
   const a = b.assets[kind];
   if (!a && !DEFAULT_ASSETS[kind]) return null;
-  return `${prefix}/branding/assets/${kind}?v=${a?.v || `default-${b.version}`}`;
+  return `${prefix}/branding/assets/${kind}?v=${a?.v || `default-${DEFAULT_MARK_VERSION}-${b.version}`}`;
 };
 
 /** What every screen needs, signed in or not: name, colours, logos, icons. */
@@ -78,7 +88,7 @@ export async function publicBranding(prefix) {
     assets: Object.fromEntries(ASSET_KINDS.map((k) => [k, assetUrl(prefix, k, b)])),
     assetTypes: Object.fromEntries(ASSET_KINDS.map((k) => [k, (b.assets[k] || DEFAULT_ASSETS[k])?.mime || null])),
     custom: Object.fromEntries(ASSET_KINDS.map((k) => [k, Boolean(b.assets[k])])),
-    icons: Object.fromEntries(Object.keys(ICONS).map((name) => [name, `${prefix}/branding/icons/${name}?v=${b.assets.mark?.v || 'default'}`])),
+    icons: Object.fromEntries(Object.keys(ICONS).map((name) => [name, `${prefix}/branding/icons/${name}?v=${b.assets.mark?.v || `default-${DEFAULT_MARK_VERSION}`}`])),
   };
 }
 
@@ -117,7 +127,7 @@ export async function saveBranding(changes, actor) {
   return write(next, 'SAVE', actor);
 }
 
-/** Back to the Soil Doctor defaults: name, colours and logos. Uploaded files are kept on disk for the record. */
+/** Back to the defaults (TaskFlow's name, colours and mark, the Soil Doctor wordmark). Uploaded files are kept on disk for the record. */
 export async function resetBranding(actor) {
   const b = await currentBranding();
   return write({ ...DEFAULT_SETTINGS.branding, version: b.version }, 'RESET', actor);
@@ -217,10 +227,12 @@ export async function assetFile(kind) {
 
 /** An icon made from the current mark, cached on disk per mark version. */
 export async function iconFile(name) {
-  const spec = ICONS[name];
-  if (!spec) return null;
+  if (!ICONS[name]) return null;
   const b = await currentBranding();
-  const key = b.assets.mark?.v || 'default';
+  const bundled = !b.assets.mark;
+  const spec = { ...ICONS[name], ...(bundled ? DEFAULT_ICON_SPECS[name] || {} : {}) };
+  // a new bundled mark gets new files (icons made from the previous one stay on disk, unused)
+  const key = b.assets.mark?.v || `default-${DEFAULT_MARK_VERSION}`;
   const dir = path.join(brandDir(), 'icons', key);
   const file = path.join(dir, name);
   if (fs.existsSync(file)) return file;

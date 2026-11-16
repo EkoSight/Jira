@@ -19,6 +19,8 @@ const mark = fs.readFileSync(path.join(root, 'client/public/brand/mark.svg'));
 const res = path.join(here, '../android/app/src/main/res');
 const WHITE = { r: 255, g: 255, b: 255, alpha: 1 };
 const CLEAR = { r: 0, g: 0, b: 0, alpha: 0 };
+// TaskFlow's mark is a deep green tile (docs/TASKFLOW_MARK.md): on this green its corners vanish
+const GREEN = { r: 7, g: 63, b: 42, alpha: 1 };
 const DENSITY = { mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 };
 
 /** The mark, `size` pixels wide, centred on a `canvas`-pixel square. */
@@ -37,13 +39,13 @@ async function onCanvas(canvas, size, background, round = false) {
 
 for (const [dpi, scale] of Object.entries(DENSITY)) {
   const dir = path.join(res, `mipmap-${dpi}`);
-  // legacy icons, 48 dp: the mark on white, a little margin
+  // legacy icons, 48 dp: the tile itself, and on a green circle for round launchers
   const legacy = Math.round(48 * scale);
-  fs.writeFileSync(path.join(dir, 'ic_launcher.png'), await onCanvas(legacy, Math.round(legacy * 0.84), WHITE));
-  fs.writeFileSync(path.join(dir, 'ic_launcher_round.png'), await onCanvas(legacy, Math.round(legacy * 0.84), WHITE, true));
-  // adaptive foreground, 108 dp: the mark inside the 66 dp safe zone, on the white background colour
+  fs.writeFileSync(path.join(dir, 'ic_launcher.png'), await onCanvas(legacy, Math.round(legacy * 0.92), CLEAR));
+  fs.writeFileSync(path.join(dir, 'ic_launcher_round.png'), await onCanvas(legacy, Math.round(legacy * 0.92), GREEN, true));
+  // adaptive foreground, 108 dp: the tick inside the 66 dp safe zone, on the deep green background colour
   const fg = Math.round(108 * scale);
-  fs.writeFileSync(path.join(dir, 'ic_launcher_foreground.png'), await onCanvas(fg, Math.round(64 * scale), CLEAR));
+  fs.writeFileSync(path.join(dir, 'ic_launcher_foreground.png'), await onCanvas(fg, Math.round(80 * scale), CLEAR));
 }
 
 // splash screens: the same sizes Capacitor made, white, with the mark in the middle

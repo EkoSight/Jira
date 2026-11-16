@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="512" height="512" role="img" aria-label="TaskFlow">
+  <title>TaskFlow</title>
+  <!-- TaskFlow's mark (docs/TASKFLOW_MARK.md): the family's soil layers cut into a tick, on TaskFlow's deep green -->
+  <defs>
+    <mask id="tf-tick" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+      <polyline points="25,53 43,71 76,32" fill="none" stroke="#FFFFFF" stroke-width="14.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </mask>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="#073F2A"/>
+  <g mask="url(#tf-tick)">
+    <rect x="0" y="0" width="100" height="40" fill="#9DDCF8"/>
+    <rect x="0" y="40" width="100" height="16" fill="#AED252"/>
+    <rect x="0" y="56" width="100" height="13" fill="#C08A5C"/>
+    <rect x="0" y="69" width="100" height="31" fill="#8B5E3B"/>
+    <rect x="0" y="38.6" width="100" height="2.6" fill="#073F2A"/>
+    <rect x="0" y="54.6" width="100" height="2.6" fill="#073F2A"/>
+    <rect x="0" y="67.6" width="100" height="2.6" fill="#073F2A"/>
+  </g>
+</svg>

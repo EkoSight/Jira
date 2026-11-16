@@ -155,7 +155,7 @@ export default function BrandingSettings() {
                 </div>
                 <div className="stack-xs" style={{ flex: 1, minWidth: 160 }}>
                   <strong className="small">{label}</strong>
-                  <span className="small muted">{branding.custom?.[kind] ? 'Uploaded' : kind === 'mark' || kind === 'wordmark' ? 'The bundled Soil Doctor one' : hint}</span>
+                  <span className="small muted">{branding.custom?.[kind] ? 'Uploaded' : kind === 'mark' ? 'TaskFlow\u2019s own mark (bundled)' : kind === 'wordmark' ? 'The bundled Soil Doctor one' : hint}</span>
                 </div>
                 <label className="btn btn-sm">
                   Upload<input type="file" accept="image/svg+xml,image/png,image/jpeg,image/webp" hidden onChange={upload(kind)} />

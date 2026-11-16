@@ -350,9 +350,16 @@ test('B2: a logo that could run anything is refused; a clean one is served safel
   const word = await call('GET', withWordmark.assets.wordmark.replace('/api/taskflow', ''));
   assert.equal((await sharp(word.body).metadata()).exif, undefined);
 
-  // back to the bundled Soil Doctor mark
+  // back to the bundled TaskFlow mark (not the Soil Doctor one: the two apps must be told apart)
   const cleared = ok(await call('DELETE', '/branding/assets/mark', { token: tokens.admin }));
   assert.equal(cleared.custom.mark, false);
   const bundled = await call('GET', cleared.assets.mark.replace('/api/taskflow', ''));
-  assert.match(bundled.body.toString('utf8'), /Soil Doctor/);
+  assert.match(bundled.body.toString('utf8'), /aria-label="TaskFlow"/);
+  assert.doesNotMatch(bundled.body.toString('utf8'), /Soil Doctor/);
+  assert.match(cleared.icons['icon-192.png'], /v=default-tf1/, 'a new bundled mark gets new icon addresses, so old copies are not reused');
+  // its Apple touch and maskable icons are deep green to the edges; the phone rounds them
+  for (const name of ['apple-touch-180.png', 'maskable-512.png']) {
+    const raw = await sharp((await call('GET', cleared.icons[name].replace('/api/taskflow', ''))).body).raw().toBuffer();
+    assert.deepEqual([raw[0], raw[1], raw[2], raw[3]], [7, 63, 42, 255], `${name} corner is TaskFlow's deep green`);
+  }
 });

@@ -4319,7 +4319,7 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
   .photo-preview { width: 42vw; }
 }
 
-/* ---------------------------------------------------------------- the Soil Doctor mark (docs/SOIL_DOCTOR_LOGO_ANIMATION.md) */
+/* ---------------------------------------------------------------- TaskFlow's mark (docs/TASKFLOW_MARK.md), animated as the Soil Doctor mark is */
 @keyframes sdBandL { from { transform: translateX(-104%) } to { transform: translateX(0) } }
 @keyframes sdBandR { from { transform: translateX(104%) } to { transform: translateX(0) } }
 @keyframes sdDraw { from { stroke-dashoffset: 100 } to { stroke-dashoffset: 0 } }
@@ -4331,6 +4331,8 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .sd-mark[data-mode='intro'] .sd-pulse, .sd-mark[data-mode='loop'] .sd-pulse { stroke-dasharray: 100; animation: sdDraw 0.8s cubic-bezier(0.5, 0, 0.2, 1) 0.5s both; }
 .sd-mark[data-mode='loop'] { transform-origin: 50% 50%; animation: sdBeat 3.4s ease-in-out 1.5s infinite; }
 .sd-mark .sd-spark { stroke-dasharray: 9 220; stroke-dashoffset: 12; animation: sdSpark 3.4s linear 1.5s infinite; }
+/* the tick draws itself on while the layers slide in */
+.tf-mark[data-mode='intro'] .tf-tick, .tf-mark[data-mode='loop'] .tf-tick { stroke-dasharray: 100; animation: sdDraw 0.9s cubic-bezier(0.5, 0, 0.2, 1) 0.15s both; }
 @media (prefers-reduced-motion: reduce) {
   .sd-mark, .sd-mark * { animation: none !important; }
   .sd-mark .sd-spark { display: none; }

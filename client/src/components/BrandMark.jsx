@@ -2,23 +2,25 @@ import { useId } from 'react';
 import { useBranding } from '../state/AppState.jsx';
 
 /**
- * The organisation's mark. The bundled Soil Doctor mark is drawn here, from
- * the exact geometry and timings in docs/SOIL_DOCTOR_LOGO_ANIMATION.md:
+ * The organisation's mark. TaskFlow's own mark is drawn here (docs/TASKFLOW_MARK.md):
+ * Soil Doctor's soil layers cut into a tick, on TaskFlow's deep green tile, so the
+ * two apps are told apart at a glance while staying one family.
  *
- *   intro  the strata slide in from alternating sides (0.9 s each, 0.11 s
- *          apart), then the pulse draws left to right (0.8 s, from 0.5 s)
- *   loop   the intro, then from 1.5 s a spark runs along the pulse and the
- *          mark beats once (at most 1.07×) every 3.4 s
+ *   intro  the layers slide in from alternating sides (0.9 s each, 0.11 s apart,
+ *          as in the Soil Doctor mark) while the tick draws itself on (0.9 s, from 0.15 s)
+ *   loop   the intro, then from 1.5 s a glint runs along the tick and the mark
+ *          beats once (at most 1.07x) every 3.4 s
  *   off    the still mark
  *
  * Always still when the device asks for reduced motion (CSS). A logo an
  * administrator uploaded is shown as it is, without animation.
  */
-const PULSE = '-3,49.5 42.9,49.5 48.8,37 58.7,64.7 65.6,49.9 103,49.9';
+const TICK = '25,53 43,71 76,32';
+const DEEP_GREEN = '#073F2A';
 
 export function BrandMark({ size = 28, mode = 'off', className = '', label }) {
   const { branding, resolved } = useBranding();
-  const clip = useId().replace(/:/g, '');
+  const mask = `tf-tick-${useId().replace(/:/g, '')}`;
   const name = label ?? branding.appName;
   const custom = branding.custom?.mark;
   if (custom) {
@@ -27,17 +29,23 @@ export function BrandMark({ size = 28, mode = 'off', className = '', label }) {
   }
   return (
     <svg viewBox="0 0 100 100" width={size} height={size} role="img" aria-label={name || undefined} aria-hidden={name ? undefined : true}
-      className={`sd-mark ${className}`} data-mode={mode}>
-      <defs><clipPath id={clip}><circle cx="50" cy="50" r="50" /></clipPath></defs>
-      <g clipPath={`url(#${clip})`}>
-        <circle cx="50" cy="50" r="50" fill="#FFFFFF" />
-        <rect className="sd-band sd-l" x="0" y="0" width="100" height="21.6" fill="#9DDCF8" />
-        <rect className="sd-band sd-r" x="0" y="24.9" width="100" height="42" fill="#AED252" style={{ animationDelay: '.11s' }} />
-        <path className="sd-band sd-l" d="M0 49.5 L42.9 49.5 L48.8 37 L58.7 64.7 L65.6 49.9 L100 49.9 L100 75 L0 75Z" fill="#8B5E3B" style={{ animationDelay: '.22s' }} />
-        <rect className="sd-band sd-r" x="0" y="78.4" width="100" height="21.6" fill="#593C28" style={{ animationDelay: '.33s' }} />
-        <polyline className="sd-pulse" points={PULSE} pathLength="100" fill="none" stroke="#FFFFFF" strokeWidth="3.3" strokeLinejoin="round" strokeLinecap="round" />
-        {mode === 'loop' && <polyline className="sd-spark" points={PULSE} pathLength="100" fill="none" stroke="#FFFFFF" strokeWidth="6.5" strokeLinejoin="round" strokeLinecap="round" />}
+      className={`sd-mark tf-mark ${className}`} data-mode={mode}>
+      <defs>
+        <mask id={mask} maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+          <polyline className="tf-tick" points={TICK} pathLength="100" fill="none" stroke="#FFFFFF" strokeWidth="14.5" strokeLinejoin="round" strokeLinecap="round" />
+        </mask>
+      </defs>
+      <rect width="100" height="100" rx="22" fill={DEEP_GREEN} />
+      <g mask={`url(#${mask})`}>
+        <rect className="sd-band sd-l" x="0" y="0" width="100" height="40" fill="#9DDCF8" />
+        <rect className="sd-band sd-r" x="0" y="40" width="100" height="16" fill="#AED252" style={{ animationDelay: '.11s' }} />
+        <rect className="sd-band sd-l" x="0" y="56" width="100" height="13" fill="#C08A5C" style={{ animationDelay: '.22s' }} />
+        <rect className="sd-band sd-r" x="0" y="69" width="100" height="31" fill="#8B5E3B" style={{ animationDelay: '.33s' }} />
+        <rect x="0" y="38.6" width="100" height="2.6" fill={DEEP_GREEN} />
+        <rect x="0" y="54.6" width="100" height="2.6" fill={DEEP_GREEN} />
+        <rect x="0" y="67.6" width="100" height="2.6" fill={DEEP_GREEN} />
       </g>
+      {mode === 'loop' && <polyline className="sd-spark" points={TICK} pathLength="100" fill="none" stroke="#FFFFFF" strokeOpacity="0.9" strokeWidth="3.4" strokeLinejoin="round" strokeLinecap="round" />}
     </svg>
   );
 }

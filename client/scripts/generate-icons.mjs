@@ -1,122 +1,55 @@
-// Generates the PWA icon PNGs with zlib only — no image dependency to install.
-// Run via `npm run icons` (also runs automatically before `npm run build`).
-import zlib from 'node:zlib';
+// Draws the app's icons from TaskFlow's mark (public/brand/mark.svg; docs/TASKFLOW_MARK.md):
+// the favicon, the installed-app icons, the Apple touch icon, the maskable icon, and the
+// notification icons in public/icons. Run via `npm run icons` (also before `npm run build`).
+//
+// Uses sharp from the server's dependencies. Where it is not installed (a client-only
+// build), the committed icons are kept as they are and the build carries on.
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
-const outDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public', 'icons');
+const here = path.dirname(fileURLToPath(import.meta.url));
+const pub = path.join(here, '..', 'public');
+const mark = fs.readFileSync(path.join(pub, 'brand', 'mark.svg'));
 
-const crcTable = (() => {
-  const table = new Int32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c;
-  }
-  return table;
-})();
-
-const crc32 = (buf) => {
-  let c = 0xffffffff;
-  for (const byte of buf) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
-};
-
-const chunk = (type, data) => {
-  const typeBuf = Buffer.from(type, 'ascii');
-  const body = Buffer.concat([typeBuf, data]);
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body));
-  return Buffer.concat([len, body, crc]);
-};
-
-function encodePng(size, pixelAt) {
-  const raw = Buffer.alloc(size * (size * 4 + 1));
-  let offset = 0;
-  for (let y = 0; y < size; y += 1) {
-    raw[offset] = 0; // filter type: none
-    offset += 1;
-    for (let x = 0; x < size; x += 1) {
-      const [r, g, b, a] = pixelAt(x, y);
-      raw[offset] = r;
-      raw[offset + 1] = g;
-      raw[offset + 2] = b;
-      raw[offset + 3] = a;
-      offset += 4;
-    }
-  }
-
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // colour type RGBA
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    chunk('IHDR', ihdr),
-    chunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
-    chunk('IEND', Buffer.alloc(0)),
-  ]);
+let sharp;
+try {
+  sharp = createRequire(path.join(here, '..', '..', 'server', 'package.json'))('sharp');
+} catch {
+  console.log('[icons] sharp is not installed here; keeping the committed icons');
+  process.exit(0);
 }
 
-const hex = (value) => [
-  parseInt(value.slice(1, 3), 16),
-  parseInt(value.slice(3, 5), 16),
-  parseInt(value.slice(5, 7), 16),
-];
-
-const BG = hex('#0f172a');
-const ACCENT = hex('#2a78d6');
-const WHITE = [255, 255, 255];
+const GREEN = '#073F2A';
+const CLEAR = { r: 0, g: 0, b: 0, alpha: 0 };
 
 /**
- * Icon artwork: three stacked "cards" of decreasing width — a board column —
- * with the top card in the brand blue.
+ * The mark, `scale` of `size`, centred on a `size` square. The mark is a deep green
+ * rounded tile; on a deep green background (Apple touch, maskable) its corners vanish,
+ * so the phone's own shape is what people see.
  */
-function makeIcon(size, { maskable = false } = {}) {
-  const pad = maskable ? size * 0.18 : size * 0.1;
-  const radius = maskable ? 0 : size * 0.22;
-  const inner = size - pad * 2;
-
-  const cards = [
-    { y: 0.06, w: 1.0, h: 0.22, color: ACCENT },
-    { y: 0.39, w: 0.78, h: 0.22, color: WHITE },
-    { y: 0.72, w: 0.55, h: 0.22, color: WHITE },
-  ];
-
-  const inRoundedRect = (x, y, rx, ry, rw, rh, r) => {
-    if (x < rx || y < ry || x >= rx + rw || y >= ry + rh) return false;
-    const cx = Math.min(Math.max(x, rx + r), rx + rw - r);
-    const cy = Math.min(Math.max(y, ry + r), ry + rh - r);
-    return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
-  };
-
-  return encodePng(size, (x, y) => {
-    const px = x + 0.5;
-    const py = y + 0.5;
-
-    const onBackground = maskable || inRoundedRect(px, py, 0, 0, size, size, radius);
-    if (!onBackground) return [0, 0, 0, 0];
-
-    for (const card of cards) {
-      const cardX = pad;
-      const cardY = pad + inner * card.y;
-      const cardW = inner * card.w;
-      const cardH = inner * card.h;
-      if (inRoundedRect(px, py, cardX, cardY, cardW, cardH, cardH * 0.28)) {
-        return [...card.color, card.color === WHITE ? 235 : 255];
-      }
-    }
-    return [...BG, 255];
-  });
+async function icon(size, { background = CLEAR, scale = 1 } = {}) {
+  const inner = Math.round(size * scale);
+  const art = await sharp(mark, { density: Math.max(72, Math.ceil((inner / 100) * 72 * 1.5)) })
+    .resize(inner, inner, { fit: 'contain', background: CLEAR }).png().toBuffer();
+  return sharp({ create: { width: size, height: size, channels: 4, background } })
+    .composite([{ input: art, gravity: 'centre' }]).png({ compressionLevel: 9 }).toBuffer();
 }
 
-fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(path.join(outDir, 'icon-192.png'), makeIcon(192));
-fs.writeFileSync(path.join(outDir, 'icon-512.png'), makeIcon(512));
-fs.writeFileSync(path.join(outDir, 'icon-maskable-512.png'), makeIcon(512, { maskable: true }));
-console.log('[icons] wrote icon-192, icon-512, icon-maskable-512 to public/icons');
+const files = {
+  'brand/favicon-48.png': [48],
+  'brand/icon-192.png': [192],
+  'brand/icon-512.png': [512],
+  'brand/apple-touch-180.png': [180, { background: GREEN, scale: 1 }],
+  'brand/maskable-512.png': [512, { background: GREEN, scale: 0.9 }],
+  // notifications and older installs
+  'icons/icon-192.png': [192],
+  'icons/icon-512.png': [512],
+  'icons/icon-maskable-512.png': [512, { background: GREEN, scale: 0.9 }],
+};
+for (const [file, [size, opts]] of Object.entries(files)) {
+  fs.mkdirSync(path.dirname(path.join(pub, file)), { recursive: true });
+  fs.writeFileSync(path.join(pub, file), await icon(size, opts));
+}
+console.log(`[icons] drew ${Object.keys(files).length} icons from public/brand/mark.svg`);
