@@ -26,6 +26,7 @@ import { clientCalendar, deadlineClock, withHealth } from '../services/deadlines
 import { acknowledgeTaskReminders, replanTask } from '../services/taskReminders.js';
 import { requestNewDeadline } from '../services/deadlineChanges.js';
 import { canEditTask, canSeeTask, taskVisibilitySql } from '../services/taskAccess.js';
+import { addMember, canSeeProject, maskProjects, moveTask, placeNewTask } from '../services/projects/index.js';
 import { MY_GROUPS, applyDueFilter, healthOf } from '../../../shared/deadlineHealth.js';
 import {
   OUTCOME_STATUSES, completionContext, isDealTask, planDealCompletion, recordDealCompletion,
@@ -45,6 +46,7 @@ const TASK_SELECT = `
          p.ref AS parent_ref, p.title AS parent_title,
          acc.name AS account_name, acc.type AS account_type,
          opp.name AS opportunity_name,
+         pj.name AS project_name, pj.status AS project_status, pms.name AS milestone_name,
          (t.due_date IS NOT NULL AND t.due_date < now() AND t.deferral_id IS NULL AND s.stage NOT IN ('done','cancelled')) AS is_overdue,
          -- comments live in discussion threads now; counting the old table here
          -- would freeze every card's badge at its pre-upgrade number
@@ -84,6 +86,8 @@ const TASK_SELECT = `
     LEFT JOIN tasks p ON p.id = t.parent_task_id
     LEFT JOIN accounts acc ON acc.id = t.account_id
     LEFT JOIN opportunities opp ON opp.id = t.opportunity_id
+    LEFT JOIN projects pj ON pj.id = t.project_id
+    LEFT JOIN project_milestones pms ON pms.id = t.milestone_id
 `;
 
 /**
@@ -128,6 +132,12 @@ const taskInput = z.object({
   account_id: z.number().int().positive().nullable().optional(),
   // and, when it is work on one particular deal, which one
   opportunity_id: z.number().int().positive().nullable().optional(),
+  // the project it belongs to (at most one), and one of that project's milestones
+  project_id: z.number().int().positive().nullable().optional(),
+  milestone_id: z.number().int().positive().nullable().optional(),
+  // giving a project task to someone from another department: add them to the
+  // project too (members see all its tasks). Asked in the dialog; never assumed.
+  add_assignee_to_project: z.boolean().optional(),
 });
 
 /**
@@ -206,6 +216,11 @@ function listFilters(user, q) {
   }
   if (q.task_type) filters.push(`t.task_type = ${push(q.task_type)}`);
   if (q.account_id) filters.push(`t.account_id = ${push(Number(q.account_id))}`);
+  // a project, or "none" for tasks in no project
+  if (q.project_id === 'none') filters.push('t.project_id IS NULL');
+  else if (q.project_id) filters.push(`t.project_id = ${push(Number(q.project_id))}`);
+  if (q.milestone_id === 'none') filters.push('t.milestone_id IS NULL');
+  else if (q.milestone_id) filters.push(`t.milestone_id = ${push(Number(q.milestone_id))}`);
   if (q.tag) filters.push(`${push(q.tag)} = ANY(t.tags)`);
   if (q.open === 'true') filters.push(`s.stage NOT IN ('done','cancelled')`);
   // "due within N days" from now: never the overdue ones (they have their own filter)
@@ -284,7 +299,7 @@ router.get(
     const page = sendable.slice(0, limit);
 
     res.json({
-      tasks: await fullRows(page.map((t) => t.id), c),
+      tasks: await maskProjects(req.currentUser, await fullRows(page.map((t) => t.id), c)),
       total: matching.length,
       shown: page.length,
       truncated: sendable.length > page.length,
@@ -314,7 +329,7 @@ router.get(
       [me],
     );
     const owns = new Map(rows.map((r) => [r.id, r.owns]));
-    const tasks = sortRows(await fullRows(rows.map((r) => r.id), c), 'due_date', c)
+    const tasks = sortRows(await maskProjects(req.currentUser, await fullRows(rows.map((r) => r.id), c)), 'due_date', c)
       .map((t) => ({ ...t, relation: owns.get(t.id) ? 'OWNER' : 'SUPPORTING' }));
     const counts = { OWNER: {}, SUPPORTING: {} };
     for (const t of tasks) counts[t.relation][t.group] = (counts[t.relation][t.group] || 0) + 1;
@@ -408,7 +423,7 @@ router.get(
 
     // opening the task is seeing it: any reminders sent to this person about it are acknowledged
     await acknowledgeTaskReminders(task.id, req.currentUser.id).catch(() => {});
-    const [withHealthTask] = withHealth([task], await deadlineClock());
+    const [withHealthTask] = await maskProjects(req.currentUser, withHealth([task], await deadlineClock()));
     res.json({
       task: withHealthTask,
       comments: comments.rows,
@@ -455,6 +470,20 @@ router.post(
     if (!hasPermission(req.currentUser, 'task.assign') && data.assignee_id !== req.currentUser.id) {
       throw forbidden('You can only assign tasks to yourself');
     }
+
+    // its project: a subtask is always in its parent's project; any other
+    // task may join an open project the person can see
+    let projectId = data.project_id || null;
+    if (data.parent_task_id) {
+      const { rows: parent } = await query('SELECT project_id FROM tasks WHERE id = $1', [data.parent_task_id]);
+      if (!parent[0]) throw badRequest('That parent task does not exist');
+      if (data.project_id !== undefined && (data.project_id || null) !== (parent[0].project_id || null)) {
+        throw badRequest('A subtask is always in its parent\'s project');
+      }
+      projectId = parent[0].project_id || null;
+    }
+    if (projectId && data.project_id && !(await canSeeProject(req.currentUser, projectId))) throw notFound('Project not found');
+    if (data.milestone_id && !projectId) throw badRequest('A milestone needs the task to be in its project');
 
     const task = await withTransaction(async (client) => {
       let statusId = data.status_id;
@@ -537,6 +566,15 @@ router.post(
         meta: { ref: created.ref },
       });
 
+      if (projectId) {
+        await placeNewTask(client, { task: created, projectId, milestoneId: data.milestone_id || null, actor: req.currentUser });
+        created.project_id = projectId;
+        if (data.add_assignee_to_project && created.assignee_id) {
+          const { rows: p } = await client.query('SELECT * FROM projects WHERE id = $1', [projectId]);
+          await addMember(client, { project: p[0], userId: created.assignee_id, actor: req.currentUser });
+        }
+      }
+
       for (const userId of data.collaborator_ids || []) {
         await client.query(
           `INSERT INTO task_collaborators (task_id, user_id, added_by) VALUES ($1, $2, $3)
@@ -560,7 +598,7 @@ router.post(
 
     // its reminders: before the deadline, at it, and after the grace period
     await replanTask(task.id);
-    const rows = withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [task.id])).rows, await deadlineClock());
+    const rows = await maskProjects(req.currentUser, withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [task.id])).rows, await deadlineClock()));
     res.status(201).json({
       task: rows[0],
       // never a refusal — a manager may have good reason — but always said
@@ -606,7 +644,7 @@ router.patch(
       // Every other field still needs normal edit rights.
       const changingOnlyOwnership =
         Object.keys(data).length > 0 &&
-        Object.keys(data).every((field) => field === 'assignee_id' || field === 'follower_id');
+        Object.keys(data).every((field) => field === 'assignee_id' || field === 'follower_id' || field === 'add_assignee_to_project');
 
       const mayHandOver =
         changingOnlyOwnership &&
@@ -660,6 +698,23 @@ router.patch(
     }
     let deadlineRequest = null;
 
+    // Its project and milestone (one place: services/projects). A subtask is
+    // always in its parent's project, so a new parent brings its project.
+    const parentChanging = data.parent_task_id !== undefined && (data.parent_task_id || null) !== (existing.parent_task_id || null);
+    let targetProject = data.project_id !== undefined ? (data.project_id || null) : (existing.project_id || null);
+    if (parentChanging && data.parent_task_id) {
+      const { rows: parent } = await query('SELECT project_id FROM tasks WHERE id = $1', [data.parent_task_id]);
+      if (!parent[0]) throw badRequest('That parent task does not exist');
+      if (data.project_id !== undefined && (data.project_id || null) !== (parent[0].project_id || null)) {
+        throw badRequest('A subtask is always in its parent\'s project');
+      }
+      targetProject = parent[0].project_id || null;
+    }
+    const projectChanging = targetProject !== (existing.project_id || null);
+    const milestoneChanging = data.milestone_id !== undefined && (data.milestone_id || null) !== (existing.milestone_id || null);
+    if (projectChanging && targetProject && !(await canSeeProject(req.currentUser, targetProject))) throw notFound('Project not found');
+    let projectMove = null;
+
     // Finishing deal work says what happened, with evidence and the deal's next
     // step. Checked before anything is written, so a refusal changes nothing.
     const outcome = dealOutcomeInput.parse(req.body);
@@ -678,6 +733,21 @@ router.patch(
 
     const updated = await withTransaction(async (client) => {
       if (pendingDeadline) deadlineRequest = await requestNewDeadline(client, existing, req.currentUser, pendingDeadline);
+      if (projectChanging || milestoneChanging) {
+        projectMove = await moveTask(client, {
+          taskId: id,
+          projectId: targetProject,
+          milestoneId: data.milestone_id !== undefined ? (data.milestone_id || null) : undefined,
+          actor: req.currentUser,
+          // a new parent's project was checked above; otherwise a subtask must match its parent
+          allowSubtask: parentChanging,
+        });
+      }
+      const finalAssignee = data.assignee_id !== undefined ? data.assignee_id : existing.assignee_id;
+      if (data.add_assignee_to_project && targetProject && finalAssignee) {
+        const { rows: p } = await client.query('SELECT * FROM projects WHERE id = $1', [targetProject]);
+        await addMember(client, { project: p[0], userId: finalAssignee, actor: req.currentUser });
+      }
       const fields = [];
       const params = [];
       const set = (column, value) => {
@@ -720,7 +790,7 @@ router.patch(
           'outcome_next_step = NULL', 'outcome_intent_confirmed = NULL');
       }
 
-      if (!fields.length) return existing;
+      if (!fields.length) return { ...existing, previousStage: existing.stage };
 
       params.push(id);
       const { rows } = await client.query(
@@ -830,9 +900,10 @@ router.patch(
 
     // the task changed: its reminders are planned afresh (an old time or owner is cancelled)
     await replanTask(id);
-    const rows = withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [id])).rows, await deadlineClock());
+    const rows = await maskProjects(req.currentUser, withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [id])).rows, await deadlineClock()));
     res.json({
       task: rows[0],
+      project_move: projectMove,
       deadline_request: deadlineRequest,
       availability_warning: rows[0].stage === 'done' ? null
         : await checkAssignment(rows[0].assignee_id, rows[0].due_date).catch(() => null),
@@ -937,7 +1008,7 @@ router.post(
 
     // the task changed: its reminders are planned afresh (an old time or owner is cancelled)
     await replanTask(id);
-    const rows = withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [id])).rows, await deadlineClock());
+    const rows = await maskProjects(req.currentUser, withHealth((await query(`${TASK_SELECT} WHERE t.id = $1`, [id])).rows, await deadlineClock()));
     res.json({
       task: rows[0],
       availability_warning: rows[0].stage === 'done' ? null
@@ -1062,7 +1133,7 @@ router.get(
     const params = [id];
     const visibility = visibilityClause(req.currentUser, params);
     const { rows } = await query(`${TASK_SELECT} WHERE t.id = $1 AND ${visibility}`, params);
-    const task = rows[0];
+    const [task] = await maskProjects(req.currentUser, rows);
     if (!task) throw notFound('Task not found');
 
     const [marks, activity, threads, checklist, subtasks, keyResults, collaborators] =

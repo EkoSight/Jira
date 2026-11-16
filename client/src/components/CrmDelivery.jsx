@@ -4,6 +4,7 @@ import { useRefData, useToast } from '../state/AppState.jsx';
 import { Avatar, Badge, ConfirmButton, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx';
 import { exactMoney } from '../lib/crm.js';
 import { formatDate } from '../lib/format.js';
+import { ProjectForEngagement } from './projects/ProjectLinks.jsx';
 
 /**
  * Delivery, after the deal is won.
@@ -383,6 +384,7 @@ function EngagementCard({ engagement, onChanged }) {
                   </button>
                 ))}
               </div>
+              <ProjectForEngagement engagementId={engagement.id} />
               <Field label="What is in the way?" hint="Saved on the delivery, visible to whoever reviews it">
                 <textarea className="textarea" rows={2}
                   value={notes ?? detail.engagement.blockers ?? ''}

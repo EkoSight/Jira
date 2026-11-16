@@ -151,9 +151,41 @@ export async function spawnNextOccurrence(client, task) {
     [next.id, task.id],
   );
 
+  // its project comes with it (and its milestone while that is open). Key
+  // result and deal links are not carried, as before: carrying a key result
+  // would change how TASK_ROLLUP counts (docs/PROJECTS.md, PD7).
+  await carryProject(client, task, next, task.project_id);
+
   await copyRoutineSubtasks(client, task, next, due);
 
   return next;
+}
+
+/**
+ * Puts a new occurrence in the project the finished one was in, while that
+ * project is open (a completed or cancelled project takes no new tasks), with
+ * the milestone if it is still open, and the engagement sync rule.
+ */
+async function carryProject(client, from, to, projectId) {
+  if (!projectId) return;
+  const { rows } = await client.query(
+    `SELECT p.status, p.engagement_id, m.id AS milestone_id, m.reached_at
+       FROM projects p LEFT JOIN project_milestones m ON m.id = $2 AND m.project_id = p.id
+      WHERE p.id = $1 AND p.archived_at IS NULL`,
+    [projectId, from.milestone_id || null],
+  );
+  const p = rows[0];
+  if (!p || !['PLANNED', 'ACTIVE', 'ON_HOLD'].includes(p.status)) return;
+  const milestoneId = p.milestone_id && !p.reached_at ? p.milestone_id : null;
+  await client.query(
+    'UPDATE tasks SET project_id = $2, milestone_id = $3, engagement_id = COALESCE(engagement_id, $4) WHERE id = $1',
+    [to.id, projectId, milestoneId, p.engagement_id || null],
+  );
+  await client.query(
+    `INSERT INTO project_activity (project_id, actor_id, action, task_id, detail) VALUES ($1, NULL, 'task_added', $2, $3)`,
+    [projectId, to.id, JSON.stringify({ ref: to.ref, recurring: true })],
+  );
+  Object.assign(to, { project_id: projectId, milestone_id: milestoneId });
 }
 
 /**
@@ -227,6 +259,9 @@ export async function copyRoutineSubtasks(client, task, next, due) {
        SELECT $1, title, position, FALSE FROM task_checklist_items WHERE task_id = $2`,
       [rows[0].id, subtask.id],
     );
+
+    // a subtask is always in its parent's project
+    await carryProject(client, subtask, rows[0], next.project_id || null);
   }
 
   return created;

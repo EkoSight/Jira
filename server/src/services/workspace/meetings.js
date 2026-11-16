@@ -23,6 +23,7 @@ import {
 import { addContributor } from './attention.js';
 import { replanRecord } from './reminders.js';
 import { canSeeRecord, validTimeZone } from './access.js';
+import { canSeeProject } from '../projects/index.js';
 
 const dayOf = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : null);
 
@@ -72,6 +73,12 @@ export async function createMeeting(user, input) {
         status === 'SCHEDULED' ? null : (input.scheduling_owner_id || user.id), input.arrange_by || null, input.proposed_at || null, user.id],
     );
     const m = rows[0];
+    // a meeting can belong to a project the person can see
+    if (input.project_id) {
+      if (!(await canSeeProject(user, input.project_id))) throw badRequest('That project is not available to you');
+      await client.query('UPDATE crm_meetings SET project_id = $2 WHERE id = $1', [m.id, input.project_id]);
+      m.project_id = input.project_id;
+    }
     await setParticipants(client, m.id, { userIds: input.participant_user_ids || [], contactIds: [] });
     if (status === 'SCHEDULED' && m.account_id && input.create_prep_tasks) await createPrepTasks(client, m, user);
     if (m.account_id) {

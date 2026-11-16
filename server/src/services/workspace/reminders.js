@@ -92,6 +92,21 @@ export const RULES = {
     description: 'On the revisit date of a deal on hold or nurture, to its owner.',
     defaults: { enabled: true, at: '09:00', chat: true }, entity: 'DEAL', coverable: true,
   },
+  PROJECT_MILESTONE_DUE: {
+    group: 'Projects', label: 'Project milestone coming up',
+    description: '3 calendar days before a milestone that still has open tasks, to the project\'s lead.',
+    defaults: { enabled: true, at: '09:00', chat: true }, entity: 'PROJECT',
+  },
+  PROJECT_TARGET_DATE: {
+    group: 'Projects', label: 'Project target date coming up',
+    description: '7 days before the target date of an active project that is not finished, to its lead.',
+    defaults: { enabled: true, at: '09:00', chat: true }, entity: 'PROJECT',
+  },
+  PROJECT_UPDATE_DUE: {
+    group: 'Projects', label: 'Time for a project update',
+    description: 'When an active project has had no lead\'s update for 14 days, to its lead.',
+    defaults: { enabled: true, at: '09:00', chat: true }, entity: 'PROJECT',
+  },
   PERSONAL: {
     group: 'Your own', label: 'Remind me about this',
     description: 'Reminders you set yourself on a record you can see. Private to you.',

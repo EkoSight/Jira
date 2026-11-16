@@ -315,6 +315,10 @@ const blankTask = (defaults = {}) => ({
   recurrence: 'none',
   // a task created against a lead/partner carries it through
   account_id: defaults.account_id || null,
+  // the project it belongs to, and one of that project's milestones
+  project_id: defaults.project_id || '',
+  milestone_id: defaults.milestone_id || '',
+  parent_task_id: defaults.parent_task_id || null,
 });
 
 const RECURRENCE_OPTIONS = [
@@ -369,6 +373,25 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   const [completing, setCompleting] = useState(null);
 
   const taskTypes = settings?.taskTypes || ['task'];
+  // projects this person can put work in (open ones they can see), with their milestones
+  const projectsOn = settings?.projects?.enabled !== false;
+  const [projectOptions, setProjectOptions] = useState([]);
+  useEffect(() => {
+    if (!projectsOn) return;
+    api.get('/projects/options').then((r) => setProjectOptions(r.projects || [])).catch(() => setProjectOptions([]));
+  }, [projectsOn]);
+  const chosenProject = projectOptions.find((p) => String(p.id) === String(form.project_id));
+  // giving a project task to someone from another department asks whether to add them
+  const [memberAsk, setMemberAsk] = useState(null);
+  useEffect(() => {
+    setMemberAsk(null);
+    if (!form.project_id || !form.assignee_id) return;
+    let cancelled = false;
+    api.get(`/projects/${form.project_id}/member-check`, { user_id: form.assignee_id })
+      .then((r) => { if (!cancelled && r.ask) setMemberAsk({ ...r, add: true }); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [form.project_id, form.assignee_id]);
   // the deadline picker starts from now, so an already-late date cannot be chosen
   const minDeadline = toDateTimeLocal(new Date());
   // one condition for both the staged and the live alignment sections
@@ -405,6 +428,9 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
           progress: data.task.progress,
           tags: data.task.tags || [],
           recurrence: data.task.recurrence || 'none',
+          project_id: data.task.project_id || '',
+          milestone_id: data.task.milestone_id || '',
+          parent_task_id: data.task.parent_task_id || null,
         });
       })
       .catch((err) => toast.error(err))
@@ -480,6 +506,16 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     if (form.status_id) data.status_id = Number(form.status_id);
     if (form.account_id) data.account_id = Number(form.account_id);
     if (dueMoved) data.deadline_reason = deadlineReason.trim();
+    // a subtask follows its parent's project, so it never sends one of its own;
+    // otherwise the project and milestone go only when they changed
+    if (projectsOn && !form.parent_task_id && !task?.project_hidden) {
+      const pid = form.project_id ? Number(form.project_id) : null;
+      const mid = form.milestone_id ? Number(form.milestone_id) : null;
+      if (isNew ? pid : pid !== (task?.project_id || null)) data.project_id = pid;
+      if (isNew ? mid : mid !== (task?.milestone_id || null) || data.project_id !== undefined) data.milestone_id = pid ? mid : null;
+    }
+    if (isNew && form.parent_task_id) data.parent_task_id = form.parent_task_id;
+    if (memberAsk?.ask && memberAsk.add) data.add_assignee_to_project = true;
     return data;
   };
 
@@ -554,13 +590,18 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
             ? {
                 assignee_id: form.assignee_id ? Number(form.assignee_id) : null,
                 follower_id: form.follower_id ? Number(form.follower_id) : null,
+                ...(memberAsk?.ask && memberAsk.add ? { add_assignee_to_project: true } : {}),
               }
             : payload();
 
-          const { task: updated, deadline_request: request } = await api.updateTask(activeId, body);
+          const { task: updated, deadline_request: request, project_move: move } = await api.updateTask(activeId, body);
+          const moveWords = move ? [
+            move.subtasks ? `${move.subtasks} subtask${move.subtasks === 1 ? '' : 's'} moved with it` : null,
+            move.milestone_cleared ? 'its milestone was cleared (it belonged to the other project)' : null,
+          ].filter(Boolean).join('; ') : '';
           toast.success(handOverOnly ? 'Task handed over'
             : request?.status === 'PENDING' ? `Saved. The new deadline is waiting for approval${request.why ? `: ${request.why}` : ''}`
-              : 'Saved');
+              : moveWords ? `Saved: ${moveWords}` : 'Saved');
           setDeadlineReason('');
           setDetail((current) => ({ ...current, task: updated }));
           onSaved?.(updated);
@@ -916,6 +957,51 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                   </select>
                 </Field>
 
+                {projectsOn && (projectOptions.length > 0 || form.project_id) && (
+                  <Field
+                    label="Project"
+                    hint={form.parent_task_id ? 'A subtask is always in its parent\'s project' : task?.project_hidden ? 'In a project you cannot see' : 'Optional: the project this work belongs to'}
+                  >
+                    <select
+                      className="select"
+                      value={form.project_id}
+                      onChange={(e) => setForm((current) => ({ ...current, project_id: e.target.value, milestone_id: '' }))}
+                      disabled={!canEdit || Boolean(form.parent_task_id) || Boolean(task?.project_hidden)}
+                    >
+                      <option value="">No project</option>
+                      {form.project_id && !chosenProject && <option value={form.project_id}>{task?.project_name || 'Current project'}</option>}
+                      {projectOptions.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} · {p.department_name}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+                {isNew && goalsAvailable && chosenProject?.key_results?.length > 0 && (
+                  <fieldset className="field" style={{ border: 0, padding: 0, margin: 0, gridColumn: '1 / -1' }}>
+                    <legend className="field-label">This project supports these key results</legend>
+                    {chosenProject.key_results.map((k) => {
+                      const on = pendingGoals.some((g) => g.id === k.id);
+                      return (
+                        <label key={k.id} className="row small" style={{ gap: 6 }}>
+                          <input type="checkbox" checked={on} onChange={(e) => setPendingGoals((goals) => (e.target.checked ? [...goals, { id: k.id, title: k.title, objective_title: k.objective_title }] : goals.filter((g) => g.id !== k.id)))} />
+                          Also link this task to &quot;{k.title}&quot;
+                        </label>
+                      );
+                    })}
+                    <span className="field-hint">Not linked unless you tick it</span>
+                  </fieldset>
+                )}
+                {projectsOn && chosenProject?.milestones?.length > 0 && (
+                  <Field label="Milestone" hint="Optional: one of the project's checkpoints">
+                    <select className="select" value={form.milestone_id} onChange={set('milestone_id')} disabled={!canEdit}>
+                      <option value="">No milestone</option>
+                      {chosenProject.milestones.filter((m) => !m.reached_at || String(m.id) === String(form.milestone_id)).map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}{m.target_date ? ` · ${String(m.target_date).slice(0, 10)}` : ''}</option>
+                      ))}
+                    </select>
+                  </Field>
+                )}
+
                 <Field label="Status / stage">
                   <select className="select" value={form.status_id} onChange={set('status_id')} disabled={!canEdit}>
                     {isNew && <option value="">Default (first column)</option>}
@@ -954,6 +1040,12 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
                         </option>
                       ))}
                   </select>
+                  {memberAsk?.ask && (
+                    <label className="row small" style={{ gap: 6, marginTop: 6, alignItems: 'flex-start' }}>
+                      <input type="checkbox" checked={memberAsk.add} onChange={(e) => setMemberAsk((m) => ({ ...m, add: e.target.checked }))} />
+                      <span>Add {memberAsk.full_name} to the project? Members see all its tasks.</span>
+                    </label>
+                  )}
                 </Field>
 
                 <Field

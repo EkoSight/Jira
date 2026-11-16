@@ -109,6 +109,12 @@ export default function WorkspaceSettings() {
   const saveRollout = async (rollout) => {
     try { setCfg(await api.put('/workspace/settings', { rollout })); toast.success('Saved'); } catch (err) { toast.error(err); }
   };
+  const saveModule = async (key, on) => {
+    try {
+      setCfg(await api.put('/workspace/settings', { modules: { [key]: on } }));
+      toast.success(`${key === 'projects' ? 'Projects' : 'To-dos'} switched ${on ? 'on' : 'off'}. Reload to see the menu change.`);
+    } catch (err) { toast.error(err); }
+  };
   const saveMode = async (reminderMode) => {
     try { setCfg(await api.put('/workspace/settings', { reminderMode })); toast.success(reminderMode === 'TEST' ? 'Test mode: only you receive workspace reminders' : 'Saved'); } catch (err) { toast.error(err); }
   };
@@ -142,6 +148,21 @@ export default function WorkspaceSettings() {
           )}
         </div>
       </section>
+
+      {cfg.modules && (
+        <section className="card">
+          <div className="card-head"><h2>Projects and to-dos</h2></div>
+          <div className="card-pad stack-sm">
+            <p className="small muted" style={{ margin: 0 }}>Switching one off hides it everywhere: menus, fields, widgets and pages. Nothing is deleted, and tasks keep working.</p>
+            {[['projects', 'Projects', 'Each department\'s projects, with milestones, members and tasks'], ['todos', 'To-dos', 'Everyone\'s private to-dos and Today\'s plan']].map(([key, label, words]) => (
+              <label key={key} className="row small" style={{ gap: 8 }}>
+                <input type="checkbox" checked={cfg.modules[key]} onChange={(e) => saveModule(key, e.target.checked)} />
+                <span><strong>{label}</strong> · {words}</span>
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="card">
         <div className="card-head"><h2>Workspace reminders</h2><Badge tone={cfg.reminderMode === 'LIVE' ? 'good' : 'warning'}>{cfg.reminderMode === 'LIVE' ? 'Live' : cfg.reminderMode === 'TEST' ? 'Test mode' : 'Off'}</Badge></div>

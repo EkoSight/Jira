@@ -10,6 +10,7 @@ import {
 } from '../lib/okr.js';
 import { threadHeadline } from '../lib/threads.js';
 import { formatDate, relativeTime, STAGE_LABEL } from '../lib/format.js';
+import { SupportingProjects } from './projects/ProjectLinks.jsx';
 
 /**
  * Recording where a key result stands.
@@ -436,6 +437,7 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
 
         {tab === 'work' && (
           <div className="stack">
+            <SupportingProjectsFor keyResultId={keyResult.id} />
             <div className="row-between wrap">
               <span className="small muted">
                 The tasks that move this number. Linking does not change the task itself.
@@ -598,6 +600,15 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
  * ten key results makes no extra requests — the old accordion fetched twice per
  * key result the moment it was expanded.
  */
+/** The projects that support this key result (context only), from its detail. */
+function SupportingProjectsFor({ keyResultId }) {
+  const [projects, setProjects] = useState(null);
+  useEffect(() => {
+    api.get(`/key-results/${keyResultId}`).then((r) => setProjects(r.supporting_projects || [])).catch(() => setProjects([]));
+  }, [keyResultId]);
+  return <SupportingProjects projects={projects} />;
+}
+
 export default function KeyResultPanel({ keyResult, tasks = [], canEdit, onChanged, onOpenTask }) {
   const { user, can } = useAuth();
 

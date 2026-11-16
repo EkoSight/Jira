@@ -101,6 +101,7 @@ function DepartmentsTab({ onChanged }) {
               <th>Department</th>
               <th>Key</th>
               <th className="num">Cards</th>
+              <th className="num">Projects</th>
               <th className="num">People</th>
               <th />
             </tr>
@@ -119,6 +120,7 @@ function DepartmentsTab({ onChanged }) {
                 </td>
                 <td><span className="task-ref">{department.key}</span></td>
                 <td className="num tnum">{department.task_count}</td>
+                <td className="num tnum">{department.project_count ?? 0}</td>
                 <td className="num tnum">{department.member_count}</td>
                 <td className="num">
                   {can('department.manage') && (

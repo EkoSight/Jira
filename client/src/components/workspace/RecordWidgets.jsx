@@ -299,6 +299,59 @@ function ApplicationsWidget({ widget, refreshKey }) {
   );
 }
 
+/** My projects: each project with this person's open tasks in it, "No project" last; counts are the board's. */
+function ProjectsWidget({ widget, refreshKey }) {
+  const scope = widget.config?.scope || 'mine';
+  const rows = rowsOf(widget);
+  const state = useWidgetData(() => api.get('/workspace/widgets/projects', { scope, rows }), [scope, rows, refreshKey]);
+  const d = state.data;
+  const total = d ? d.groups.length : null;
+  const mine = scope === 'mine';
+  return (
+    <WidgetFrame widget={widget} state={state} count={total} drill={mine ? '/projects' : '/projects?mine=0'} scope={SCOPE_LABEL[scope]}
+      empty={d && !d.groups.length && !d.no_project?.count ? (mine ? 'You are in no project yet, and have no open tasks.' : 'No open projects here.') : null}>
+      {d?.groups.map((g) => (
+        <div key={g.project.id} className="ws-project">
+          <div className="ws-project-head">
+            <Link to={g.project_link} className="ws-project-name">{g.project.name}</Link>
+            <span className="row wrap" style={{ gap: 4 }}>
+              {g.numbers.health_from_tasks && <Badge tone={{ ON_TRACK: 'good', AT_RISK: 'warning', OFF_TRACK: 'critical' }[g.numbers.health_from_tasks.code]}>{{ ON_TRACK: 'On track', AT_RISK: 'At risk', OFF_TRACK: 'Off track' }[g.numbers.health_from_tasks.code]}</Badge>}
+              {g.lead_extras?.overdue > 0 && <Badge tone="critical">{g.lead_extras.overdue} overdue</Badge>}
+              {g.lead_extras?.unassigned > 0 && <Badge tone="warning">{g.lead_extras.unassigned} with no owner</Badge>}
+            </span>
+          </div>
+          <div className="ws-reason ws-pad-x">
+            {g.numbers.total ? `${g.numbers.done} of ${g.numbers.total} done` : 'No tasks yet'}
+            {g.numbers.next_milestone ? ` · Next: ${g.numbers.next_milestone.name}${g.numbers.next_milestone.target_date ? `, ${whenWords({ date: g.numbers.next_milestone.target_date })}` : ''}` : ''}
+            {g.is_lead ? ' · You lead it' : ''}
+          </div>
+          {g.tasks.length > 0 && (
+            <ul className="ws-list">
+              {g.tasks.map((t) => (
+                <li key={t.id}><Link className="ws-row" to={`?task=${t.id}`}><span className="grow truncate"><span className="task-ref">{t.ref}</span> {t.title}{!mine && t.assignee_name ? <span className="ws-reason"> · {t.assignee_name}</span> : null}</span><Badge tone={t.health?.tone || 'neutral'}>{t.health?.text || 'Open'}</Badge></Link></li>
+              ))}
+            </ul>
+          )}
+          {mine && !g.tasks.length && <div className="small muted ws-pad-x">No open tasks of yours in it</div>}
+          {g.count > g.tasks.length && <div className="small muted ws-more"><Link to={g.link}>{g.count - g.tasks.length} more on the board</Link></div>}
+        </div>
+      ))}
+      {d?.no_project && d.no_project.count > 0 && (
+        <div className="ws-project">
+          <div className="ws-project-head"><span className="ws-project-name">No project</span><span className="small muted">{d.no_project.count}</span></div>
+          <ul className="ws-list">
+            {d.no_project.tasks.map((t) => (
+              <li key={t.id}><Link className="ws-row" to={`?task=${t.id}`}><span className="grow truncate"><span className="task-ref">{t.ref}</span> {t.title}</span><Badge tone={t.health?.tone || 'neutral'}>{t.health?.text || 'Open'}</Badge></Link></li>
+            ))}
+          </ul>
+          {d.no_project.count > d.no_project.tasks.length && <div className="small muted ws-more"><Link to={d.no_project.link}>{d.no_project.count - d.no_project.tasks.length} more on the board</Link></div>}
+        </div>
+      )}
+    </WidgetFrame>
+  );
+}
+
+registerWidget('projects', ProjectsWidget);
 registerWidget('meetings', MeetingsWidget);
 registerWidget('applications', ApplicationsWidget);
 registerWidget('summary', SummaryWidget);

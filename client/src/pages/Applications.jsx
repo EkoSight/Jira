@@ -11,6 +11,7 @@ import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, Modal, Spinner } from '../components/ui.jsx';
 import RemindMe from '../components/workspace/RemindMe.jsx';
 import { OriginPanel } from '../components/workspace/OriginPanel.jsx';
+import { ProjectsForDeal } from '../components/projects/ProjectLinks.jsx';
 import { useWidgetData } from '../components/workspace/Widgets.jsx';
 import { whenWords } from '../lib/workspace.js';
 
@@ -333,6 +334,8 @@ export function ApplicationDetail() {
       </div>
 
       <OriginPanel kind="application" id={a.id} canEdit={d.can_edit} accountId={a.account_id} />
+
+      <ProjectsForDeal opportunityId={a.id} won={a.status === 'WON'} />
 
       {dialog === 'submit' && <SubmitDialog app={a} onClose={() => setDialog(null)} onDone={() => { setDialog(null); reload(); }} />}
       {dialog === 'update' && <UpdateDialog app={a} kinds={d.update_kinds} onClose={() => setDialog(null)} onDone={() => { setDialog(null); reload(); }} />}

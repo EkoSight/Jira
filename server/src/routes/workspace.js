@@ -27,6 +27,7 @@ import { RULES, cancelMine, effectivePref, occurrencesFor, replanMine, replanRec
 import { addPersonalReminder, cancelPersonalReminder, changePersonalReminder, myPersonalReminders } from '../services/workspace/personal.js';
 import { ENTITY_TYPES } from '../services/workspace/access.js';
 import '../services/workspace/rules.js';
+import { projectsWidget } from '../services/projects/workspace.js';
 import { cancelMeeting, confirmMeeting, createMeeting, myMeetings, proposeTime, recordOutcome, rescheduleMeeting } from '../services/workspace/meetings.js';
 import { canSeeRecord, recordLabel, timeZoneList, validTimeZone } from '../services/workspace/access.js';
 import { getMeeting } from '../services/meetings.js';
@@ -34,7 +35,7 @@ import { recordAuditEvent } from '../services/audit.js';
 import { recordHistory, canWorkOnOpportunity } from '../services/opportunities.js';
 import { withTransaction } from '../db/pool.js';
 import { chatRoute, reminderSettings } from '../services/taskReminders.js';
-import { widgetAccess } from '../../../shared/workspaceWidgets.js';
+import { scopesFor, widgetAccess } from '../../../shared/workspaceWidgets.js';
 
 const router = Router();
 
@@ -156,6 +157,15 @@ router.get('/widgets/summary', asyncHandler(async (req, res) => {
  * outside the applications pipeline: stage, next action and date, waiting,
  * last update from the customer. "No next action" and "Overdue" are separate.
  */
+/** My projects: work grouped by project, "No project" last; each count is the board's for the same filters. */
+router.get('/widgets/projects', asyncHandler(async (req, res) => {
+  const who = await mustUse(req, 'projects');
+  const scope = ['mine', 'department', 'all'].includes(req.query.scope) ? req.query.scope : 'mine';
+  if (!scopesFor('projects', who).includes(scope)) throw forbidden('That scope is not available to you');
+  const rows = Math.min(Math.max(Number(req.query.rows) || 5, 1), 20);
+  res.json(await projectsWidget(req.currentUser, { scope, rows }));
+}));
+
 router.get('/widgets/deals', asyncHandler(async (req, res) => {
   const who = await mustUse(req, 'deals');
   const team = req.query.scope === 'team';
@@ -314,6 +324,8 @@ const meetingBody = z.object({
   lead_id: z.number().int().positive().nullable().optional(),
   participant_user_ids: z.array(z.number().int().positive()).max(50).optional(),
   create_prep_tasks: z.boolean().optional(),
+  // the project the meeting belongs to (optional)
+  project_id: z.number().int().positive().nullable().optional(),
 });
 router.post('/meetings', asyncHandler(async (req, res) => {
   res.status(201).json({ meeting: await createMeeting(req.currentUser, meetingBody.parse(req.body || {})) });
@@ -482,15 +494,26 @@ router.put('/templates/:key', requirePermission('settings.manage'), asyncHandler
   res.json({ template: await saveTemplate(req.currentUser, key, templateInput.parse(req.body || {})) });
 }));
 
+/** The workspace settings, with the on/off state of the Projects and To-dos modules. */
+async function settingsWithModules() {
+  const s = await getSettings();
+  return { ...(await workspaceSettings(s)), modules: { projects: s.projects?.enabled !== false, todos: s.todos?.enabled !== false } };
+}
+
 router.get('/settings', requirePermission('settings.manage'), asyncHandler(async (req, res) => {
-  res.json(await workspaceSettings());
+  res.json(await settingsWithModules());
 }));
 
 router.put('/settings', requirePermission('settings.manage'), asyncHandler(async (req, res) => {
   const body = z.object({
     rollout: z.object({ mode: z.enum(ROLLOUT_MODES), departmentIds: z.array(z.number().int().positive()).max(100) }).optional(),
     reminderMode: z.enum(REMINDER_MODES).optional(),
+    // switching a module off hides it everywhere; its data is kept
+    modules: z.object({ projects: z.boolean().optional(), todos: z.boolean().optional() }).optional(),
   }).parse(req.body || {});
+  for (const key of ['projects', 'todos']) {
+    if (body.modules?.[key] !== undefined) await updateSetting(key, { enabled: body.modules[key] }, req.currentUser.id);
+  }
   const current = (await getSettings()).workspace || {};
   const next = { ...current };
   if (body.rollout) next.rollout = body.rollout;
@@ -500,7 +523,7 @@ router.put('/settings', requirePermission('settings.manage'), asyncHandler(async
     if (body.reminderMode === 'TEST') next.testRecipientId = req.currentUser.id;
   }
   await updateSetting('workspace', next, req.currentUser.id);
-  res.json(await workspaceSettings());
+  res.json(await settingsWithModules());
 }));
 
 // people with settings.manage may look at another person's effective template (never their layout)

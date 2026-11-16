@@ -69,6 +69,11 @@ export default function TaskCard({ task, onOpen, onOpenParent, draggable, onDrag
         </div>
 
         <div className="task-card-title">{task.title}</div>
+        {task.project_name && (
+          <div className="task-card-project" title={`Project: ${task.project_name}${task.milestone_name ? ` · ${task.milestone_name}` : ''}`}>
+            <Icon name="pipeline" size={10} /> {task.project_name}{task.milestone_name ? <span className="muted"> · {task.milestone_name}</span> : null}
+          </div>
+        )}
 
         {!compact && task.progress > 0 && task.progress < 100 && (
           <div className="progress-track">

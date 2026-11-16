@@ -13,7 +13,7 @@ import { managedDepartmentIds } from '../services/taskPeople.js';
 const router = Router();
 
 // only the board's own filters are kept, so a saved view cannot carry anything else
-const ALLOWED = new Set(['department_id', 'assignee_id', 'supporter_id', 'priority', 'stage', 'status_id', 'search', 'due', 'due_from', 'due_to', 'sort', 'exclude_stage', 'view', 'show_done']);
+const ALLOWED = new Set(['department_id', 'assignee_id', 'supporter_id', 'priority', 'stage', 'status_id', 'search', 'due', 'due_from', 'due_to', 'sort', 'exclude_stage', 'view', 'show_done', 'project_id', 'milestone_id', 'group_by']);
 const cleanQuery = (raw) => {
   const params = new URLSearchParams(String(raw || '').replace(/^\?/, ''));
   const out = new URLSearchParams();

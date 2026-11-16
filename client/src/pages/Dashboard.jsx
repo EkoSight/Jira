@@ -8,6 +8,7 @@ import TaskDialog from '../components/TaskDialog.jsx';
 import { AwayBadge, AwayCard } from '../components/Availability.jsx';
 import { TodayAttendanceCard } from '../components/Attendance.jsx';
 import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
+import { MyProjectsCard } from '../components/projects/ProjectLinks.jsx';
 import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -201,6 +202,7 @@ export default function Dashboard({ offerWorkspace = false }) {
       )}
 
       <SuperAdminClaim />
+      <MyProjectsCard />
       <TodayAttendanceCard hideWhenUntracked />
 
       <OverviewStats summary={summary} goToBoard={goToBoard} />

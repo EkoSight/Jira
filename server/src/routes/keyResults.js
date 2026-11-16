@@ -22,6 +22,8 @@ import {
   logOkrActivity,
 } from '../services/okr.js';
 import { visibilityClause, canAccess } from './tasks.js';
+import { PROJECT_SELECT, projectNumbers, projectVisibilitySql } from '../services/projects/index.js';
+import { getSettings } from '../services/settings.js';
 
 import { canRaiseReview, listMessages, listThreads } from '../services/threads.js';
 
@@ -130,8 +132,21 @@ router.get(
       threads.map(async (t) => ({ ...t, messages: await listMessages(t.id) })),
     );
 
+    // the projects that support it (context only: they change none of its numbers)
+    const projectParams = [keyResult.id];
+    const projectsVisible = projectVisibilitySql(req.currentUser, projectParams);
+    const { rows: supporting } = (await getSettings()).projects?.enabled === false
+      ? { rows: [] }
+      : await query(
+        `${PROJECT_SELECT} JOIN project_key_result_links pk ON pk.project_id = p.id
+          WHERE pk.key_result_id = $1 AND p.archived_at IS NULL AND ${projectsVisible} ORDER BY p.name`,
+        projectParams,
+      );
+    const supportingNumbers = await projectNumbers(req.currentUser, supporting);
+
     res.json({
       key_result: keyResult,
+      supporting_projects: supporting.map((p) => ({ id: p.id, name: p.name, status: p.status, department_name: p.department_name, lead_name: p.lead_name, numbers: supportingNumbers.get(p.id) })),
       check_ins: checkIns.rows,
       activity: activity.rows,
       threads: withMessages,

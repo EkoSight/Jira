@@ -5,6 +5,8 @@
  * task asks here, so a task can never be visible on one screen and hidden on
  * another. Being tagged on a card grants access to it regardless of
  * department — that is the whole point of tagging someone from another team.
+ * The members of a task's project see it too, whichever department it is in:
+ * that is what lets a project run across departments (approved by the owner).
  */
 import { query } from '../db/pool.js';
 import { hasPermission } from '../lib/permissions.js';
@@ -25,6 +27,8 @@ export function taskVisibilitySql(user, params, alias = 't') {
     OR ${alias}.created_by = ${uid}
     OR ${alias}.department_id = ${dept}
     OR EXISTS (SELECT 1 FROM task_collaborators tc WHERE tc.task_id = ${alias}.id AND tc.user_id = ${uid})
+    OR (${alias}.project_id IS NOT NULL
+        AND EXISTS (SELECT 1 FROM project_members tpm WHERE tpm.project_id = ${alias}.project_id AND tpm.user_id = ${uid}))
   )`;
 }
 

@@ -16,6 +16,7 @@ const ACTIONS = [
 // What the overdue list can be filtered by. The first four are always shown.
 const FILTERS = [
   { key: 'project_id', label: 'Project', all: 'All projects', none: 'No projects', main: true },
+  { key: 'parent_id', label: 'Parent task', all: 'Any parent task', none: 'No parent tasks' },
   { key: 'goal_id', label: 'Goal', all: 'All goals', none: 'No goals linked', main: true },
   { key: 'department_id', label: 'Department', all: 'All departments', none: 'No departments', main: true },
   { key: 'assignee_id', label: 'Owner', all: 'Any owner', none: 'No owners', main: true },
@@ -30,7 +31,7 @@ const FILTERS = [
 ];
 const AGES = [['', 'Any time overdue'], ['1', 'Over a day late'], ['7', 'Over a week late'], ['30', 'Over a month late']];
 const SORTS = [['', 'Oldest first'], ['newest', 'Most recent first'], ['priority', 'Highest priority first']];
-const GROUPS = [['', 'No grouping'], ['project', 'Group by project'], ['goal', 'Group by goal'], ['department', 'Group by department'], ['owner', 'Group by owner']];
+const GROUPS = [['', 'No grouping'], ['project', 'Group by project'], ['parent', 'Group by parent task'], ['goal', 'Group by goal'], ['department', 'Group by department'], ['owner', 'Group by owner']];
 const SCOPES = [['mine', 'Mine'], ['team', 'My team'], ['all', 'All']];
 // URL keys that only change how the page shows the list, not what the server returns
 const VIEW_ONLY = ['group'];
@@ -38,10 +39,11 @@ const words = (text) => String(text).replace(/[-_]/g, ' ').replace(/^./, (c) => 
 
 /** The group a task falls under, as [key, heading]. */
 function groupOf(t, by) {
-  if (by === 'project') {
+  if (by === 'project') return t.project_id ? [`j${t.project_id}`, t.project_name] : ['', 'Not in a project'];
+  if (by === 'parent') {
     if (t.parent_task_id) return [`p${t.parent_task_id}`, `${t.parent_ref} ${t.parent_title}`];
     if (t.subtask_count > 0) return [`p${t.id}`, `${t.ref} ${t.title}`];
-    return ['', 'Not in a project'];
+    return ['', 'No parent task'];
   }
   if (by === 'goal') return t.goals?.length ? [`g${t.goals[0].id}`, t.goals[0].title] : ['', 'Not linked to a goal'];
   if (by === 'department') return [`d${t.department_id}`, t.department_name];
@@ -228,7 +230,7 @@ export default function Review() {
   };
   const renderRow = (t) => {
     const choice = choices[t.id];
-    const project = t.parent_task_id ? `${t.parent_ref} ${t.parent_title}` : null;
+    const parent = t.parent_task_id ? `${t.parent_ref} ${t.parent_title}` : null;
     return (
       <div key={t.id} className="review-row">
         <div className="grow stack-xs">
@@ -247,8 +249,9 @@ export default function Review() {
           </div>
           <div className="review-context small">
             <span>{t.department_name}</span>
-            {group !== 'project' && project && <span>Project: {project}</span>}
-            {group !== 'project' && !project && t.subtask_count > 0 && <span>Project, {t.subtask_count} subtask{t.subtask_count === 1 ? '' : 's'}</span>}
+            {group !== 'project' && t.project_name && <span>Project: {t.project_name}</span>}
+            {group !== 'parent' && parent && <span>Parent: {parent}</span>}
+            {group !== 'parent' && !parent && t.subtask_count > 0 && <span>Parent of {t.subtask_count} subtask{t.subtask_count === 1 ? '' : 's'}</span>}
             {(t.goals || []).filter((g, i) => group !== 'goal' || i > 0).map((g) => <span key={g.id}>Goal: {g.title}</span>)}
             {t.account_name && <span>{t.account_name}{t.opportunity_name ? ` · ${t.opportunity_name}` : ''}</span>}
             {(t.tags || []).map((tag) => <span key={tag} className="kind-chip is-static kind-info">{tag}</span>)}

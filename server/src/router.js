@@ -32,6 +32,8 @@ import payrollRoutes from './routes/payroll.js';
 import standupRoutes from './routes/standup.js';
 import workspaceRoutes from './routes/workspace.js';
 import applicationRoutes from './routes/applications.js';
+import projectRoutes from './routes/projects.js';
+import { requireProjectsEnabled } from './middleware/modules.js';
 import { requireAttendance } from './services/attendance.js';
 import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
 import marketingRoutes from './routes/marketing.js';
@@ -108,6 +110,8 @@ export function createTaskFlowRouter() {
   router.use('/standup', standupRoutes);
   // My workspace: the caller's own home, layout and widget data
   router.use('/workspace', workspaceRoutes);
+  // projects: each department's projects, their milestones, members and tasks
+  router.use('/projects', requireProjectsEnabled, projectRoutes);
   // your own Google Chat link and alerts; the admin's view of the set-up
   router.use('/chat', chatRoutes);
 

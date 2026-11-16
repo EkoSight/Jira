@@ -16,9 +16,15 @@ const iso = (local) => (local ? new Date(local).toISOString() : null);
 
 function NewMeeting({ onClose, onDone, defaults = {} }) {
   const toast = useToast();
-  const { users } = useRefData();
+  const { users, settings } = useRefData();
   const { user } = useAuth();
-  const [f, setF] = useState({ title: '', objective: '', confirmed: false, when: '', arrange_by: '', location: '', meeting_url: '', participants: [] });
+  const [f, setF] = useState({ title: '', objective: '', confirmed: false, when: '', arrange_by: '', location: '', meeting_url: '', participants: [], project_id: defaults.project_id || '' });
+  // the projects it can belong to (open ones this person can see)
+  const [projects, setProjects] = useState([]);
+  useEffect(() => {
+    if (settings?.projects?.enabled === false) return;
+    api.get('/projects/options').then((r) => setProjects(r.projects || [])).catch(() => setProjects([]));
+  }, [settings?.projects?.enabled]);
   const save = async () => {
     try {
       await api.post('/workspace/meetings', {
@@ -30,6 +36,7 @@ function NewMeeting({ onClose, onDone, defaults = {} }) {
         participant_user_ids: f.participants.map(Number),
         ...(defaults.opportunity_id ? { opportunity_id: Number(defaults.opportunity_id) } : {}),
         ...(defaults.lead_id ? { lead_id: Number(defaults.lead_id) } : {}),
+        ...(f.project_id ? { project_id: Number(f.project_id) } : {}),
       });
       toast.success('Meeting added. No invitation was sent to anyone');
       onDone();
@@ -54,6 +61,14 @@ function NewMeeting({ onClose, onDone, defaults = {} }) {
           <label className="field"><span className="field-label">Place (optional)</span><input className="input" value={f.location} onChange={(e) => setF({ ...f, location: e.target.value })} /></label>
           <label className="field"><span className="field-label">Online link (optional)</span><input className="input" value={f.meeting_url} onChange={(e) => setF({ ...f, meeting_url: e.target.value })} /></label>
         </div>
+        {projects.length > 0 && (
+          <label className="field"><span className="field-label">Project (optional)</span>
+            <select className="select" value={f.project_id} onChange={(e) => setF({ ...f, project_id: e.target.value })}>
+              <option value="">No project</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.department_name}</option>)}
+            </select>
+          </label>
+        )}
         <label className="field"><span className="field-label">Colleagues taking part</span>
           <select className="select" multiple size={5} value={f.participants} onChange={(e) => setF({ ...f, participants: [...e.target.selectedOptions].map((o) => o.value) })}>
             {users.filter((u) => u.id !== user.id && u.is_active !== false).map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
@@ -167,7 +182,7 @@ export default function Meetings() {
           )}
         </section>
       ))}
-      {creating && <NewMeeting defaults={{ opportunity_id: params.get('opportunity_id'), lead_id: params.get('lead_id') }} onClose={() => setCreating(false)} onDone={() => { setCreating(false); setBump((b) => b + 1); }} />}
+      {creating && <NewMeeting defaults={{ opportunity_id: params.get('opportunity_id'), lead_id: params.get('lead_id'), project_id: params.get('project_id') }} onClose={() => setCreating(false)} onDone={() => { setCreating(false); setBump((b) => b + 1); }} />}
       {acting && <Act meeting={acting} onClose={() => setActing(null)} onDone={() => { setActing(null); setBump((b) => b + 1); }} />}
     </div>
   );

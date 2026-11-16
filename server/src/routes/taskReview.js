@@ -22,13 +22,14 @@ import {
   resumeDeferred, taskHistory, withdrawChange,
 } from '../services/deadlineChanges.js';
 import { canAccess } from './tasks.js';
+import { maskProjects } from '../services/projects/index.js';
 
 const router = Router();
 const id = (v) => Number(v);
 
 const TASKS = `SELECT t.id, t.ref, t.title, t.due_date, t.original_due_date, t.due_date_changes, t.review_date, t.deferral_id, t.next_action,
          t.assignee_id, t.reporter_id, t.department_id, t.priority, t.status_id, t.blocked_reason, t.account_id, t.opportunity_id,
-         t.parent_task_id, t.task_type, t.tags, t.follower_id,
+         t.parent_task_id, t.task_type, t.tags, t.follower_id, t.project_id, pj.name AS project_name,
          s.stage, s.name AS status_name, s.color AS status_color, u.full_name AS assignee_name, u.avatar_color AS assignee_color,
          d.name AS department_name, r.full_name AS reporter_name, f.full_name AS follower_name,
          p.ref AS parent_ref, p.title AS parent_title, acc.name AS account_name, opp.name AS opportunity_name,
@@ -41,24 +42,26 @@ const TASKS = `SELECT t.id, t.ref, t.title, t.due_date, t.original_due_date, t.d
          (SELECT row_to_json(b) FROM task_blocks b WHERE b.task_id = t.id AND b.status IN ('PENDING', 'ACCEPTED') ORDER BY b.id DESC LIMIT 1) AS open_block
     FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id JOIN departments d ON d.id = t.department_id
     LEFT JOIN users u ON u.id = t.assignee_id LEFT JOIN users r ON r.id = t.reporter_id LEFT JOIN users f ON f.id = t.follower_id
-    LEFT JOIN tasks p ON p.id = t.parent_task_id
+    LEFT JOIN tasks p ON p.id = t.parent_task_id LEFT JOIN projects pj ON pj.id = t.project_id
     LEFT JOIN accounts acc ON acc.id = t.account_id LEFT JOIN opportunities opp ON opp.id = t.opportunity_id`;
 
 const DAY_MS = 86_400_000;
 
 /**
  * What each overdue task can be filtered by, and the value(s) it has for each:
- * department, owner, who asked for it, supporters, project (the parent task
- * that groups subtasks; a parent counts as its own project), goal, lead or
- * organisation, deal, tag, priority, status and type.
+ * department, owner, who asked for it, supporters, project (Projects), parent
+ * task (a parent and its subtasks; a parent counts as its own group), goal,
+ * lead or organisation, deal, tag, priority, status and type.
  */
 const FACETS = {
   department_id: (t) => [[t.department_id, t.department_name]],
   assignee_id: (t) => [[t.assignee_id || 'none', t.assignee_name || 'No owner']],
   reporter_id: (t) => (t.reporter_id ? [[t.reporter_id, t.reporter_name]] : []),
   supporter_id: (t) => [...(t.follower_id ? [[t.follower_id, t.follower_name]] : []), ...(t.tagged || []).map((p) => [p.id, p.name])],
-  // a subtask belongs to its parent's project; a task with subtasks is a project itself
-  project_id: (t) => [
+  // the project the task belongs to (Projects), when the person can see it
+  project_id: (t) => (t.project_id ? [[t.project_id, t.project_name]] : []),
+  // a parent task and its subtasks: a subtask under its parent; a task with subtasks is its own group
+  parent_id: (t) => [
     ...(t.parent_task_id ? [[t.parent_task_id, `${t.parent_ref} ${t.parent_title}`]] : []),
     ...(t.subtask_count > 0 ? [[t.id, `${t.ref} ${t.title}`]] : []),
   ],
@@ -90,7 +93,8 @@ router.get('/overdue', asyncHandler(async (req, res) => {
     ? await query('SELECT parent_task_id AS id, COUNT(*)::int AS n FROM tasks WHERE parent_task_id = ANY($1::int[]) AND is_archived = FALSE GROUP BY parent_task_id', [ids])
     : { rows: [] };
   const subtasks = new Map(parents.map((p) => [p.id, p.n]));
-  const base = withHealth(rows, c).map((t) => ({ ...t, subtask_count: subtasks.get(t.id) || 0, mine: t.assignee_id === req.currentUser.id }));
+  // a project's name only for people who can see the project
+  const base = (await maskProjects(req.currentUser, withHealth(rows, c))).map((t) => ({ ...t, subtask_count: subtasks.get(t.id) || 0, mine: t.assignee_id === req.currentUser.id }));
 
   // the filters asked for: each one narrows; several values of one filter are "any of"
   const q = req.query;

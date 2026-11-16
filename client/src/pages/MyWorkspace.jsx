@@ -142,6 +142,13 @@ function WidgetSettings({ widget, catalogue, onSave, onClose }) {
             {!scopes.includes('team') && def.scopes.includes('team') && <span className="field-hint">My team is offered to people whose access already shows team data.</span>}
           </label>
         )}
+        {def.settings.includes('group') && (
+          <label className="field"><span className="field-label">Group</span>
+            <select className="select" value={c.group || 'none'} onChange={(e) => set('group', e.target.value)}>
+              <option value="none">No grouping</option><option value="project">By project</option>
+            </select>
+          </label>
+        )}
         {def.settings.includes('view') && (
           <label className="field"><span className="field-label">Show</span>
             <select className="select" value={c.view || 'today'} onChange={(e) => set('view', e.target.value)}>

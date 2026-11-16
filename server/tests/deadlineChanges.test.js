@@ -244,9 +244,9 @@ test('the overdue review screen: mine and my scope; the preview writes nothing; 
   assert.ok(waiting.blocks.some((b) => b.task_id === dealTask));
 });
 
-test('the overdue review filters by project, goal, department, person, tag and age, and lists every choice with its count', async (t) => {
+test('the overdue review filters by parent task, goal, department, person, tag and age, and lists every choice with its count', async (t) => {
   if (skip(t)) return;
-  // a second department, a project (parent task) with two late subtasks, a goal, tags and a supporter
+  // a second department, a parent task with two late subtasks, a goal, tags and a supporter
   const { rows: [field] } = await query(`INSERT INTO departments (key, name, color, position) VALUES ('FLD', 'Field', '#2a9d6a', 2) RETURNING id`);
   const project = await mkTask({ title: 'Project: launch the soil kit', inMs: -2 * DAY });
   const sub1 = await mkTask({ title: 'Kit: print the leaflets', inMs: -10 * DAY });
@@ -270,7 +270,7 @@ test('the overdue review filters by project, goal, department, person, tag and a
   // every choice is listed with its count, over the unfiltered list
   const option = (key, label) => all.facets[key].find((o) => o.label === label);
   assert.equal(option('department_id', 'Field').count, 1);
-  assert.equal(option('project_id', `DC-${refN - 3} Project: launch the soil kit`).count, 3, 'the project and its two subtasks');
+  assert.equal(option('parent_id', `DC-${refN - 3} Project: launch the soil kit`).count, 3, 'the project and its two subtasks');
   assert.equal(option('goal_id', 'Grow kit sales').count, 2);
   assert.equal(option('tag', 'monsoon').count, 1);
   assert.ok(option('supporter_id', 'Lead Sample') && option('supporter_id', 'Ravi Sample'), 'followed and tagged both count as supporting');
@@ -278,7 +278,7 @@ test('the overdue review filters by project, goal, department, person, tag and a
 
   // each filter narrows to exactly what it says
   assert.deepEqual(ids_(await get(`?department_id=${field.id}`)), [fieldTask]);
-  assert.deepEqual(ids_(await get(`?project_id=${project}`)), [project, sub1, sub2].sort((a, b) => a - b));
+  assert.deepEqual(ids_(await get(`?parent_id=${project}`)), [project, sub1, sub2].sort((a, b) => a - b));
   assert.deepEqual(ids_(await get(`?goal_id=${goal.id}`)), [sub1, fieldTask].sort((a, b) => a - b));
   assert.deepEqual(ids_(await get('?tag=trial')), [fieldTask]);
   assert.deepEqual(ids_(await get(`?supporter_id=${ids.ravi}`)), [sub1]);
@@ -287,10 +287,10 @@ test('the overdue review filters by project, goal, department, person, tag and a
   assert.ok((await get('?overdue_days=7')).tasks.some((x) => x.id === sub1));
   // several filters together: all must hold; several values of one filter: any of them
   assert.deepEqual(ids_(await get(`?goal_id=${goal.id}&department_id=${ids.dept}`)), [sub1]);
-  assert.deepEqual(ids_(await get(`?department_id=${field.id}&project_id=${project}`)), []);
-  const either = await get(`?tag=trial&project_id=${project}`);
+  assert.deepEqual(ids_(await get(`?department_id=${field.id}&parent_id=${project}`)), []);
+  const either = await get(`?tag=trial&parent_id=${project}`);
   assert.equal(either.matching, 0, 'different filters are "and"');
-  assert.deepEqual(ids_(await get(`?assignee_id=${ids.ravi},${ids.isha}&project_id=${project}`)), [project, sub1, sub2].sort((a, b) => a - b));
+  assert.deepEqual(ids_(await get(`?assignee_id=${ids.ravi},${ids.isha}&parent_id=${project}`)), [project, sub1, sub2].sort((a, b) => a - b));
   assert.deepEqual(ids_(await get('?search=trial plots')), [fieldTask]);
   // each filter's counts follow the other filters: within Field, only Field's owner is counted
   const inField = await get(`?department_id=${field.id}`);
@@ -306,7 +306,7 @@ test('the overdue review filters by project, goal, department, person, tag and a
   assert.ok(sorted.tasks.every((x, i, a) => i === 0 || new Date(a[i - 1].due_date) >= new Date(x.due_date)));
 
   // filters never widen what a person may see: a colleague asking for the project sees only their own subtask
-  assert.deepEqual(ids_(await get(`?project_id=${project}`, tokens.ravi)), [sub2]);
+  assert.deepEqual(ids_(await get(`?parent_id=${project}`, tokens.ravi)), [sub2]);
   // the goal list leaves out archived goals
   await query('UPDATE objectives SET is_archived = TRUE WHERE id = $1', [goal.id]);
   assert.equal((await get('')).facets.goal_id.length, 0);

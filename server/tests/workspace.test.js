@@ -94,7 +94,8 @@ test('the template that applies: department first, then role, then everyone', as
   const again = ok(await call('GET', '/workspace', { token: tokens.asha }));
   assert.equal(again.template.key, 'partnerships');
   assert.equal(again.template.matched, 'department');
-  assert.deepEqual(again.widgets.map((w) => w.type), ['summary', 'attention', 'meetings', 'applications', 'deals', 'my_tasks', 'waiting']);
+  // 038_projects.sql adds "My projects" at the end of this template (PD6)
+  assert.deepEqual(again.widgets.map((w) => w.type), ['summary', 'attention', 'meetings', 'applications', 'deals', 'my_tasks', 'waiting', 'projects']);
   assert.equal((await query('SELECT count(*)::int AS n FROM user_dashboards')).rows[0].n, 0, 'nothing is copied until someone saves');
 });
 

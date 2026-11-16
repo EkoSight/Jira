@@ -19,6 +19,7 @@ import { SCOPE_LABEL, WIDGET_TYPES, boardLink, taskWidgetFilters, widgetTitle } 
 import { addDays } from '../../../../shared/deadlineHealth.js';
 import { deadlineClock } from '../../lib/format.js';
 import { localDay, whenWords } from '../../lib/workspace.js';
+import { groupByProject } from '../../lib/projects.js';
 
 /** Loads a widget's data; `retry` loads it again. */
 export function useWidgetData(loader, deps) {
@@ -130,7 +131,14 @@ function TaskListWidget({ widget, onOpenTask, refreshKey }) {
   return (
     <WidgetFrame widget={widget} state={state} count={d ? d.total : null} drill={boardLink(filters)} scope={scopeWords(widget)}
       empty={d && !d.tasks.length ? words : null}>
-      {d && <TaskRows tasks={d.tasks} onOpenTask={onOpenTask} />}
+      {d && widget.config?.group === 'project'
+        ? groupByProject(d.tasks).map((g) => (
+          <div key={g.id ?? 'none'}>
+            <div className="ws-tier">{g.id ? <Link to={`/projects/${g.id}`}>{g.name}</Link> : g.name} <span className="muted">· {g.tasks.length}</span></div>
+            <TaskRows tasks={g.tasks} onOpenTask={onOpenTask} />
+          </div>
+        ))
+        : d && <TaskRows tasks={d.tasks} onOpenTask={onOpenTask} />}
       {d && d.total > d.tasks.length && <div className="small muted ws-more">{d.total - d.tasks.length} more on the board</div>}
     </WidgetFrame>
   );

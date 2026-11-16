@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client.js';
 import { useAuth, useRefData, useToast } from '../state/AppState.jsx';
 import { Badge, EmptyState, Icon, Spinner } from '../components/ui.jsx';
@@ -8,6 +8,7 @@ import TaskDialog from '../components/TaskDialog.jsx';
 import CompleteTaskDialog from '../components/CompleteTaskDialog.jsx';
 import { MY_GROUPS } from '../../../shared/deadlineHealth.js';
 import { setDeadlineCalendar } from '../lib/format.js';
+import { groupByProject } from '../lib/projects.js';
 
 const TONE = { overdue: 'critical', today: 'warning', upcoming: 'serious', blocked: 'critical', review: 'warning', undated: 'warning', later: 'neutral', deferred: 'neutral' };
 const NOTE = {
@@ -24,9 +25,12 @@ const boardLink = (group, relation, userId) => {
   return `/board?${q.toString()}`;
 };
 
-function Section({ title, relation, tasks, counts, userId, onOpen, onDone, note }) {
+function Section({ title, relation, tasks, counts, userId, onOpen, onDone, note, groupBy = 'deadline' }) {
   const [open, setOpen] = useState({});
-  const groups = MY_GROUPS.map((g) => ({ ...g, tasks: tasks.filter((t) => t.group === g.key) })).filter((g) => g.tasks.length);
+  // by deadline (the default), or by project with "No project" last; each task appears once either way
+  const groups = groupBy === 'project'
+    ? groupByProject(tasks).map((g) => ({ key: `p${g.id ?? 'none'}`, title: g.name, tasks: g.tasks, projectId: g.id }))
+    : MY_GROUPS.map((g) => ({ ...g, tasks: tasks.filter((t) => t.group === g.key) })).filter((g) => g.tasks.length);
   const total = tasks.length;
   return (
     <section className="stack" style={{ gap: 10 }} aria-labelledby={`mine-${relation}`}>
@@ -49,11 +53,13 @@ function Section({ title, relation, tasks, counts, userId, onOpen, onDone, note 
             <div className="card-head">
               <div className="row">
                 <h3 style={{ margin: 0 }}>{group.title}</h3>
-                <Badge tone={TONE[group.key]}>{group.tasks.length}</Badge>
+                <Badge tone={TONE[group.key] || 'neutral'}>{group.tasks.length}</Badge>
               </div>
               <div className="row" style={{ gap: 8 }}>
                 {NOTE[group.key] && <span className="small muted">{NOTE[group.key]}</span>}
-                <Link className="small" to={boardLink(group, relation, userId)}>On the board</Link>
+                {groupBy === 'project'
+                  ? (group.projectId ? <Link className="small" to={`/projects/${group.projectId}`}>Open project</Link> : null)
+                  : <Link className="small" to={boardLink(group, relation, userId)}>On the board</Link>}
                 {group.collapsed && (
                   <button type="button" className="btn btn-sm btn-ghost" aria-expanded={!collapsed} onClick={() => setOpen((o) => ({ ...o, [group.key]: !o[group.key] }))}>
                     {collapsed ? 'Show' : 'Hide'}
@@ -101,8 +107,10 @@ function Section({ title, relation, tasks, counts, userId, onOpen, onDone, note 
 
 /** My Tasks: the daily starting point. What I own, then what I support. */
 export default function MyTasks() {
-  const { statuses } = useRefData();
+  const { statuses, settings } = useRefData();
   const { user } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const groupBy = settings?.projects?.enabled !== false && params.get('group') === 'project' ? 'project' : 'deadline';
   const toast = useToast();
   const [data, setData] = useState({ tasks: [], counts: { OWNER: {}, SUPPORTING: {} } });
   const [loading, setLoading] = useState(true);
@@ -140,8 +148,16 @@ export default function MyTasks() {
     <div className="stack" style={{ gap: 22 }}>
       <div>
         <h1>My tasks</h1>
-        <div className="small muted">
-          {owned.length} you own · {supporting.length} you support. Every open task appears once, in one group.
+        <div className="row-between wrap" style={{ gap: 8 }}>
+          <div className="small muted">
+            {owned.length} you own · {supporting.length} you support. Every open task appears once, in one group.
+          </div>
+          {settings?.projects?.enabled !== false && (
+            <div className="ws-tabs" role="group" aria-label="Group my tasks" style={{ padding: 0 }}>
+              <button type="button" className={`kind-chip${groupBy === 'deadline' ? ' is-active' : ''}`} aria-pressed={groupBy === 'deadline'} onClick={() => setParams({}, { replace: true })}>By deadline</button>
+              <button type="button" className={`kind-chip${groupBy === 'project' ? ' is-active' : ''}`} aria-pressed={groupBy === 'project'} onClick={() => setParams({ group: 'project' }, { replace: true })}>By project</button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -150,10 +166,10 @@ export default function MyTasks() {
       )}
 
       {owned.length > 0 && (
-        <Section title="I own" relation="OWNER" tasks={owned} counts={data.counts.OWNER} userId={user.id} onOpen={setOpenTask} onDone={startComplete} note="You carry these deadlines" />
+        <Section groupBy={groupBy} title="I own" relation="OWNER" tasks={owned} counts={data.counts.OWNER} userId={user.id} onOpen={setOpenTask} onDone={startComplete} note="You carry these deadlines" />
       )}
       {supporting.length > 0 && (
-        <Section title="I'm supporting" relation="SUPPORTING" tasks={supporting} counts={data.counts.SUPPORTING} userId={user.id} onOpen={setOpenTask} onDone={startComplete} note="Following or tagged: the owner carries the deadline" />
+        <Section groupBy={groupBy} title="I'm supporting" relation="SUPPORTING" tasks={supporting} counts={data.counts.SUPPORTING} userId={user.id} onOpen={setOpenTask} onDone={startComplete} note="Following or tagged: the owner carries the deadline" />
       )}
 
       {openTask && <TaskDialog taskId={openTask} onClose={() => setOpenTask(null)} onSaved={load} />}

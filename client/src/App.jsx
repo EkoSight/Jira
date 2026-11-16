@@ -12,6 +12,8 @@ import WorkspaceList from './pages/WorkspaceList.jsx';
 import Applications, { ApplicationDetail } from './pages/Applications.jsx';
 import Meetings from './pages/Meetings.jsx';
 import Board from './pages/Board.jsx';
+import Projects from './pages/Projects.jsx';
+import ProjectDetail from './pages/ProjectDetail.jsx';
 import MyTasks from './pages/MyTasks.jsx';
 import Review from './pages/Review.jsx';
 import Team from './pages/Team.jsx';
@@ -76,6 +78,8 @@ function Shell() {
           }
         />
         <Route path="/board" element={<Board />} />
+        <Route path="/projects" element={<Projects />} />
+        <Route path="/projects/:id" element={<ProjectDetail />} />
         <Route path="/my-tasks" element={<MyTasks />} />
         <Route path="/review" element={<Review />} />
         <Route

@@ -44,7 +44,7 @@ export const WIDGET_TYPES = {
   },
   my_tasks: {
     version: 1, title: 'My tasks', module: null, anyOf: [], widths: ['full', 'half'],
-    settings: ['title', 'density', 'rows', 'sort', 'scope'], scopes: ['mine', 'supporting', 'assigned_by_me', 'team'],
+    settings: ['title', 'density', 'rows', 'sort', 'scope', 'group'], scopes: ['mine', 'supporting', 'assigned_by_me', 'team'],
     endpoint: '/tasks', drill: '/board',
     description: 'Open tasks with their deadline health, from the board',
   },
@@ -53,6 +53,11 @@ export const WIDGET_TYPES = {
     settings: ['title', 'density', 'rows', 'range', 'scope'], scopes: ['mine', 'supporting', 'assigned_by_me', 'team'],
     endpoint: '/tasks', drill: '/board',
     description: 'Tasks and applications with a deadline in the next days',
+  },
+  projects: {
+    version: 1, title: 'My projects', module: 'projects', anyOf: [], widths: ['full', 'half'],
+    settings: ['title', 'density', 'rows', 'scope'], scopes: ['mine', 'department', 'all'], endpoint: '/workspace/widgets/projects', drill: '/projects',
+    description: 'Your work grouped by project: each project with your open tasks in it, "No project" last',
   },
   waiting: {
     version: 1, title: 'Waiting on others', module: null, anyOf: [], widths: ['full', 'half'],
@@ -133,6 +138,8 @@ export const SCOPE_LABEL = {
   supporting: 'Supporting',
   assigned_by_me: 'Assigned by me',
   team: 'My team',
+  department: 'My department',
+  all: 'All I can see',
 };
 
 export const ROW_CHOICES = [5, 10, 20];
@@ -157,7 +164,13 @@ export function widgetAccess(type, who) {
 export function scopesFor(type, who) {
   const w = WIDGET_TYPES[type];
   if (!w) return [];
-  return w.scopes.filter((s) => s !== 'team' || who.teamScope?.[type === 'deals' || type === 'applications' ? 'crm' : 'tasks']);
+  return w.scopes.filter((s) => {
+    if (s === 'team') return who.teamScope?.[type === 'deals' || type === 'applications' ? 'crm' : 'tasks'];
+    // a department's projects: managers and above; every project: people who see every task
+    if (s === 'department') return who.can('project.create') || who.can('project.manage.any');
+    if (s === 'all') return who.can('task.view.all');
+    return true;
+  });
 }
 
 const clean = (s, max) => String(s ?? '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, max);
@@ -183,6 +196,7 @@ export function normaliseWidget(raw, index = 0) {
   if (w.settings.includes('scope') && w.scopes.includes(c.scope)) config.scope = c.scope;
   if (w.settings.includes('view') && ['today', 'coming', 'waiting', 'all'].includes(c.view)) config.view = c.view;
   if (w.settings.includes('view_id') && Number.isInteger(Number(c.view_id)) && Number(c.view_id) > 0) config.view_id = Number(c.view_id);
+  if (w.settings.includes('group') && ['none', 'project'].includes(c.group)) config.group = c.group;
   return { id, type, typeVersion: w.version, width: w.widths.includes(width) ? width : w.widths[0], config };
 }
 

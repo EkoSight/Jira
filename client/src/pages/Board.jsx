@@ -9,7 +9,7 @@ import CompleteTaskDialog from '../components/CompleteTaskDialog.jsx';
 import { PRIORITIES, PRIORITY_LABEL, PRIORITY_TONE, STAGE_LABEL, dueLabel, formatDate, setDeadlineCalendar, taskHealth } from '../lib/format.js';
 
 // the filters that live in the address, so a link shows someone exactly this
-const FILTER_KEYS = ['department_id', 'assignee_id', 'supporter_id', 'assigned_by', 'priority', 'stage', 'status_id', 'search', 'due', 'due_from', 'due_to', 'exclude_stage'];
+const FILTER_KEYS = ['department_id', 'assignee_id', 'supporter_id', 'assigned_by', 'priority', 'stage', 'status_id', 'search', 'due', 'due_from', 'due_to', 'exclude_stage', 'project_id', 'milestone_id'];
 
 const DUE_OPTIONS = [
   ['', 'Any deadline'],
@@ -33,7 +33,7 @@ const SORTS = [
 
 export default function Board() {
   const { can, user } = useAuth();
-  const { departments, statuses, users } = useRefData();
+  const { departments, statuses, users, settings } = useRefData();
   const toast = useToast();
   const [params, setParams] = useSearchParams();
 
@@ -51,6 +51,13 @@ export default function Board() {
   const tasks = data.tasks;
 
   const filters = useMemo(() => Object.fromEntries(FILTER_KEYS.map((k) => [k, params.get(k) || ''])), [params]);
+  // projects to filter by: the open ones this person can see
+  const projectsOn = settings?.projects?.enabled !== false;
+  const [projectOptions, setProjectOptions] = useState([]);
+  useEffect(() => {
+    if (!projectsOn) return;
+    api.get('/projects/options').then((r) => setProjectOptions(r.projects || [])).catch(() => setProjectOptions([]));
+  }, [projectsOn]);
   const sort = params.get('sort') || (view === 'list' ? 'due_date' : 'position');
   // finished work is collapsed until asked for, never hidden for good
   const showDone = params.get('show_done') === '1';
@@ -229,6 +236,14 @@ export default function Board() {
           <option value="">All departments</option>
           {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
         </select>
+        {projectsOn && (
+          <select className="select" aria-label="Project" value={filters.project_id} onChange={(e) => setFilter('project_id', e.target.value)}>
+            <option value="">Any project</option>
+            <option value="none">No project</option>
+            {filters.project_id && filters.project_id !== 'none' && !projectOptions.some((p) => String(p.id) === filters.project_id) && <option value={filters.project_id}>This project</option>}
+            {projectOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        )}
         <select className="select" aria-label="Priority" value={filters.priority} onChange={(e) => setFilter('priority', e.target.value)}>
           <option value="">Any priority</option>
           {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}

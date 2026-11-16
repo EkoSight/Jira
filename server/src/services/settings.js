@@ -535,6 +535,11 @@ export const DEFAULT_SETTINGS = {
     reminderMode: 'TEST',
     testRecipientId: null,
   },
+  // Projects (docs/PROJECTS.md). Off hides project fields, widgets and pages;
+  // the data is kept and tasks keep working.
+  projects: { enabled: true },
+  // To-dos and the notebook (docs/TODOS.md). Off hides every surface; the data is kept.
+  todos: { enabled: true },
 };
 
 const isPlainObject = (v) => v && typeof v === 'object' && !Array.isArray(v);

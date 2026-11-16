@@ -59,6 +59,11 @@ export const PERMISSIONS = {
   // joining a discussion, or saying you are blocked, is not
   'review.raise': 'Ask for a goal, key result or task to be improved',
 
+  // projects: managers and above create them (approved by the owner); a
+  // project's lead manages their own project whatever their role
+  'project.create': 'Create projects in their own department, and edit that department\'s projects',
+  'project.manage.any': 'Create and edit projects in any department',
+
   'crm.view': 'See leads, customers and partners',
   'crm.create': 'Add leads and accounts',
   'crm.manage.any': 'Edit any account, not only their own',
@@ -149,6 +154,7 @@ export const ROLE_PERMISSIONS = {
     'okr.checkin',
     'okr.link.task',
     'review.raise',
+    'project.create',
     'crm.view',
     'crm.create',
     'crm.manage.any',

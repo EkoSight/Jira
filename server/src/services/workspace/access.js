@@ -9,8 +9,9 @@ import { hasPermission } from '../../lib/permissions.js';
 import { getSettings } from '../settings.js';
 import { canSee, crmScope } from '../sales/core.js';
 import { canSeeTask } from '../taskAccess.js';
+import { canSeeProject } from '../projects/index.js';
 
-export const ENTITY_TYPES = ['TASK', 'LEAD', 'DEAL', 'APPLICATION', 'MEETING', 'ACCOUNT', 'KEY_RESULT', 'OBJECTIVE'];
+export const ENTITY_TYPES = ['TASK', 'LEAD', 'DEAL', 'APPLICATION', 'MEETING', 'ACCOUNT', 'KEY_RESULT', 'OBJECTIVE', 'PROJECT'];
 
 /** A task: the one rule (services/taskAccess.js), and it must exist. */
 const taskVisible = (user, id) => canSeeTask(user, id);
@@ -62,6 +63,7 @@ export async function canSeeRecord(user, type, id, settings = null) {
       const { rows } = await query('SELECT 1 FROM objectives WHERE id = $1', [n]);
       return rows.length > 0;
     }
+    case 'PROJECT': return s.projects?.enabled !== false && canSeeProject(user, n);
     default: return false;
   }
 }
@@ -78,6 +80,7 @@ export async function recordLabel(type, id) {
     case 'MEETING': { const r = await one('SELECT title FROM crm_meetings WHERE id = $1'); return r && { label: r.title, url: `/meetings?meeting=${id}` }; }
     case 'KEY_RESULT': { const r = await one('SELECT title, objective_id FROM key_results WHERE id = $1'); return r && { label: r.title, url: `/goals/${r.objective_id}` }; }
     case 'OBJECTIVE': { const r = await one('SELECT title FROM objectives WHERE id = $1'); return r && { label: r.title, url: `/goals/${id}` }; }
+    case 'PROJECT': { const r = await one('SELECT name FROM projects WHERE id = $1'); return r && { label: r.name, url: `/projects/${id}` }; }
     default: return null;
   }
 }

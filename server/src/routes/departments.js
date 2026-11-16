@@ -24,7 +24,8 @@ router.get(
     const { rows } = await query(
       `SELECT d.*,
               COUNT(t.id) FILTER (WHERE t.is_archived = FALSE)::int AS task_count,
-              COUNT(DISTINCT u.id)::int                             AS member_count
+              COUNT(DISTINCT u.id)::int                             AS member_count,
+              (SELECT COUNT(*)::int FROM projects p WHERE p.department_id = d.id AND p.archived_at IS NULL) AS project_count
          FROM departments d
          LEFT JOIN tasks t ON t.department_id = d.id
          LEFT JOIN users u ON u.department_id = d.id AND u.is_active = TRUE
@@ -85,13 +86,15 @@ router.delete(
   requirePermission('department.manage'),
   asyncHandler(async (req, res) => {
     const { rows } = await query(
-      'SELECT COUNT(*)::int AS n FROM tasks WHERE department_id = $1',
+      `SELECT (SELECT COUNT(*)::int FROM tasks WHERE department_id = $1) AS tasks,
+              (SELECT COUNT(*)::int FROM projects WHERE department_id = $1) AS projects`,
       [req.params.id],
     );
-    if (rows[0].n > 0) {
-      // keep the history — deactivating hides it from pickers without breaking cards
+    if (rows[0].tasks > 0 || rows[0].projects > 0) {
+      // keep the history — deactivating hides it from pickers without breaking cards or projects
       await query('UPDATE departments SET is_active = FALSE WHERE id = $1', [req.params.id]);
-      return res.json({ ok: true, deactivated: true, message: 'Department has tasks, so it was deactivated' });
+      const what = rows[0].tasks > 0 && rows[0].projects > 0 ? 'tasks and projects' : rows[0].tasks > 0 ? 'tasks' : 'projects';
+      return res.json({ ok: true, deactivated: true, message: `Department has ${what}, so it was deactivated` });
     }
     await query('DELETE FROM departments WHERE id = $1', [req.params.id]);
     res.json({ ok: true, deactivated: false });

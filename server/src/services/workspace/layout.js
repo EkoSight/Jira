@@ -35,7 +35,7 @@ export async function workspaceSettings(settings = null) {
     reminderMode: REMINDER_MODES.includes(w.reminderMode) ? w.reminderMode : 'TEST',
     testRecipientId: w.testRecipientId ?? null,
     timezone: s.organisation?.timezone || 'Asia/Kolkata',
-    modules: { crm: s.crm?.enabled !== false, okr: s.okr?.enabled !== false, marketing: s.marketing?.enabled !== false },
+    modules: { crm: s.crm?.enabled !== false, okr: s.okr?.enabled !== false, marketing: s.marketing?.enabled !== false, projects: s.projects?.enabled !== false, todos: s.todos?.enabled !== false },
   };
 }
 
