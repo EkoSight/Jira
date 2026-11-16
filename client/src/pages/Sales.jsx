@@ -7,6 +7,7 @@ import { Approvals, Calls, Reports } from '../components/sales/SalesInsight.jsx'
 import { Imports, SalesSettings } from '../components/sales/SalesAdmin.jsx';
 import SalesHelp from '../components/sales/SalesHelp.jsx';
 import { Calling } from '../components/sales/Calling.jsx';
+import { Broadcasts } from '../components/sales/Broadcasts.jsx';
 import { forgetSalesMeta, useSalesMeta } from '../lib/sales.js';
 
 /**
@@ -23,7 +24,10 @@ export default function Sales() {
   const tabs = [
     ['day', 'My Day'], ['calling', 'Calling'], ['leads', 'Leads'],
     ...(can('crm.approve') ? [['approvals', 'Approvals']] : []),
-    ['calls', 'Calls'], ['reports', 'Reports'],
+    ['calls', 'Calls'],
+    // WhatsApp broadcasts use the marketing permissions, like email campaigns
+    ...(can('marketing.view') ? [['broadcasts', 'Broadcasts']] : []),
+    ['reports', 'Reports'],
     ...(can('crm.import') ? [['imports', 'Imports']] : []),
     ...(can('crm.settings') || can('crm.routing') || can('crm.audit') || can('crm.automation') ? [['settings', 'Settings']] : []),
     ['help', 'Help'],
@@ -51,6 +55,7 @@ export default function Sales() {
       {tab === 'leads' && <Leads meta={meta} />}
       {tab === 'approvals' && <Approvals />}
       {tab === 'calls' && <Calls />}
+      {tab === 'broadcasts' && <Broadcasts meta={meta} />}
       {tab === 'reports' && <Reports meta={meta} />}
       {tab === 'imports' && <Imports meta={meta} />}
       {tab === 'settings' && <SalesSettings meta={meta} onSaved={refresh} initial={params.get('section')} />}

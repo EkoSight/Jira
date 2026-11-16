@@ -34,6 +34,7 @@ import workspaceRoutes from './routes/workspace.js';
 import applicationRoutes from './routes/applications.js';
 import projectRoutes from './routes/projects.js';
 import todoRoutes from './routes/todos.js';
+import salesBroadcastRoutes from './routes/salesBroadcasts.js';
 import { requireProjectsEnabled, requireTodosEnabled } from './middleware/modules.js';
 import { requireAttendance } from './services/attendance.js';
 import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
@@ -152,6 +153,8 @@ export function createTaskFlowRouter() {
   router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesPhoneRoutes);
   // calls as records, follow-up reminders, the daily Chat summary, the work queue, locations
   router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesWorkRoutes);
+  // WhatsApp broadcasts: one approved template to a filtered list of leads who agreed to WhatsApp
+  router.use('/sales', requireAttendance, requireCrmEnabled, requirePermission('crm.view'), salesBroadcastRoutes);
 
   // email marketing, mounted the same way — off cleanly when disabled
   router.use('/marketing', requireAttendance, requireMarketingEnabled, requirePermission('marketing.view'), marketingRoutes);

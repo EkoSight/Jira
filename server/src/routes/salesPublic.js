@@ -153,6 +153,7 @@ ${error ? `<div class="notice" role="alert">${e(error)}</div>` : ''}
   </fieldset>
   <label class="field"><span>${e(FIELD_LABEL.requirement)}</span><textarea name="requirement" rows="4" style="width:100%;padding:12px 14px;border:1px solid var(--line-strong);border-radius:14px;font:inherit">${e(values.requirement ?? '')}</textarea></label>
   ${f.consent_text ? `<label class="row"><input type="checkbox" name="consent" value="1" required><span>${e(f.consent_text)}</span></label>` : ''}
+  ${f.whatsapp_optin_text ? `<label class="row"><input type="checkbox" name="whatsapp_optin" value="1" ${values.whatsapp_optin ? 'checked' : ''}><span>${e(f.whatsapp_optin_text)}</span></label>` : ''}
   <div class="hp" aria-hidden="true"><label>Leave this empty<input type="text" name="website_url_confirm" tabindex="-1" autocomplete="off"></label></div>
   <input type="hidden" name="submission_id" value="${e(values.submission_id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`)}">
   ${noticeLine(notice)}

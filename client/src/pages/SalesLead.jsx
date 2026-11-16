@@ -18,6 +18,68 @@ import { exactTime, importedAttempts, locationLine, pinProblem } from '../lib/cr
 import {
   CATEGORY, CHOOSABLE, FOLLOWUP_KIND, LEAD_STATUS, PRIORITY, ROUTING_STATUS, dayOf, editableFields, fieldValueLabel, handedOut, money, useSalesMeta, when,
 } from '../lib/sales.js';
+import { standingWords } from '../lib/broadcasts.js';
+
+/**
+ * Whether this number agreed to WhatsApp messages, and recording or removing
+ * an opt-in. Broadcasts go only to numbers that agreed and have not opted out.
+ */
+function WhatsAppOptin({ lead, standing, onChanged }) {
+  const { can } = useAuth();
+  const toast = useToast();
+  const [recording, setRecording] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [how, setHow] = useState('ON_CALL');
+  const [note, setNote] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const w = standing;
+  const act = async (fn, done, close) => {
+    setBusy(true);
+    try { await fn(); toast.success(done); close(); onChanged(); } catch (err) { toast.error(err); } finally { setBusy(false); }
+  };
+  const tone = w?.can_broadcast ? 'good' : w?.opted_out ? 'critical' : 'neutral';
+  return (
+    <div className="wab-optin" aria-label="WhatsApp opt-in">
+      <div className="row wrap" style={{ gap: 8 }}>
+        <Badge tone={tone}>{w?.can_broadcast ? 'Agreed to WhatsApp' : w?.opted_out ? 'Opted out of WhatsApp' : 'No WhatsApp opt-in'}</Badge>
+        <span className="small">{standingWords(w)}</span>
+      </div>
+      {w?.optin?.note && <div className="small muted">“{w.optin.note}” · {dayOf(w.optin.recorded_at)}</div>}
+      {can('crm.activity.log') && w?.phone && !w.opted_out && (
+        <div className="row wrap" style={{ gap: 6 }}>
+          {!w.optin && <button type="button" className="btn btn-sm" onClick={() => setRecording(true)}>Record WhatsApp opt-in…</button>}
+          {w.optin && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRemoving(true)}>Remove opt-in…</button>}
+        </div>
+      )}
+      {recording && (
+        <Modal title="Record WhatsApp opt-in" onClose={() => setRecording(false)}
+          footer={<><button type="button" className="btn" onClick={() => setRecording(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || (how === 'OTHER' && !note.trim())} onClick={() => act(() => api.sales.post(`/leads/${lead.id}/whatsapp-optin`, { how, note: note.trim() || null }), 'Opt-in recorded', () => setRecording(false))}>Record it</button></>}>
+          <div className="stack-sm">
+            <p className="small" style={{ margin: 0 }}>Record this only if {lead.contact_name || 'they'} said yes to getting WhatsApp messages from us. It applies to the number {lead.phone}, and a STOP reply always overrides it.</p>
+            <fieldset className="field" style={{ border: 0, padding: 0, margin: 0 }}>
+              <legend className="field-label">How they agreed</legend>
+              {[['ON_CALL', 'On a call'], ['IN_PERSON', 'In person'], ['OTHER', 'Another way (say how)']].map(([k, l]) => (
+                <label key={k} className="row small" style={{ gap: 6 }}><input type="radio" name="wa-how" checked={how === k} onChange={() => setHow(k)} /> {l}</label>
+              ))}
+            </fieldset>
+            <label className="field"><span className="field-label">Note {how === 'OTHER' ? '' : '(optional)'}</span>
+              <input className="input" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} placeholder="For example: asked for seed offers on the 12 Nov call" />
+            </label>
+          </div>
+        </Modal>
+      )}
+      {removing && (
+        <Modal title="Remove WhatsApp opt-in" onClose={() => setRemoving(false)}
+          footer={<><button type="button" className="btn" onClick={() => setRemoving(false)}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || reason.trim().length < 3} onClick={() => act(() => api.sales.post(`/leads/${lead.id}/whatsapp-optin/remove`, { reason: reason.trim() }), 'Opt-in removed', () => setRemoving(false))}>Remove it</button></>}>
+          <label className="field"><span className="field-label">Why</span>
+            <input className="input" value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} placeholder="For example: recorded on the wrong lead" />
+          </label>
+        </Modal>
+      )}
+    </div>
+  );
+}
 
 const EDITABLE = [
   ['organization_name', 'Organization'], ['contact_name', 'Contact person'], ['designation', 'Designation'], ['email', 'Email'],
@@ -381,7 +443,7 @@ export default function SalesLead() {
           ))}
         </div>
       )}
-      {tab === 'whatsapp' && <div className="card card-pad"><WhatsAppPanel target={target} phone={lead.phone} /></div>}
+      {tab === 'whatsapp' && <div className="card card-pad stack"><WhatsAppOptin lead={lead} standing={data.whatsapp} onChanged={load} /><WhatsAppPanel target={target} phone={lead.phone} /></div>}
       {tab === 'details' && (
         <div className="card card-pad stack">
           <LocationDetails lead={lead} canEdit={data.can.edit} onChanged={load} />
@@ -394,6 +456,7 @@ export default function SalesLead() {
               ['Came in by', `${String(lead.entry_channel).toLowerCase().replace('_', ' ')}${lead.source_system ? ` (${lead.source_system})` : ''}`],
               ['External id', lead.external_id], ['Captured', when(lead.captured_at)], ['Organization', lead.account_name],
               ['Consent', lead.consent?.given ? `given ${dayOf(lead.consent.at)}${lead.consent.channel ? ` via ${lead.consent.channel.toLowerCase()}` : ''}` : null],
+              ['WhatsApp', standingWords(data.whatsapp)],
               ['Lost because', lead.status === 'DISQUALIFIED' ? lead.disqualify_reason : null], ['Tags', (lead.tags || []).join(', ')],
               ...(meta.lead_fields || []).map((f) => [f.label, fieldValueLabel(f, lead.custom_fields?.[f.key]), f]),
             ].filter(([, v]) => v).map(([k, v, f]) => (

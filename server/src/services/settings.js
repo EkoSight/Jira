@@ -366,6 +366,20 @@ export const DEFAULT_SETTINGS = {
         // the Meta WhatsApp Business Platform (Cloud API)
         enabled: false,
         messageRetentionDays: null,
+        // one approved template to a filtered list of leads who agreed to WhatsApp (docs/WHATSAPP_BROADCASTS.md)
+        broadcasts: {
+          enabled: true,
+          // at most this many broadcast messages in any 24 hours: set it to the number's
+          // messaging limit in WhatsApp Manager (250 is Meta's starting limit)
+          dailyLimit: 250,
+          // messages go only between these times (company calendar); outside them they wait
+          sendFrom: '09:00',
+          sendUntil: '20:00',
+          // a number that got a broadcast in the last N days is skipped by the next one
+          minDaysBetween: 3,
+          // messages sent per pass of the background sender (about every 30 seconds)
+          batchSize: 40,
+        },
       },
       // the default quotation terms and validity
       quotes: {

@@ -431,7 +431,7 @@ function Capture({ meta }) {
   const [forms, setForms] = useState(null);
   const [newKey, setNewKey] = useState(null);
   const [name, setName] = useState('');
-  const [form, setForm] = useState({ name: '', title: 'Talk to Soil Doctor', source_id: '', consent_text: '' });
+  const [form, setForm] = useState({ name: '', title: 'Talk to Soil Doctor', source_id: '', consent_text: '', whatsapp_optin_text: '' });
   const load = useCallback(() => {
     api.sales.get('/capture/keys').then((r) => setKeys(r.keys)).catch(() => setKeys([]));
     api.sales.get('/capture/forms').then((r) => setForms(r.forms)).catch(() => setForms([]));
@@ -449,8 +449,10 @@ function Capture({ meta }) {
           <input className="input" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} aria-label="Form title" />
           <select className="select" value={form.source_id} onChange={(e) => setForm({ ...form, source_id: e.target.value })} aria-label="Source"><option value="">Source…</option>{meta.sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
           <input className="input" value={form.consent_text} onChange={(e) => setForm({ ...form, consent_text: e.target.value })} placeholder="Consent wording (optional)" aria-label="Consent text" />
+          <input className="input" value={form.whatsapp_optin_text} onChange={(e) => setForm({ ...form, whatsapp_optin_text: e.target.value })} placeholder="WhatsApp tick box, e.g. Send me updates on WhatsApp (optional)" aria-label="WhatsApp opt-in tick box wording" />
         </div>
-        <div><button type="button" className="btn btn-sm" disabled={form.name.trim().length < 2} onClick={() => save(toast, api.sales.post('/capture/forms', { ...form, source_id: form.source_id ? Number(form.source_id) : null, consent_text: form.consent_text || null }), 'Form created').then(load).catch(() => {})}>Create form</button></div>
+        <div className="small muted">With WhatsApp wording, the form shows an optional tick box. Ticking it records a WhatsApp opt-in for that number, so it can get broadcasts.</div>
+        <div><button type="button" className="btn btn-sm" disabled={form.name.trim().length < 2} onClick={() => save(toast, api.sales.post('/capture/forms', { ...form, source_id: form.source_id ? Number(form.source_id) : null, consent_text: form.consent_text || null, whatsapp_optin_text: form.whatsapp_optin_text.trim() || null }), 'Form created').then(load).catch(() => {})}>Create form</button></div>
       </div>
       <div className="card card-pad stack-sm">
         <h3>API keys for websites, ads and other systems</h3>
@@ -521,6 +523,43 @@ function Catalogue({ meta }) {
           </div>
         ) : <div className="small muted">Rates are recorded by finance.</div>}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- WhatsApp broadcasts
+
+/** Sending hours, the daily limit and the gap between broadcasts to one number (docs/WHATSAPP_BROADCASTS.md). */
+function BroadcastSettings({ meta, onSaved }) {
+  const toast = useToast();
+  const current = meta.settings?.whatsapp?.broadcasts || {};
+  const [f, setF] = useState(() => ({
+    enabled: current.enabled !== false, dailyLimit: current.dailyLimit ?? 250, sendFrom: current.sendFrom || '09:00',
+    sendUntil: current.sendUntil || '20:00', minDaysBetween: current.minDaysBetween ?? 3,
+  }));
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const valid = f.sendFrom < f.sendUntil && Number(f.dailyLimit) >= 1 && Number(f.minDaysBetween) >= 0;
+  return (
+    <div className="card card-pad stack-sm">
+      <h3>WhatsApp broadcasts</h3>
+      <div className="small muted">One approved template to a list of leads who agreed to WhatsApp. People with the email-marketing permissions draft, approve and send them, from Sales CRM → Broadcasts.</div>
+      <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={f.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Broadcasts are on</label>
+      <div className="grid-2">
+        <label className="field"><span className="field-label">At most this many broadcast messages in 24 hours</span>
+          <input className="input" type="number" min={1} value={f.dailyLimit} onChange={(e) => set('dailyLimit', e.target.value)} />
+          <span className="field-hint">Set it to your number's messaging limit in WhatsApp Manager. 250 is Meta's starting limit.</span>
+        </label>
+        <label className="field"><span className="field-label">Skip a number that got a broadcast in the last (days)</span>
+          <input className="input" type="number" min={0} max={60} value={f.minDaysBetween} onChange={(e) => set('minDaysBetween', e.target.value)} />
+          <span className="field-hint">0 lets a number get one every day.</span>
+        </label>
+        <label className="field"><span className="field-label">Send from</span><input className="input" type="time" value={f.sendFrom} onChange={(e) => set('sendFrom', e.target.value)} /></label>
+        <label className="field"><span className="field-label">Until</span><input className="input" type="time" value={f.sendUntil} onChange={(e) => set('sendUntil', e.target.value)} /></label>
+      </div>
+      {!valid && <div className="small warning-text">The hours must start before they end, and the limit must be at least 1.</div>}
+      <div><button type="button" className="btn btn-sm" disabled={!valid} onClick={() => save(toast, api.sales.put('/settings', {
+        whatsapp: { broadcasts: { enabled: f.enabled, dailyLimit: Number(f.dailyLimit), sendFrom: f.sendFrom, sendUntil: f.sendUntil, minDaysBetween: Number(f.minDaysBetween) } },
+      })).then(() => onSaved?.()).catch(() => {})}>Save broadcast settings</button></div>
     </div>
   );
 }
@@ -716,6 +755,7 @@ function Audit() {
 
 const IMPORT_FIELD_LABEL = {
   call_status: 'Calling status', lost_reason: 'Lost reason', rating: 'Rating (1–5)', notes: 'Notes (go on the timeline)', modified_at: 'Last modified',
+  whatsapp_optin: 'WhatsApp opt-in (yes records one)',
   owner_email: 'Owner email', captured_at: 'Captured on', external_id: 'Id in the other system', source_system: 'Other system', tags: 'Tags or lists',
 };
 const PRESET_NAME = { TELECRM: 'TeleCRM' };
@@ -862,7 +902,7 @@ export function SalesSettings({ meta, onSaved, initial }) {
         {current === 'sources' && <Sources meta={meta} onSaved={onSaved} />}
         {current === 'capture' && <Capture meta={meta} />}
         {current === 'catalogue' && <Catalogue meta={meta} />}
-        {current === 'integrations' && <Integrations />}
+        {current === 'integrations' && <><Integrations /><BroadcastSettings meta={meta} onSaved={onSaved} /></>}
         {current === 'followups' && <FollowUpDigestAdmin meta={meta} />}
         {current === 'locations' && <LocationReview />}
         {current === 'call_review' && <CallReview />}

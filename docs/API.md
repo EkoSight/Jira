@@ -1269,3 +1269,47 @@ as for deals.
 | POST | `/applications/:id/updates` | `{ kind: ACKNOWLEDGEMENT / FOLLOW_UP_SENT / RESPONSE / OUTCOME, happened_on, summary?, reference?, next_check_on?, result?, onboarding_task_title? }` |
 | POST | `/applications/:id/tasks` | `{ title, due_date?, assignee_id? }` — an ordinary task linked to the application |
 | POST / PATCH | `/applications/:id/rounds`, `/applications/:id/rounds/:roundId` | each round keeps its own deadline |
+
+## WhatsApp broadcasts
+
+Under `/sales` (CRM on, `crm.view`). See `docs/WHATSAPP_BROADCASTS.md`. Seeing
+broadcasts needs `marketing.view`. Each change checks its own email-marketing
+permission, and approval follows the email-marketing approval setting.
+Switched off (Settings → Integrations), the broadcast routes answer 404.
+
+**Opt-ins, on a lead** (`GET /sales/leads/:id` now includes `whatsapp`:
+`{ phone, optin, wrote_first_at, opted_out, agreed, can_broadcast, why }`):
+
+| Method | Route | Notes |
+|---|---|---|
+| POST | `/sales/leads/:id/whatsapp-optin` | `crm.activity.log`, can see the lead — `{ how: ON_CALL / IN_PERSON / OTHER, note? }` (a note is needed for OTHER). 201, or 200 with `already: true` when the number already agreed. 409 when the number opted out |
+| POST | `/sales/leads/:id/whatsapp-optin/remove` | `crm.activity.log` — `{ reason }` |
+
+`GET /sales/leads` also takes `wa_optin=yes/no` (agreed and not opted out, or
+not). Enquiry forms (`POST/PATCH /sales/capture/forms`) take
+`whatsapp_optin_text`: the form then shows an optional tick box, and ticking
+it records an opt-in. Lead imports map a **WhatsApp opt-in** column (`yes`
+records one).
+
+**Broadcasts:**
+
+| Method | Route | Permission and notes |
+|---|---|---|
+| GET | `/sales/broadcasts` | `marketing.view` — `{ broadcasts (each with can and, once sending has started, progress), room: { in_hours, sent_last_24h, left_today, dailyLimit, sendFrom, sendUntil, … }, whatsapp: { configured, missing } }` |
+| GET | `/sales/broadcasts/options` | `{ templates (each with usable, why_not, body), sources, views, skip_words }` |
+| POST | `/sales/broadcasts` | `marketing.manage` — `{ name, filters, template_name?, template_language?, variables? }`. `filters` keeps only the lead list's own filters and a broadcast view; `variables` is one `{ source, text?, fallback? }` per blank |
+| GET | `/sales/broadcasts/:id?people=1&reason=&offset=&limit=` | Before sending: `list: { matched, will_send, skipped: [{ code, n, words }] }` and `sample`. After: `progress: { pending, sent, failed, skipped, delivered, read, replied, opted_out_after, reasons }`. With `people=1`, the people, filtered by a skip code (`SEND` for those who get it) or a status |
+| PATCH | `/sales/broadcasts/:id` | `marketing.manage`, before sending starts. A change to the list, template or blanks sends an approved or waiting broadcast back to DRAFT |
+| POST | `/sales/broadcasts/:id/submit` | `marketing.manage` — DRAFT → IN_REVIEW (or APPROVED when approval is switched off). 400 with `problems` when it cannot go |
+| POST | `/sales/broadcasts/:id/approve` | `marketing.approve`, not the submitter (unless self-approval is allowed) — `{ note? }`. Stores the fingerprint and `approved_count` |
+| POST | `/sales/broadcasts/:id/request-changes` | `marketing.approve` — `{ note }` → DRAFT |
+| POST | `/sales/broadcasts/:id/send` | `marketing.send` — `{ send_at? }`. Only exactly what was approved, and only with WhatsApp connected (409 otherwise). A future `send_at` (up to 60 days) schedules it |
+| POST | `/sales/broadcasts/:id/pause`, `/resume` | `marketing.send` |
+| POST | `/sales/broadcasts/:id/cancel` | `marketing.manage` or `marketing.send` — `{ reason? }`; what has not gone is skipped |
+| POST | `/sales/broadcasts/:id/retry-failed` | `marketing.send` — puts back messages WhatsApp did not accept (fewer than 5 tries); `retrying` says how many |
+| POST | `/sales/broadcasts/:id/test` | `marketing.manage` or `marketing.approve` — the template to the caller's own phone (profile), with the first person's values |
+
+`PUT /sales/settings` takes `whatsapp.broadcasts: { enabled, dailyLimit,
+sendFrom, sendUntil, minDaysBetween, batchSize }` (`crm.settings`). The sales
+worker sends a batch per pass. Each message carries `broadcast_id` and the
+key `wa-broadcast:<broadcast>:<recipient>`.

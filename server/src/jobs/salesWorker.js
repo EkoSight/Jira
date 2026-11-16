@@ -1,7 +1,8 @@
 /**
  * The sales CRM's background work, every half minute by default:
  *   turn new events into scheduled automation runs, run the ones that are
- *   due, apply running imports a batch at a time, and (every five minutes)
+ *   due, apply running imports a batch at a time, send WhatsApp broadcasts a
+ *   batch at a time, and (every five minutes)
  *   the clock: reminders, overdue and stale escalations, deadlines, payments,
  *   renewals, quotation expiry and recording retention.
  * One step failing never stops the others. Several servers can run it: every
@@ -16,6 +17,7 @@ import { processImports } from '../services/sales/imports.js';
 import { closeStaleSessions } from '../services/sales/phoneCalls.js';
 import { runRecordingRetention } from '../services/sales/callRecordings.js';
 import { runWeeklyCallingReview } from '../services/sales/callingCare.js';
+import { runBroadcasts } from '../services/sales/broadcasts.js';
 
 const TIMERS_EVERY_MS = 5 * 60 * 1000;
 
@@ -43,6 +45,8 @@ export async function runSalesTick({ force = false, now = new Date() } = {}) {
   // follow-up reminders every tick: a 5-minute reminder cannot wait for the slower clock
   await step('reminders', () => sendDueReminders(now), out);
   await step('digests', () => runFollowUpDigests(now), out);
+  // WhatsApp broadcasts: a batch per pass, inside the sending hours and the daily limit
+  await step('broadcasts', () => runBroadcasts(now), out);
   if (force || Date.now() - lastTimers > TIMERS_EVERY_MS) {
     lastTimers = Date.now();
     await step('timers', () => scanTimers(now), out);

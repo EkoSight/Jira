@@ -188,7 +188,7 @@ TaskFlow's CRM. Q-T1, Q-T2 and Q-T5 run on the settings below until changed.
 | Q-T1 | **Just Curious** is "keep warm" (out of the call list until someone picks it), and **Job Seeker** closes the lead as lost. Is that how the team uses them? | As described; editable per status |
 | Q-T2 | Should unanswered calls retry after 3 h (no answer) and 1 h (busy), stopping after 6 tries? | Yes |
 | Q-T3 | Call recordings: which calling provider (Exotel, Knowlarity, MyOperator…)? Without one, calls are logged by the caller and not recorded. | **Answered:** no provider. Company Android phones and SIMs, with the TaskFlow app: exact call lengths from the phone, recordings from the phone's own dialler, kept 6 months. See `SIM_CALLING.md` |
-| Q-T4 | Is bulk WhatsApp to a list needed? | **Answered:** yes, being built as WhatsApp broadcasts. Sending needs the Meta account and approved templates (Q2) |
+| Q-T4 | Is bulk WhatsApp to a list needed? | **Answered and built:** WhatsApp broadcasts (Sales CRM → Broadcasts; `docs/WHATSAPP_BROADCASTS.md`), to leads who agreed to WhatsApp. Sending needs the Meta account and approved templates (Q2) |
 | Q-T5 | Who else calls besides Isha, and should new leads be shared by turns? | Leads keep their TeleCRM owner; new leads follow the assignment rules |
 | Q-T6 | The TeleCRM **Date** column is filled on 52 rows with no consistent meaning. Is it a callback date? If so, it can become a callback when imported. | **Answered:** it may have been a callback date; leave it. Kept as written |
 

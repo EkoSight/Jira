@@ -119,6 +119,16 @@ const TOPICS = [
     ],
   },
   {
+    id: 'broadcasts', who: 'Marketing and managers', title: 'WhatsApp broadcasts: one message to many, only to people who agreed',
+    body: [
+      'A broadcast sends one approved WhatsApp template to a list of leads, and only to numbers that agreed to WhatsApp messages and have not opted out. Everyone else is listed with the reason.',
+      'A number agrees when someone records it on the lead (WhatsApp tab → Record WhatsApp opt-in, saying how), when the person ticks the WhatsApp box on an enquiry form, when an import says yes in a WhatsApp opt-in column, or when they wrote to us on WhatsApp first. A STOP reply always wins.',
+      'Start one from the lead list (filter it, then WhatsApp broadcast…) or from Sales CRM → Broadcasts. The list is exactly the lead list with the same filters. Choose the template and what fills each blank; the page shows who gets it, why the others do not, and how the message reads.',
+      'Someone other than the person who sent it for approval approves it, as for email campaigns. Any change to the list or the message after approval sends it back for approval.',
+      'Messages go out in batches, only inside the sending hours and up to the daily limit (Settings → Integrations). Ten refusals in a row from WhatsApp pause it. Nothing is ever sent twice; a message WhatsApp accepted cannot be called back.',
+    ],
+  },
+  {
     id: 'integrations', who: 'Administrator', title: 'Calls, WhatsApp and the API — and what to do when they fail',
     body: [
       'Credentials are set as environment variables on the server and are never typed into or shown by TaskFlow. Settings → Calls, WhatsApp & TeleCRM shows what is missing.',

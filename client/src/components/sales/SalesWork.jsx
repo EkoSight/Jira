@@ -10,6 +10,7 @@ import {
   CallStatusBadge, CategoryBadge, DestinationBadge, DueBadge, FollowUpActions, LeadFieldInputs, LeadStatusBadge, Stars,
 } from './parts.jsx';
 import { WorkQueue } from './WorkQueue.jsx';
+import { BROADCAST_VIEWS, broadcastFilters } from '../../lib/broadcasts.js';
 import { CallAction } from './PhoneCall.jsx';
 import { LocationFields, emptyLocation } from './LeadWork.jsx';
 import { INDIAN_STATES, NOT_PROVIDED, exactTime, pinProblem } from '../../lib/crmWork.js';
@@ -266,7 +267,7 @@ export function Leads({ meta }) {
   const view = params.get('view') || 'open';
   // a report or a My Day group can open the list already narrowed
   const [filters, setFilters] = useState(() => ({
-    q: '', category: '', status: '', owner_id: '', source_id: '', call_status_id: '', state: '', district: '', pincode: '', for_user: '', sort: 'newest',
+    q: '', category: '', status: '', owner_id: '', source_id: '', call_status_id: '', state: '', district: '', pincode: '', for_user: '', wa_optin: '', sort: 'newest',
     ...Object.fromEntries(LINKABLE.filter((k) => params.get(k)).map((k) => [k, params.get(k)])),
   }));
   // the lead's own questions that can narrow the list, and the ones worth a glance in each row
@@ -336,6 +337,13 @@ export function Leads({ meta }) {
         </div>
         <div className="row" style={{ gap: 6 }}>
           {can('crm.export') && <button type="button" className="btn btn-sm" onClick={() => downloadFile(api.sales.url('/exports/leads', { ...query, format: 'XLSX' }), 'leads.xlsx').catch(toast.error)}><Icon name="download" size={13} /> Export</button>}
+          {can('marketing.manage') && (
+            <button type="button" className="btn btn-sm" disabled={!BROADCAST_VIEWS.includes(view)}
+              title={BROADCAST_VIEWS.includes(view) ? 'Start a WhatsApp broadcast to the leads in this list who agreed to WhatsApp' : 'Broadcasts start from Open, Mine, Unassigned, New, Stale, Nurture, Won, Converted, Lost or All'}
+              onClick={() => navigate(`/sales?tab=broadcasts&new=1&filters=${encodeURIComponent(JSON.stringify(broadcastFilters(view, filters)))}`)}>
+              WhatsApp broadcast…
+            </button>
+          )}
           {can('crm.create') && <button type="button" className="btn btn-sm btn-primary" onClick={() => setCreating(true)}><Icon name="plus" size={13} /> New lead</button>}
         </div>
       </div>
@@ -367,6 +375,9 @@ export function Leads({ meta }) {
         </select>
         <input className="input" style={{ maxWidth: 150 }} placeholder="District" aria-label="District (type none for missing)" value={filters.district} onChange={(e) => { setPage(1); setFilters({ ...filters, district: e.target.value }); }} />
         <input className="input" style={{ maxWidth: 110 }} placeholder="PIN starts" inputMode="numeric" aria-label="PIN code starts with" value={filters.pincode} onChange={(e) => { setPage(1); setFilters({ ...filters, pincode: e.target.value.replace(/\D/g, '').slice(0, 6) }); }} />
+        <select className="select" aria-label="WhatsApp opt-in" value={filters.wa_optin} onChange={(e) => { setPage(1); setFilters({ ...filters, wa_optin: e.target.value }); }}>
+          <option value="">WhatsApp: any</option><option value="yes">Agreed to WhatsApp</option><option value="no">Not agreed to WhatsApp</option>
+        </select>
         <select className="select" aria-label="Sort" value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value })}>
           <option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="score">Highest score</option><option value="rating">Highest rating</option>
           <option value="follow_up">Next follow-up</option><option value="retry">Next retry</option><option value="activity">Recent activity</option><option value="organization">Organization A–Z</option>

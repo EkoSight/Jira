@@ -452,12 +452,14 @@ export async function sendWhatsApp(input, { actor = null, automationRunId = null
   const optedOut = await isOptedOut('WHATSAPP', to);
   const { rows: inserted } = await query(
     `INSERT INTO crm_wa_messages (direction, phone, phone_normalized, lead_id, account_id, contact_id, opportunity_id, agent_user_id, kind,
-                                  template_name, template_language, variables, body, status, error_title, automation_run_id, idempotency_key, created_by)
-     VALUES ('OUTBOUND',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$7)
+                                  template_name, template_language, variables, body, status, error_title, automation_run_id, idempotency_key, created_by,
+                                  broadcast_id)
+     VALUES ('OUTBOUND',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$7,$17)
      ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING RETURNING *`,
     [input.to, to, links.leadId, links.accountId, links.contactId, links.opportunityId, actor?.id ?? null, kind,
       template?.name ?? null, template?.language ?? null, JSON.stringify(input.variables || []), body,
-      optedOut ? 'BLOCKED' : 'QUEUED', optedOut ? 'This number opted out of WhatsApp' : null, automationRunId, input.idempotency_key || null],
+      optedOut ? 'BLOCKED' : 'QUEUED', optedOut ? 'This number opted out of WhatsApp' : null, automationRunId, input.idempotency_key || null,
+      input.broadcast_id ?? null],
   );
   if (!inserted[0]) {
     const { rows } = await query('SELECT * FROM crm_wa_messages WHERE idempotency_key = $1', [input.idempotency_key]);

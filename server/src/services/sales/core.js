@@ -112,6 +112,15 @@ export const normalizeEmail = (value) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) ? v : null;
 };
 
+/**
+ * SQL: the number (a column or parameter) agreed to WhatsApp messages and has
+ * not opted out. Agreeing is a recorded opt-in, or having written to us on
+ * WhatsApp first. An opt-out always wins.
+ */
+export const waAgreedSql = (col) => `((EXISTS (SELECT 1 FROM crm_wa_optins oi WHERE oi.phone_normalized = ${col} AND oi.removed_at IS NULL)
+    OR EXISTS (SELECT 1 FROM crm_wa_messages im WHERE im.phone_normalized = ${col} AND im.direction = 'INBOUND'))
+  AND NOT EXISTS (SELECT 1 FROM crm_optouts wo WHERE wo.channel = 'WHATSAPP' AND wo.address = ${col} AND wo.lifted_at IS NULL))`;
+
 /** Digits only, with the country code; a 10-digit Indian mobile gets 91. */
 export function normalizePhone(value) {
   const raw = String(value ?? '').trim();

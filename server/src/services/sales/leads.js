@@ -16,7 +16,7 @@ import { refreshScore, effectiveScore } from './scoring.js';
 import { routeLead, routeFor } from './routing.js';
 import {
   CATEGORY_LABEL, OPEN_LEAD_STATUSES, PIPELINE_FOR_CATEGORY, cleanText, companyDomain, domainOf, emitEvent, isEligible,
-  isOrgCategory, nextNumber, normalizeEmail, normalizePhone, salesSettings, scopeCondition,
+  isOrgCategory, nextNumber, normalizeEmail, normalizePhone, salesSettings, scopeCondition, waAgreedSql,
 } from './core.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -377,13 +377,11 @@ const openFollowUp = (extra = '') => `EXISTS (SELECT 1 FROM tasks t WHERE t.crm_
   AND t.is_archived = FALSE AND t.crm_cancel_reason IS NULL ${extra})`;
 
 /**
- * A page of leads for one view, inside what the person may see. Views of the
- * routing queues are for people with crm.routing; the route checks that.
+ * The conditions of one lead list view and its filters, inside what the
+ * person may see. The lead list and WhatsApp broadcasts both use it, so a
+ * broadcast's list is exactly the lead list with the same filters.
  */
-export async function listLeads(filters = {}, scope = { all: true }) {
-  const settings = await salesSettings();
-  const params = [];
-  const push = (v) => { params.push(v); return `$${params.length}`; };
+export function leadListConditions(filters, scope, settings, push) {
   const where = [scopeCondition(scope, 'lead', 'l', push)];
   const view = LEAD_VIEWS.includes(filters.view) ? filters.view : 'open';
   const staleDays = Number(settings.followUps?.staleLeadDays) || 7;
@@ -452,6 +450,9 @@ export async function listLeads(filters = {}, scope = { all: true }) {
   else if (filters.district) where.push(`lower(l.district) = lower(${push(String(filters.district).trim())})`);
   if (filters.block) where.push(`l.block ILIKE ${push(`%${String(filters.block).trim()}%`)}`);
   if (filters.pincode) where.push(`l.pincode LIKE ${push(`${String(filters.pincode).replace(/\D/g, '')}%`)}`);
+  // WhatsApp: "yes" is a number that agreed to WhatsApp messages and has not opted out
+  if (filters.wa_optin === 'yes') where.push(`(l.phone_normalized IS NOT NULL AND ${waAgreedSql('l.phone_normalized')})`);
+  else if (filters.wa_optin === 'no') where.push(`NOT (l.phone_normalized IS NOT NULL AND ${waAgreedSql('l.phone_normalized')})`);
   // custom fields: cf_<key>=<value>; a multi-choice field matches any lead holding that choice
   for (const [k, v] of Object.entries(filters)) {
     const m = /^cf_([a-z][a-z0-9_]{1,40})$/.exec(k);
@@ -460,6 +461,18 @@ export async function listLeads(filters = {}, scope = { all: true }) {
     const val = push(String(v));
     where.push(`(l.custom_fields->>${key} = ${val} OR (jsonb_typeof(l.custom_fields->${key}) = 'array' AND l.custom_fields->${key} ? ${val}))`);
   }
+  return { where, view };
+}
+
+/**
+ * A page of leads for one view, inside what the person may see. Views of the
+ * routing queues are for people with crm.routing; the route checks that.
+ */
+export async function listLeads(filters = {}, scope = { all: true }) {
+  const settings = await salesSettings();
+  const params = [];
+  const push = (v) => { params.push(v); return `$${params.length}`; };
+  const { where, view } = leadListConditions(filters, scope, settings, push);
 
   const SORTS = {
     newest: 'l.captured_at DESC, l.id DESC', oldest: 'l.captured_at ASC, l.id ASC',

@@ -15,6 +15,7 @@ import crypto from 'node:crypto';
 import { query } from '../../db/pool.js';
 import { badRequest, unauthorized } from '../../lib/errors.js';
 import { categoryFromInput } from './routing.js';
+import { recordOptin } from './whatsappOptins.js';
 import { createLead } from './leads.js';
 import { cleanText } from './core.js';
 
@@ -169,5 +170,11 @@ export async function submitForm(form, body, { ip = null } = {}) {
   const idem = body.submission_id ? `form:${form.id}:${String(body.submission_id).slice(0, 100)}` : null;
   const result = await createLead(input, { channel: 'FORM', sourceSystem: `form:${form.public_id}`, idempotencyKey: idem, origin: 'INTEGRATION' });
   if (result.created) await query('UPDATE crm_capture_forms SET submissions = submissions + 1 WHERE id = $1', [form.id]);
+  // "Send me updates on WhatsApp": an opt-in for that number, with the words they ticked
+  if (form.whatsapp_optin_text && ['1', 'true', 'on', 'yes'].includes(String(body.whatsapp_optin || '').toLowerCase()) && input.phone) {
+    await recordOptin(null, { phone: input.phone, leadId: result.lead?.id ?? null, how: 'FORM', note: form.whatsapp_optin_text })
+      // a number that opted out stays opted out; the enquiry itself is kept
+      .catch((err) => { if (err.status !== 409) throw err; });
+  }
   return result;
 }

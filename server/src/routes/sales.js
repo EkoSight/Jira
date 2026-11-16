@@ -4,6 +4,7 @@ import { query, withTransaction } from '../db/pool.js';
 import { asyncHandler, badRequest, forbidden, notFound } from '../lib/errors.js';
 import { hasPermission } from '../lib/permissions.js';
 import { requirePermission } from '../middleware/auth.js';
+import { recordLeadOptin, removeLeadOptin, whatsappStanding } from '../services/sales/whatsappOptins.js';
 import { sendCsv } from '../lib/csv.js';
 import { recordAuditEvent } from '../services/audit.js';
 import { getSettings, updateSetting } from '../services/settings.js';
@@ -231,7 +232,25 @@ router.get('/leads/:id', asyncHandler(async (req, res) => {
       no_messages: optouts.rows.some((o) => o.channel === 'WHATSAPP'),
       do_not_record: lead.do_not_record === true,
     },
+    // whether this number agreed to WhatsApp messages (and so can get broadcasts)
+    whatsapp: await whatsappStanding(lead.phone),
   });
+}));
+
+// ---------------------------------------------------------------- WhatsApp opt-in (docs/WHATSAPP_BROADCASTS.md)
+
+router.post('/leads/:id/whatsapp-optin', requirePermission('crm.activity.log'), asyncHandler(async (req, res) => {
+  const data = z.object({ how: z.enum(['ON_CALL', 'IN_PERSON', 'OTHER']), note: z.string().max(500).nullable().optional() }).parse(req.body);
+  const lead = await visibleLead(req, id(req.params.id));
+  const r = await recordLeadOptin(lead, data, req.currentUser);
+  res.status(r.already ? 200 : 201).json({ ...r, whatsapp: await whatsappStanding(lead.phone) });
+}));
+
+router.post('/leads/:id/whatsapp-optin/remove', requirePermission('crm.activity.log'), asyncHandler(async (req, res) => {
+  const data = z.object({ reason: z.string().min(3).max(500) }).parse(req.body);
+  const lead = await visibleLead(req, id(req.params.id));
+  await removeLeadOptin(lead, data, req.currentUser);
+  res.json({ removed: true, whatsapp: await whatsappStanding(lead.phone) });
 }));
 
 router.patch('/leads/:id', asyncHandler(async (req, res) => {
@@ -583,7 +602,15 @@ router.put('/settings', settingsOnly, asyncHandler(async (req, res) => {
     required: z.object({ lead: z.record(z.array(z.string())).optional() }).optional(),
     automation: z.object({ liveSends: z.boolean().optional(), maxDepth: z.number().int().min(1).max(5).optional() }).optional(),
     calls: z.object({ provider: z.enum(['none', 'exotel', 'webhook']).optional(), recordings: z.boolean().optional(), recordingRetentionDays: z.number().int().min(1).max(3650).optional() }).optional(),
-    whatsapp: z.object({ enabled: z.boolean().optional(), messageRetentionDays: z.number().int().min(1).max(3650).nullable().optional() }).optional(),
+    whatsapp: z.object({
+      enabled: z.boolean().optional(), messageRetentionDays: z.number().int().min(1).max(3650).nullable().optional(),
+      // WhatsApp broadcasts (docs/WHATSAPP_BROADCASTS.md)
+      broadcasts: z.object({
+        enabled: z.boolean().optional(), dailyLimit: z.number().int().min(1).max(100000).optional(),
+        sendFrom: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/).optional(), sendUntil: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/).optional(),
+        minDaysBetween: z.number().int().min(0).max(60).optional(), batchSize: z.number().int().min(1).max(200).optional(),
+      }).optional(),
+    }).optional(),
     quotes: z.object({
       validityDays: z.number().int().min(1).max(365).optional(), terms: z.string().max(5000).optional(), brand: z.string().max(80).optional(),
       legalName: z.string().max(200).optional(), address: z.string().max(500).optional(), email: z.string().max(200).optional(),
@@ -596,6 +623,11 @@ router.put('/settings', settingsOnly, asyncHandler(async (req, res) => {
   const before = current.sales || {};
   const merged = { ...before };
   for (const [k, v] of Object.entries(data)) merged[k] = typeof v === 'object' && !Array.isArray(v) ? { ...(before[k] || {}), ...v } : v;
+  if (data.whatsapp?.broadcasts) {
+    merged.whatsapp.broadcasts = { ...(before.whatsapp?.broadcasts || {}), ...data.whatsapp.broadcasts };
+    const hours = { sendFrom: '09:00', sendUntil: '20:00', ...merged.whatsapp.broadcasts };
+    if (hours.sendFrom >= hours.sendUntil) throw badRequest('The sending hours must start before they end');
+  }
   await updateSetting('crm', { ...current, sales: merged }, req.currentUser.id);
   rememberRouting(merged);
   await recordAuditEvent(null, { action: 'CRM_SETTINGS_CHANGED', entityType: 'SETTINGS', actorId: req.currentUser.id, summary: `Sales CRM settings: ${Object.keys(data).join(', ')}`, detail: { before: Object.fromEntries(Object.keys(data).map((k) => [k, before[k]])), after: data } });
@@ -673,6 +705,8 @@ const formInput = z.object({
   source_id: z.number().int().positive().nullable().optional(), campaign_id: z.number().int().positive().nullable().optional(),
   consent_text: z.string().max(2000).nullable().optional(), success_message: z.string().max(1000).nullable().optional(),
   fields: z.array(z.enum(['designation', 'website', 'city', 'state', 'requirement'])).optional(), is_active: z.boolean().optional(),
+  // an optional "Send me updates on WhatsApp" tick box; ticking it records a WhatsApp opt-in
+  whatsapp_optin_text: z.string().trim().max(500).nullable().optional(),
 });
 router.post('/capture/forms', settingsOnly, asyncHandler(async (req, res) => {
   const data = formInput.parse(req.body);
@@ -692,6 +726,10 @@ router.post('/capture/forms', settingsOnly, asyncHandler(async (req, res) => {
         data.campaign_id ?? null, data.consent_text ?? null, data.success_message ?? null, req.currentUser.id, randomBytes(9).toString('hex')],
     );
   });
+  if (data.whatsapp_optin_text) {
+    const { rows: withOptin } = await query('UPDATE crm_capture_forms SET whatsapp_optin_text = $2 WHERE id = $1 RETURNING *', [rows[0].id, data.whatsapp_optin_text]);
+    rows[0] = withOptin[0];
+  }
   res.status(201).json({ form: rows[0] });
 }));
 router.patch('/capture/forms/:id', settingsOnly, asyncHandler(async (req, res) => {

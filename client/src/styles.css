@@ -4617,3 +4617,28 @@ button.mkt-tcard:hover, button.mkt-tcard.is-selected { border-color: #073F2A; bo
 .td-widget { padding: 4px 14px 14px; }
 .td-fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 4px; margin: 0; }
 .td-fieldset legend { font-size: 12.5px; color: var(--ink-2); padding: 0 4px; }
+
+/* ---------------------------------------------------------------- WhatsApp broadcasts */
+.wab-title { font-size: 1.25rem; font-weight: 600; max-width: 32rem; }
+.wab-filters { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: 10px; }
+.wab-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); }
+.wab-bubble { margin: 0; max-width: 26rem; padding: 10px 12px; border-radius: var(--radius) var(--radius) var(--radius) 2px; background: var(--brand-wash); color: var(--ink); border: 1px solid var(--brand-border); }
+.wab-bubble blockquote { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wab-bubble figcaption { margin-top: 4px; }
+.wab-samples { display: flex; flex-wrap: wrap; gap: 10px; }
+.wab-blanks { border: 0; padding: 0; margin: 0; display: grid; gap: 8px; }
+.wab-blank { display: grid; grid-template-columns: 3.5rem minmax(10rem, 14rem) minmax(10rem, 1fr); gap: 8px; align-items: center; }
+.wab-blank-name { font-family: ui-monospace, monospace; font-size: 0.85rem; }
+.wab-tally { display: flex; flex-wrap: wrap; gap: 24px; }
+.wab-tally > div, .wab-stat { display: flex; flex-direction: column; gap: 2px; }
+.wab-big { font-size: 1.75rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.wab-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; max-width: 48rem; }
+.wab-stat { padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.wab-stat strong { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.wab-reasons { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.wab-optin { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+@media (max-width: 599px) {
+  .wab-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .wab-blank { grid-template-columns: 3rem 1fr; }
+  .wab-blank > input { grid-column: 1 / -1; }
+}

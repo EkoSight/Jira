@@ -33,6 +33,7 @@ import {
 } from './core.js';
 import { categoryFromInput } from './routing.js';
 import { createLead, logLeadActivity, validateLead } from './leads.js';
+import { recordOptin } from './whatsappOptins.js';
 import { callStatuses, categoryFromFields, findStatus, leadFields, matchOption } from './calling.js';
 import { readTable } from './files.js';
 
@@ -77,6 +78,8 @@ export const IMPORT_FIELDS = {
     lost_reason: ['lost reason', 'reason lost', 'disqualify reason'],
     rating: ['rating', 'stars'],
     notes: ['remarks', 'call notes', 'agent notes', 'first call description', 'first call descripton'],
+    // "yes" records that the number agreed to WhatsApp messages (docs/WHATSAPP_BROADCASTS.md)
+    whatsapp_optin: ['whatsapp opt-in', 'whatsapp optin', 'whatsapp opt in', 'whatsapp consent', 'whatsapp updates', 'wa opt-in'],
   },
   ACCOUNTS: {
     category: ['category', 'lead category', 'customer type'],
@@ -288,6 +291,15 @@ function leadRow(raw, mapping, options, look) {
     data.status = status.lifecycle;
     if (status.lifecycle === 'DISQUALIFIED') data.disqualify_reason = g('lost_reason') || status.label;
   } else if (g('lost_reason')) notes.push(`Lost reason: ${g('lost_reason')}`);
+  // WhatsApp opt-in: only a clear yes records one; a no records nothing (it never removes one)
+  const waOptin = g('whatsapp_optin');
+  if (waOptin !== undefined && waOptin !== null && String(waOptin).trim() !== '') {
+    const said = String(waOptin).trim().toLowerCase();
+    if (['yes', 'y', 'true', '1', 'agreed', 'opted in', 'haan', 'हाँ', 'हां'].includes(said)) {
+      if (data.phone) data.whatsapp_optin = true;
+      else warnings.push('WhatsApp opt-in "yes" with no phone number; not recorded');
+    } else if (!['no', 'n', 'false', '0', 'nahi', 'नहीं'].includes(said)) warnings.push(`WhatsApp opt-in "${waOptin}" is not yes or no; not recorded`);
+  }
   const rating = g('rating');
   if (rating !== undefined) {
     const n = Number(rating);
@@ -609,7 +621,13 @@ async function applyRow(job, row, actor) {
         for (const body of fresh) {
           await logLeadActivity(client, lead.id, { type: 'IMPORT_NOTE', subject: `Notes from ${job.preset === 'TELECRM' ? 'TeleCRM' : job.filename}`, body, meta: { import_row: `${job.id}:${row.row_no}` } });
         }
-        const changed = sets.length > 0 || fresh.length > 0;
+        let optedIn = false;
+        if (data.whatsapp_optin && (lead.phone || data.phone)) {
+          const r = await recordOptin(client, { phone: lead.phone || data.phone, leadId: lead.id, how: 'IMPORT', note: `Import ${job.filename || `#${job.id}`}, row ${row.row_no}`, actorId: actor?.id ?? null })
+            .catch((err) => { if (err.status === 409) { kept.push('WhatsApp opt-in not recorded: the number opted out'); return null; } throw err; });
+          optedIn = Boolean(r && !r.already);
+        }
+        const changed = sets.length > 0 || fresh.length > 0 || optedIn;
         await client.query(
           `UPDATE crm_import_rows SET status = $2, entity_id = $3, before = $4, applied_at = now(), warnings = warnings || $5::text[] WHERE id = $1`,
           [row.id, changed ? 'UPDATED' : 'SKIPPED', lead.id, before, [...kept, ...(changed ? [] : ['Nothing new to add to the existing lead'])]],
@@ -620,13 +638,19 @@ async function applyRow(job, row, actor) {
     const campaignId = await withTransaction((client) => campaignFor(client, data));
     const input = { ...data, campaign_id: campaignId };
     delete input.campaign_name;
+    delete input.whatsapp_optin;
     const { lead } = await createLead(input, {
       actor, channel: 'IMPORT', sourceSystem: data.source_system || null, idempotencyKey: `import:${job.id}:${row.row_no}`, importJobId: job.id, origin: 'USER',
       quiet: job.options?.run_automation === false,
     });
     await withTransaction((client) => applyHistory(client, lead.id, data, job, row.row_no));
-    await query(`UPDATE crm_import_rows SET status = $2, entity_id = $3, applied_at = now() WHERE id = $1`,
-      [row.id, lead.destination === 'TELECRM' ? 'ROUTED' : 'IMPORTED', lead.id]);
+    let optinWarning = [];
+    if (data.whatsapp_optin && lead.phone) {
+      await recordOptin(null, { phone: lead.phone, leadId: lead.id, how: 'IMPORT', note: `Import ${job.filename || `#${job.id}`}, row ${row.row_no}`, actorId: actor?.id ?? null })
+        .catch((err) => { if (err.status === 409) optinWarning = ['WhatsApp opt-in not recorded: the number opted out']; else throw err; });
+    }
+    await query(`UPDATE crm_import_rows SET status = $2, entity_id = $3, applied_at = now(), warnings = warnings || $4::text[] WHERE id = $1`,
+      [row.id, lead.destination === 'TELECRM' ? 'ROUTED' : 'IMPORTED', lead.id, optinWarning]);
     return;
   }
   // organizations
@@ -749,11 +773,11 @@ export async function correctionRows(jobId) {
 
 export const TEMPLATE = {
   LEADS: {
-    header: ['Category', 'Organization', 'Contact name', 'Designation', 'Email', 'Phone', 'Website', 'City', 'State', 'Requirement', 'Budget', 'Currency', 'Source', 'Campaign', 'Owner email', 'External ID', 'Source system'],
+    header: ['Category', 'Organization', 'Contact name', 'Designation', 'Email', 'Phone', 'Website', 'City', 'State', 'Requirement', 'Budget', 'Currency', 'Source', 'Campaign', 'Owner email', 'External ID', 'Source system', 'WhatsApp opt-in'],
     rows: [
-      ['B2B Corporate', 'Coromandel Agro Inputs Pvt Ltd', 'Priya Nair', 'Head of Retail', 'priya@example.com', '09876543210', 'https://example.com', 'Hyderabad', 'Telangana', 'Soil testing for 400 dealers', '1200000', 'INR', 'Website enquiry', '', '', 'WEB-1001', 'website'],
-      ['CSR/NGO', 'Bharat Agro Foundation', 'Meera Iyer', 'CSR Manager', 'meera@example.org', '+91 98200 00000', 'https://example.org', 'Nagpur', 'Maharashtra', 'Soil health cards for 5,000 farmers', '2500000', 'INR', 'Referral', '', '', 'WEB-1002', 'website'],
-      ['Retailer', 'Krishna Agro Store', 'Mahesh', '', '', '09811100011', '', 'Pune', 'Maharashtra', 'Wants to stock kits (goes to TeleCRM)', '', '', 'Inbound call', '', '', '', ''],
+      ['B2B Corporate', 'Coromandel Agro Inputs Pvt Ltd', 'Priya Nair', 'Head of Retail', 'priya@example.com', '09876543210', 'https://example.com', 'Hyderabad', 'Telangana', 'Soil testing for 400 dealers', '1200000', 'INR', 'Website enquiry', '', '', 'WEB-1001', 'website', ''],
+      ['CSR/NGO', 'Bharat Agro Foundation', 'Meera Iyer', 'CSR Manager', 'meera@example.org', '+91 98200 00000', 'https://example.org', 'Nagpur', 'Maharashtra', 'Soil health cards for 5,000 farmers', '2500000', 'INR', 'Referral', '', '', 'WEB-1002', 'website', ''],
+      ['Retailer', 'Krishna Agro Store', 'Mahesh', '', '', '09811100011', '', 'Pune', 'Maharashtra', 'Wants to stock kits (goes to TeleCRM)', '', '', 'Inbound call', '', '', '', '', 'Yes'],
     ],
     textColumns: [5, 15],
   },
