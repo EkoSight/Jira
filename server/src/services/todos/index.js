@@ -90,6 +90,15 @@ function checkTitle(title) {
 
 const publicLink = (l) => (l ? { type: l.type, id: l.id, label: l.label, url: l.url, word: l.word, visible: l.visible, ...(l.ref ? { ref: l.ref } : {}) } : null);
 
+/** The small stamp at a line's right: a task reference or a project name in its colour; other records by name. */
+const stampOf = (l) => {
+  if (!l) return null;
+  if (!l.visible) return { text: 'Not available', color: null };
+  if (l.stamp) return l.stamp;
+  const text = l.label.length > 28 ? `${l.label.slice(0, 27)}…` : l.label;
+  return { text, color: null };
+};
+
 function todoItem(r, { today, links, suggestions }) {
   const own = r.link_type ? links.get(keyOf(r.link_type, r.link_id)) : null;
   const inherited = !own && r.list_link_type ? links.get(keyOf(r.list_link_type, r.list_link_id)) : null;
@@ -105,7 +114,8 @@ function todoItem(r, { today, links, suggestions }) {
     ask_still_want: Boolean(carried && !r.done_at && !r.carry_asked_at && daysBetween(carried, today) >= 7),
     list: r.list_id ? { id: r.list_id, name: r.list_name } : null,
     became: r.became_task_id ? { task_id: r.became_task_id, ref: r.became_ref } : null,
-    project: link?.project || null, origin: r.source, created_at: r.created_at,
+    project: link?.project || null, origin: r.source, created_at: r.created_at, updated_at: r.updated_at,
+    starred: Boolean(r.starred), stamp: stampOf(link),
     suggestion: (!link && !r.done_at && suggestions?.get(r.id)) || null,
   };
 }
@@ -120,7 +130,7 @@ function stepItem(r, { today, links }) {
     link: publicLink(link), shared: true,
     carried_from: onDay && today && onDay < today ? onDay : null, ask_still_want: false,
     task: { id: r.task_id, ref: r.ref, title: r.task_title, stage: r.stage },
-    project: link?.project || null, created_at: r.created_at,
+    project: link?.project || null, created_at: r.created_at, starred: false, stamp: stampOf(link),
   };
 }
 
@@ -135,7 +145,7 @@ function pinItem(r, { links }) {
       id: r.task_id, ref: r.ref, title: r.title, stage: r.stage, status_name: r.status_name, status_id: r.status_id,
       due_date: r.due_date, task_type: r.task_type, priority: r.priority, recurrence: r.recurrence, assignee_id: r.assignee_id,
     },
-    project: link?.project || null, created_at: r.created_at,
+    project: link?.project || null, created_at: r.created_at, starred: false, stamp: stampOf(link),
   };
 }
 
@@ -158,7 +168,7 @@ const TODO_SELECT = `
     LEFT JOIN todo_lists l ON l.id = td.list_id
     LEFT JOIN tasks bt ON bt.id = td.became_task_id`;
 
-async function todoRows(user, where, params) {
+export async function todoRows(user, where, params) {
   const { rows } = await query(
     `${TODO_SELECT}
       WHERE td.owner_user_id = $1 AND td.archived_at IS NULL AND td.moved_to_checklist_item_id IS NULL AND (${where})
@@ -167,7 +177,7 @@ async function todoRows(user, where, params) {
 }
 
 /** Steps this person owns, on tasks they can still see (losing access removes them from the plan). */
-async function stepRows(user, tz, where, extra = []) {
+export async function stepRows(user, tz, where, extra = []) {
   const params = [user.id, tz, ...extra];
   const visible = taskVisibilitySql(user, params, 't');
   const { rows } = await query(
@@ -182,10 +192,10 @@ async function stepRows(user, tz, where, extra = []) {
   return rows;
 }
 
-const OPEN_STEP = `(ci.is_done = FALSE AND COALESCE(ws.stage, 'todo') NOT IN ('done', 'cancelled'))`;
-const STEP_DAY = `COALESCE(ci.planned_on, (t.due_date AT TIME ZONE $2::text)::date)`;
+export const OPEN_STEP = `(ci.is_done = FALSE AND COALESCE(ws.stage, 'todo') NOT IN ('done', 'cancelled'))`;
+export const STEP_DAY = `COALESCE(ci.planned_on, (t.due_date AT TIME ZONE $2::text)::date)`;
 
-async function pinRows(user, day) {
+export async function pinRows(user, day) {
   const params = [user.id, day];
   const visible = taskVisibilitySql(user, params, 't');
   const { rows } = await query(
@@ -200,7 +210,7 @@ async function pinRows(user, day) {
 }
 
 /** Turn rows into items: links described once, suggestions for unlinked open lines. */
-async function itemsFrom(user, { todos = [], steps = [], pins = [] }, { today, tz, settings, suggest = true }) {
+export async function itemsFrom(user, { todos = [], steps = [], pins = [] }, { today, tz, settings, suggest = true }) {
   const pairs = [];
   for (const r of todos) {
     if (r.link_type) pairs.push({ type: r.link_type, id: r.link_id });
@@ -477,6 +487,7 @@ export async function createMany(user, input) {
 /** Change one to-do: words, day, time, done, list, link, "still want this". */
 export async function updateTodo(user, id, input) {
   let ask = null;
+  let stale = false;
   const result = await withTransaction(async (client) => {
     const { today, settings } = await todayFor(user);
     const row = await ownTodo(user, id, client);
@@ -485,7 +496,11 @@ export async function updateTodo(user, id, input) {
     const params = [];
     const set = (col, value) => { params.push(value); sets.push(`${col} = $${params.length}`); };
 
-    if (input.title !== undefined) set('title', checkTitle(cleanTitle(input.title)));
+    // text changed on two devices: the later change wins (an offline edit carries when it was made)
+    const older = input.changed_at && row.updated_at && new Date(input.changed_at) < new Date(row.updated_at);
+    if (input.title !== undefined && older && cleanTitle(input.title) !== row.title) stale = true;
+    else if (input.title !== undefined) set('title', checkTitle(cleanTitle(input.title)));
+    if (input.starred !== undefined) set('starred', Boolean(input.starred));
     if (input.note !== undefined) set('note', input.note ? String(input.note).slice(0, 2000) : null);
     const day = readDay(input.planned_on, today);
     if (day !== undefined && day !== dayOf(row.planned_on)) {
@@ -528,7 +543,7 @@ export async function updateTodo(user, id, input) {
     // the "done" message: a private linked line may be added to its record's progress
     if (item.link?.visible && !item.shared) ask = { offer_share: `Add to its progress? It goes on ${item.link.word} ${item.link.label}.` };
   }
-  return { todo: item, ...(ask || {}) };
+  return { todo: item, ...(ask || {}), ...(stale ? { stale: 'Changed on another device · showing the latest' } : {}) };
 }
 
 /** Remove (from carried over, or anywhere): kept as archived, never deleted. */
@@ -911,8 +926,18 @@ export async function recordSteps(user, type, id) {
 
 // ---------------------------------------------------------------- personal switches
 
-export async function setPrefs(user, { hide_done }) {
-  if (hide_done !== undefined) await query('UPDATE users SET notebook_hide_done = $1 WHERE id = $2', [Boolean(hide_done), user.id]);
-  const { rows } = await query('SELECT notebook_hide_done FROM users WHERE id = $1', [user.id]);
-  return { hide_done: rows[0].notebook_hide_done };
+const PREFS = { hide_done: 'notebook_hide_done', handwriting: 'notebook_handwriting', haptics: 'notebook_haptics' };
+
+/** The notebook's personal switches: hide done, handwriting style for my items, a light tap on tick. */
+export async function prefsOf(userId) {
+  const { rows } = await query('SELECT notebook_hide_done, notebook_handwriting, notebook_haptics FROM users WHERE id = $1', [userId]);
+  const r = rows[0] || {};
+  return { hide_done: Boolean(r.notebook_hide_done), handwriting: Boolean(r.notebook_handwriting), haptics: Boolean(r.notebook_haptics) };
+}
+
+export async function setPrefs(user, input) {
+  for (const [key, column] of Object.entries(PREFS)) {
+    if (input[key] !== undefined) await query(`UPDATE users SET ${column} = $1 WHERE id = $2`, [Boolean(input[key]), user.id]);
+  }
+  return prefsOf(user.id);
 }

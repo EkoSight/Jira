@@ -167,6 +167,10 @@ export const todoApi = {
   removeList: (id) => api.del(`/todos/lists/${id}`),
   record: (type, id) => api.get(`/todos/record/${type}/${id}`),
   prefs: (body) => api.put('/todos/prefs', body),
+  day: (day) => api.get(`/todos/day/${day || 'today'}`),
+  week: (day) => api.get(`/todos/week/${day || 'today'}`),
+  month: (month) => api.get(`/todos/month/${month}`),
+  addFromNote: (day, line) => api.post(`/todos/notes/${day}/to-todo`, { line, client_key: `note:${day}:${line}`.slice(0, 200) }),
 };
 
 /** Tell every open plan (header, card, widget, page) that something changed. */

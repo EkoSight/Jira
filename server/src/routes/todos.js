@@ -12,6 +12,7 @@ import {
 } from '../services/todos/index.js';
 import { referenceIn, searchLinks } from '../services/todos/links.js';
 import { createRoutine, listRoutines, stopRoutine, updateRoutine } from '../services/todos/routines.js';
+import { dayPage, getNote, monthIndex, noteLineToTodo, saveNote, weekPage } from '../services/todos/notebook.js';
 
 const router = Router();
 
@@ -30,6 +31,17 @@ router.get('/today', asyncHandler(async (req, res) => res.json(await todayPlan(r
 router.get('/count', asyncHandler(async (req, res) => {
   const plan = await todayPlan(req.currentUser);
   res.json({ left: plan.left, day: plan.day });
+}));
+
+// ---------------------------------------------------------------- the notebook's pages
+
+router.get('/day/:day', asyncHandler(async (req, res) => res.json(await dayPage(req.currentUser, req.params.day === 'today' ? null : req.params.day))));
+router.get('/week/:day', asyncHandler(async (req, res) => res.json(await weekPage(req.currentUser, req.params.day === 'today' ? null : req.params.day))));
+router.get('/month/:month', asyncHandler(async (req, res) => res.json(await monthIndex(req.currentUser, req.params.month))));
+router.get('/notes/:day', asyncHandler(async (req, res) => res.json(await getNote(req.currentUser, req.params.day))));
+router.put('/notes/:day', asyncHandler(async (req, res) => res.json(await saveNote(req.currentUser, req.params.day, req.body?.body))));
+router.post('/notes/:day/to-todo', asyncHandler(async (req, res) => {
+  res.status(201).json(await noteLineToTodo(req.currentUser, req.params.day, req.body?.line, req.body?.client_key || null));
 }));
 
 router.get('/upcoming', asyncHandler(async (req, res) => res.json(await upcoming(req.currentUser))));

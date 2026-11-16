@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Spinner } from '../components/ui.jsx';
-import TodayPlan from '../components/todos/TodayPlan.jsx';
+import Notebook from '../components/notebook/Notebook.jsx';
 import AddTodo from '../components/todos/AddTodo.jsx';
 import TodoRow from '../components/todos/TodoRow.jsx';
 import { LinkPicker, RoutineDialog } from '../components/todos/Pickers.jsx';
@@ -44,44 +44,23 @@ function ViewState({ error, data, children }) {
   return children;
 }
 
+/** /todos is the notebook (Part N); the views below are its Week, Someday, Lists and Past pages tabs. */
 export default function Todos() {
-  const [params, setParams] = useSearchParams();
-  const view = VIEWS.some(([k]) => k === params.get('view')) ? params.get('view') : 'today';
-  const addRef = useRef(null);
-  const focusAdd = params.get('add') === '1';
-  useEffect(() => { if (focusAdd) setTimeout(() => addRef.current?.focus(), 50); }, [focusAdd]);
-  const go = (key) => setParams(key === 'today' ? {} : { view: key });
   return (
     <div className="page td-page">
-      <header className="page-header">
-        <div>
-          <h1>To-dos</h1>
-          <p className="muted small">Quick lines for yourself. Private unless you share one onto a task, project, goal, deal, application or meeting.</p>
-        </div>
-      </header>
-      <nav className="tabs tabs-scroll" aria-label="To-do views">
-        {VIEWS.map(([key, label]) => (
-          <button key={key} type="button" className={`tab${view === key ? ' active' : ''}`} aria-current={view === key ? 'page' : undefined} onClick={() => go(key)}>{label}</button>
-        ))}
-      </nav>
-      <div className="td-view">
-        {view === 'today' && <div className="card card-pad"><TodayPlan autoFocusAdd={focusAdd} addRef={addRef} /></div>}
-        {view === 'upcoming' && <Upcoming />}
-        {view === 'anytime' && <Anytime />}
-        {view === 'lists' && <Lists />}
-        {view === 'done' && <Done />}
-      </div>
+      <h1 className="sr-only">To-dos</h1>
+      <Notebook />
     </div>
   );
 }
 
-function Upcoming() {
+export function Upcoming() {
   const loader = useCallback(() => todoApi.upcoming(), []);
   const { data, error, load } = useView(loader);
   const { actions, dialogs, bars } = useTodoActions({ reload: load, today: data?.today });
   return (
     <div className="card card-pad stack">
-      <h2 className="td-plan-title">Upcoming</h2>
+      <h2 className="td-plan-title nb-hand">Next 14 days</h2>
       <p className="small muted">The next 14 days{data ? `, ${dayLabel(data.from, data.today)} to ${dayLabel(data.to, data.today)}` : ''}.</p>
       {bars}
       <ViewState error={error} data={data}>
@@ -98,13 +77,14 @@ function Upcoming() {
   );
 }
 
-function Anytime() {
+export function Anytime({ title = 'Anytime' }) {
   const loader = useCallback(() => todoApi.anytime(), []);
   const { data, error, load } = useView(loader);
   const { actions, dialogs, bars } = useTodoActions({ reload: load, today: data?.today });
   return (
     <div className="card card-pad stack">
-      <h2 className="td-plan-title">Anytime</h2>
+      <h2 className="td-plan-title nb-hand">{title}</h2>
+      <p className="small muted">Lines with no day. Give one a day from its menu when it is time.</p>
       <AddTodo placeholder="Add a to-do with no day" onAdded={load} today={data?.today} />
       {bars}
       <ViewState error={error} data={data}>
@@ -116,8 +96,10 @@ function Anytime() {
   );
 }
 
-function Lists() {
-  const [open, setOpen] = useState(null);
+export function Lists({ onOpen = null }) {
+  const [openState, setOpenState] = useState(null);
+  const open = onOpen ? null : openState;
+  const setOpen = onOpen || setOpenState;
   const loader = useCallback(() => todoApi.lists(), []);
   const { data, error, load } = useView(loader);
   const [name, setName] = useState('');
@@ -207,7 +189,7 @@ function Routines() {
   );
 }
 
-function ListDetail({ id, onBack, onOpen }) {
+export function ListDetail({ id, onBack, onOpen }) {
   const loader = useCallback(() => todoApi.list(id), [id]);
   const { data, error, load } = useView(loader);
   const [linking, setLinking] = useState(false);
@@ -246,7 +228,7 @@ function ListDetail({ id, onBack, onOpen }) {
   );
 }
 
-function Done() {
+export function Done({ title = 'Done' }) {
   const [q, setQ] = useState('');
   const [query, setQuery] = useState('');
   const [whatIDid, setWhatIDid] = useState(false);
@@ -258,7 +240,7 @@ function Done() {
   return (
     <div className="card card-pad stack">
       <div className="row-between">
-        <h2 className="td-plan-title">Done</h2>
+        <h2 className="td-plan-title nb-hand">{title}</h2>
         <label className="td-switch small"><input type="checkbox" checked={whatIDid} onChange={(e) => setWhatIDid(e.target.checked)} /> What I did</label>
       </div>
       <label className="td-field">

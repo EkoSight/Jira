@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { useRefData } from '../../state/AppState.jsx';
 import { Icon } from '../ui.jsx';
-import TodayPlan from './TodayPlan.jsx';
+import DayPage from '../notebook/DayPage.jsx';
 import { TODO_SHORTCUT, isTodoShortcut, todoApi, typingIn } from '../../lib/todos.js';
 
 export { TODO_SHORTCUT, typingIn, isTodoShortcut };
@@ -89,14 +89,14 @@ export function TodosDrawer({ onClose }) {
     <div className="td-drawer-backdrop" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <aside ref={panel} className="td-drawer" role="dialog" aria-modal="true" aria-labelledby="td-drawer-title">
         <div className="td-drawer-head">
-          <h2 id="td-drawer-title" className="td-plan-title">To-dos</h2>
+          <h2 id="td-drawer-title" className="td-plan-title nb-hand">Pocket notebook</h2>
           <div className="row" style={{ gap: 6 }}>
-            <Link to="/todos" className="btn btn-sm btn-ghost" onClick={onClose}>Open the full page</Link>
+            <Link to="/todos" className="btn btn-sm btn-ghost" onClick={onClose}>Open notebook</Link>
             <button type="button" className="btn btn-ghost btn-icon" onClick={onClose} aria-label="Close to-dos"><Icon name="close" /></button>
           </div>
         </div>
         <div className="td-drawer-body">
-          <TodayPlan compact addRef={addRef} />
+          <DayPage variant="pocket" addRef={addRef} />
           <p className="small muted">Shortcut: {TODO_SHORTCUT} opens this from any page (not while typing in a field).</p>
         </div>
       </aside>

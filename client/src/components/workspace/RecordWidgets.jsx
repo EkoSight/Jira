@@ -14,7 +14,7 @@ import { Badge, Modal } from '../ui.jsx';
 import { SCOPE_LABEL } from '../../../../shared/workspaceWidgets.js';
 import { WidgetFrame, registerWidget, useWidgetData } from './Widgets.jsx';
 import { whenWords } from '../../lib/workspace.js';
-import TodayPlan from '../todos/TodayPlan.jsx';
+import DayPage from '../notebook/DayPage.jsx';
 
 const rowsOf = (w) => w.config?.rows || 5;
 
@@ -357,7 +357,7 @@ function TodosWidget({ widget }) {
   return (
     <WidgetFrame widget={widget} drill="/todos">
       <div className="ws-pad td-widget">
-        <TodayPlan compact showTitle={false} limit={widget.width === 'half' ? Math.min(rowsOf(widget), 6) : rowsOf(widget) * 2} />
+        <DayPage variant="snippet" limit={widget.width === 'half' ? Math.min(rowsOf(widget), 6) : rowsOf(widget) * 2} />
       </div>
     </WidgetFrame>
   );

@@ -9,7 +9,7 @@ import { AwayBadge, AwayCard } from '../components/Availability.jsx';
 import { TodayAttendanceCard } from '../components/Attendance.jsx';
 import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
 import { MyProjectsCard } from '../components/projects/ProjectLinks.jsx';
-import TodayPlan from '../components/todos/TodayPlan.jsx';
+import DayPage from '../components/notebook/DayPage.jsx';
 import {
   PRIORITY_LABEL,
   PRIORITY_TONE,
@@ -181,7 +181,7 @@ export default function Dashboard({ offerWorkspace = false }) {
           </div>
         </div>
         <div className="filters">
-          <select className="select" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+          <select className="select" aria-label="Department" value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
             <option value="">All departments</option>
             {departments.map((d) => (
               <option key={d.id} value={d.id}>
@@ -196,9 +196,8 @@ export default function Dashboard({ offerWorkspace = false }) {
       </div>
 
       {settings?.todos?.enabled !== false && (
-        <section className="card card-pad td-card" aria-label="Today’s plan">
-          <TodayPlan compact limit={8} />
-          <Link to="/todos" className="small">All to-dos</Link>
+        <section className="td-card" aria-label="Today’s plan">
+          <DayPage variant="snippet" limit={6} />
         </section>
       )}
 

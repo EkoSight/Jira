@@ -55,21 +55,30 @@ export async function describeLinks(user, pairs, settings = null) {
 
   if (byType.TASK) {
     const { rows } = await query(
-      `SELECT t.id, t.ref, t.title, t.project_id, pj.name AS project_name, ws.stage
+      `SELECT t.id, t.ref, t.title, t.project_id, pj.name AS project_name, ws.stage,
+              COALESCE(pj.color, pd.color) AS project_color, td.color AS task_dept_color
          FROM tasks t LEFT JOIN projects pj ON pj.id = t.project_id
+         LEFT JOIN departments pd ON pd.id = pj.department_id
+         LEFT JOIN departments td ON td.id = t.department_id
          LEFT JOIN workflow_statuses ws ON ws.id = t.status_id
         WHERE t.id = ANY($1::int[])`, [byType.TASK]);
     const seenProjects = s.projects?.enabled === false ? new Set() : await visibleProjectIds(user, rows.map((r) => r.project_id));
     for (const r of rows) {
+      const project = r.project_id && seenProjects.has(r.project_id) ? { id: r.project_id, name: r.project_name, color: r.project_color } : null;
       put('TASK', r.id, {
-        label: `${r.ref} ${r.title}`, ref: r.ref, title: r.title, stage: r.stage, url: `/?task=${r.id}`,
-        project: r.project_id && seenProjects.has(r.project_id) ? { id: r.project_id, name: r.project_name } : null,
+        label: `${r.ref} ${r.title}`, ref: r.ref, title: r.title, stage: r.stage, url: `/?task=${r.id}`, project,
+        // the notebook's stamp: the task reference, in its project's colour (else its department's)
+        stamp: { text: r.ref, color: project?.color || r.task_dept_color || null },
       });
     }
   }
   if (byType.PROJECT) {
-    const { rows } = await query('SELECT id, name FROM projects WHERE id = ANY($1::int[])', [byType.PROJECT]);
-    for (const r of rows) put('PROJECT', r.id, { label: r.name, url: `/projects/${r.id}`, project: { id: r.id, name: r.name } });
+    const { rows } = await query(
+      'SELECT p.id, p.name, COALESCE(p.color, d.color) AS color FROM projects p JOIN departments d ON d.id = p.department_id WHERE p.id = ANY($1::int[])',
+      [byType.PROJECT]);
+    for (const r of rows) {
+      put('PROJECT', r.id, { label: r.name, url: `/projects/${r.id}`, project: { id: r.id, name: r.name, color: r.color }, stamp: { text: r.name, color: r.color } });
+    }
   }
   if (byType.KEY_RESULT) {
     const { rows } = await query('SELECT id, title, objective_id FROM key_results WHERE id = ANY($1::int[])', [byType.KEY_RESULT]);

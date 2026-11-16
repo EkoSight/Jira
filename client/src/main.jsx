@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import './styles.css';
+import './notebook.css';
 import { applyBranding, cachedBranding } from './lib/brand.js';
 
 // the organisation's colours and the person's light/dark choice, before first paint

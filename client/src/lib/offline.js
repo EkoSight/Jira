@@ -6,6 +6,8 @@
  * kept per sign-in, and signing in or out deletes them all, so the next person
  * on the same browser is never shown the previous person's data.
  */
+import { clearNotebookDevice } from './notebookDevice.js';
+
 const DATA_CACHE = /-data(-|$)/;
 
 /** Deletes every offline copy of API reads, and asks the worker to do the same. */
@@ -19,4 +21,6 @@ export async function clearOfflineCopies() {
   try {
     navigator.serviceWorker?.controller?.postMessage('clear-data');
   } catch { /* no worker */ }
+  // the notebook's own copy of today's page, and changes not yet sent (Part N6)
+  await clearNotebookDevice();
 }

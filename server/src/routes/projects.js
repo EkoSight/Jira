@@ -39,6 +39,8 @@ const projectInput = z.object({
   member_ids: z.array(z.number().int().positive()).max(200).optional(),
   // started from a won deal or a selected application
   opportunity_id: z.number().int().positive().nullable().optional(),
+  // the colour of its stamps in the notebook; none means the department's colour
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/, 'Choose a colour like #2A78D6').nullable().optional(),
 });
 
 /** People named on a project must be active accounts. */
@@ -233,10 +235,10 @@ router.post('/', asyncHandler(async (req, res) => {
   if (data.opportunity_id) await wonDeal(req.currentUser, data.opportunity_id);
   const project = await withTransaction(async (client) => {
     const { rows } = await client.query(
-      `INSERT INTO projects (name, done_looks_like, department_id, lead_user_id, status, visibility, start_date, target_date, created_by, opportunity_id)
-       VALUES ($1, $2, $3, $4, COALESCE($5, 'PLANNED'), COALESCE($6, 'DEPARTMENT'), $7, $8, $9, $10) RETURNING *`,
+      `INSERT INTO projects (name, done_looks_like, department_id, lead_user_id, status, visibility, start_date, target_date, created_by, opportunity_id, color)
+       VALUES ($1, $2, $3, $4, COALESCE($5, 'PLANNED'), COALESCE($6, 'DEPARTMENT'), $7, $8, $9, $10, $11) RETURNING *`,
       [data.name, data.done_looks_like || null, data.department_id, data.lead_user_id, data.status || null,
-        data.visibility || null, data.start_date || null, data.target_date || null, req.currentUser.id, data.opportunity_id || null],
+        data.visibility || null, data.start_date || null, data.target_date || null, req.currentUser.id, data.opportunity_id || null, data.color || null],
     );
     const p = rows[0];
     await projectActivity(client, { projectId: p.id, actorId: req.currentUser.id, action: 'created', detail: { name: p.name } });
@@ -340,7 +342,7 @@ router.patch('/:id', asyncHandler(async (req, res) => {
     const fields = [];
     const params = [];
     const set = (column, value) => { params.push(value); fields.push(`${column} = $${params.length}`); };
-    for (const key of ['name', 'done_looks_like', 'department_id', 'lead_user_id', 'status', 'visibility', 'start_date', 'target_date', 'engagement_id', 'opportunity_id']) {
+    for (const key of ['name', 'done_looks_like', 'department_id', 'lead_user_id', 'status', 'visibility', 'start_date', 'target_date', 'engagement_id', 'opportunity_id', 'color']) {
       if (data[key] !== undefined) set(key, data[key] === '' ? null : data[key]);
     }
     if (data.status === 'COMPLETED' && project.status !== 'COMPLETED') fields.push('completed_at = now()');

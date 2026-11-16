@@ -428,7 +428,7 @@ export function Collaborators({ taskId, collaborators, onChange, canEdit }) {
       </div>
 
       {canEdit && (
-        <select className="select" value={adding} onChange={(e) => add(e.target.value)}>
+        <select className="select" aria-label="Tag someone on this task" value={adding} onChange={(e) => add(e.target.value)}>
           <option value="">Tag someone…</option>
           {taggable.map((u) => (
             <option key={u.id} value={u.id}>
@@ -482,6 +482,7 @@ export function PendingCollaborators({ selected, onChange }) {
       </div>
 
       <select
+        aria-label="Tag someone on this task"
         className="select"
         value={adding}
         onChange={(e) => {
