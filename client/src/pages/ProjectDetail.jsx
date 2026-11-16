@@ -11,12 +11,13 @@ import { Avatar, Badge, ConfirmButton, Modal, Spinner } from '../components/ui.j
 import TaskDialog from '../components/TaskDialog.jsx';
 import { HealthSignals, ProgressBar, ProjectForm, projectBody } from './Projects.jsx';
 import { ProjectLinksCard } from '../components/projects/ProjectLinks.jsx';
+import RecordSteps, { StepsCount } from '../components/todos/RecordSteps.jsx';
 import {
   HEALTH_LABEL, HEALTH_TONE, OPEN_STATUSES, STATUS_LABEL, STATUS_TONE, activityWords, byMilestone, dateWords, progressWords,
 } from '../lib/projects.js';
 import { shortDateTime } from '../lib/workspace.js';
 
-const TABS = [['overview', 'Overview'], ['tasks', 'Tasks'], ['milestones', 'Milestones'], ['updates', 'Updates'], ['people', 'People'], ['meetings', 'Meetings'], ['activity', 'Activity']];
+const TABS = [['overview', 'Overview'], ['tasks', 'Tasks'], ['milestones', 'Milestones'], ['updates', 'Updates'], ['people', 'People'], ['meetings', 'Meetings'], ['steps', 'Steps'], ['activity', 'Activity']];
 
 function TaskRow({ t }) {
   return (
@@ -464,6 +465,8 @@ export default function ProjectDetail() {
         <div className="row wrap small" style={{ gap: 10 }}>
           <span>{progressWords(n)}</span>
           {n.overdue > 0 && <span className="pj-overdue">{n.overdue} overdue</span>}
+          {/* progress counts tasks only; shared steps are shown apart */}
+          <StepsCount type="PROJECT" id={p.id} />
           <HealthSignals numbers={n} />
         </div>
       </div>
@@ -482,6 +485,12 @@ export default function ProjectDetail() {
       {tab === 'updates' && <UpdatesTab page={page} setPage={setPage} />}
       {tab === 'people' && <PeopleTab page={page} setPage={setPage} />}
       {tab === 'meetings' && <MeetingsTab page={page} />}
+      {tab === 'steps' && (
+        <div className="card card-pad stack-sm">
+          <p className="small muted">Shared steps and to-dos, with who and when. Project progress counts tasks only.</p>
+          <RecordSteps type="PROJECT" id={p.id} label={p.name} />
+        </div>
+      )}
       {tab === 'activity' && <ActivityTab projectId={p.id} />}
 
       {editing && (

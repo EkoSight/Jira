@@ -438,6 +438,11 @@ export const describeOkrActivity = (item) => {
   };
 
   switch (item.action) {
+    // shared steps: context only, never a change to the value
+    case 'step_added': return `added a step: “${item.to_value}”`;
+    case 'step_done': return `ticked a step: “${item.to_value}”`;
+    case 'step_reopened': return `unticked a step: “${item.to_value}”`;
+    case 'step_removed': return `removed a step: “${item.to_value}”`;
     case 'created': return 'created it';
     case 'updated': return `changed ${field}`;
     case 'checked_in': return `updated it — ${asValue(item.from_value)} → ${asValue(item.to_value)}`;

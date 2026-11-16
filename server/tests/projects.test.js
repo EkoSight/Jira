@@ -118,7 +118,12 @@ test('21: the migration changes no existing row; existing tasks are in no projec
     assert.equal(row.project_id, null);
     assert.equal(row.milestone_id, null);
   }
-  assert.deepEqual((await query('SELECT * FROM task_checklist_items ORDER BY id')).rows, before037.steps);
+  // later migrations add empty step columns (039); every column that existed is unchanged
+  const steps = (await query('SELECT * FROM task_checklist_items ORDER BY id')).rows;
+  assert.equal(steps.length, before037.steps.length);
+  for (const [i, row] of steps.entries()) {
+    for (const [key, value] of Object.entries(before037.steps[i])) assert.deepEqual(row[key], value, `task_checklist_items.${key}`);
+  }
   assert.deepEqual((await query('SELECT * FROM departments ORDER BY id')).rows, before037.departments);
   // and the board shows the existing task to its owner exactly as before
   const board = ok(await call('GET', '/tasks', { token: tokens.omar }));

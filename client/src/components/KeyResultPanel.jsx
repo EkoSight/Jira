@@ -5,6 +5,7 @@ import { Avatar, Badge, EmptyState, Field, Icon, Modal, Spinner } from './ui.jsx
 import KeyResultEditDialog from './KeyResultEditDialog.jsx';
 import DiscussionPanel from './DiscussionPanel.jsx';
 import TaskDialog from './TaskDialog.jsx';
+import RecordSteps, { useRecordSteps } from './todos/RecordSteps.jsx';
 import {
   CONFIDENCE, formatValue, health, krAttention, measurementSummary, pace, worstSeverity,
 } from '../lib/okr.js';
@@ -76,6 +77,7 @@ export function UpdateProgressDialog({ keyResult, onClose, onSaved }) {
               : ' · never updated'}
           </div>
         </div>
+        <StepsSinceCheckIn keyResultId={keyResult.id} />
 
         {rollup ? (
           <div className="small muted">
@@ -487,6 +489,9 @@ export function KeyResultDrawer({ keyResult, tasks, canEdit, onClose, onChanged,
         )}
 
         {tab === 'updates' && (
+          <RecordSteps type="KEY_RESULT" id={keyResult.id} label={keyResult.title} title="Steps done" compact />
+        )}
+        {tab === 'updates' && (
           checkIns === null ? (
             <Spinner label="Loading updates" />
           ) : checkIns.length === 0 ? (
@@ -729,5 +734,21 @@ export default function KeyResultPanel({ keyResult, tasks = [], canEdit, onChang
         />
       )}
     </>
+  );
+}
+
+/**
+ * Shared steps done since the last update, shown as context while updating.
+ * They never change the value: that is still what the person enters.
+ */
+function StepsSinceCheckIn({ keyResultId }) {
+  const { data } = useRecordSteps('KEY_RESULT', keyResultId);
+  const done = data?.done_since_check_in || [];
+  if (!done.length) return null;
+  return (
+    <div className="small td-context">
+      <strong>Steps done since the last update ({done.length}):</strong> {done.map((s) => s.title).join('; ')}.
+      <span className="muted"> Context only; the value is what you enter.</span>
+    </div>
   );
 }

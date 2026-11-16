@@ -172,6 +172,11 @@ export const describeActivity = (item) => {
     case 'archived': return 'archived it';
     case 'moved': return `moved it to ${item.meta?.to_status || 'another column'}`;
     case 'updated': return `changed ${field}`;
+    // steps (the task's checklist): who and what, never an invented date
+    case 'step_added': return `added the step “${item.to_value}”`;
+    case 'step_done': return `ticked “${item.to_value}”`;
+    case 'step_reopened': return `unticked “${item.to_value}”`;
+    case 'step_removed': return `removed the step “${item.to_value}”`;
     default: return item.action;
   }
 };

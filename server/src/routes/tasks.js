@@ -27,6 +27,7 @@ import { acknowledgeTaskReminders, replanTask } from '../services/taskReminders.
 import { requestNewDeadline } from '../services/deadlineChanges.js';
 import { canEditTask, canSeeTask, taskVisibilitySql } from '../services/taskAccess.js';
 import { addMember, canSeeProject, maskProjects, moveTask, placeNewTask } from '../services/projects/index.js';
+import { addStep, checkStepChange, setStepDone, stepsOf } from '../services/todos/steps.js';
 import { MY_GROUPS, applyDueFilter, healthOf } from '../../../shared/deadlineHealth.js';
 import {
   OUTCOME_STATUSES, completionContext, isDealTask, planDealCompletion, recordDealCompletion,
@@ -370,7 +371,7 @@ router.get(
           WHERE a.task_id = $1 ORDER BY a.created_at DESC LIMIT 100`,
         [task.id],
       ),
-      query('SELECT * FROM task_checklist_items WHERE task_id = $1 ORDER BY position, id', [task.id]),
+      stepsOf(task.id).then((rows) => ({ rows })),
       query(
         `SELECT a.*, u.full_name AS uploaded_by_name
            FROM task_attachments a LEFT JOIN users u ON u.id = a.uploaded_by
@@ -1157,7 +1158,7 @@ router.get(
           [id],
         ),
         listThreads('TASK', id),
-        query('SELECT * FROM task_checklist_items WHERE task_id = $1 ORDER BY position, id', [id]),
+        stepsOf(id).then((rows) => ({ rows })),
         query(
           `SELECT t.id, t.ref, t.title, t.completed_at, s.stage, s.name AS status_name,
                   u.full_name AS assignee_name, u.avatar_color AS assignee_color
@@ -1476,6 +1477,13 @@ async function visibleTaskRow(user, taskId) {
   return rows[0];
 }
 
+/** The visible task with its stage (for the "all steps done" question). */
+async function visibleStepTask(user, taskId) {
+  const task = await visibleTaskRow(user, taskId);
+  const { rows } = await query('SELECT stage FROM workflow_statuses WHERE id = $1', [task.status_id]);
+  return { ...task, stage: rows[0]?.stage || null };
+}
+
 /** A step that belongs to this task, or 404. */
 async function stepOnTask(taskId, itemId) {
   const { rows } = await query('SELECT * FROM task_checklist_items WHERE id = $1 AND task_id = $2', [Number(itemId), Number(taskId)]);
@@ -1483,18 +1491,22 @@ async function stepOnTask(taskId, itemId) {
   return rows[0];
 }
 
+const stepFields = {
+  owner_user_id: z.number().int().positive().nullable().optional(),
+  planned_on: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  planned_time: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/).nullable().optional(),
+};
+
 router.post(
   '/:id/checklist',
   asyncHandler(async (req, res) => {
-    const { title } = z.object({ title: z.string().min(1).max(200) }).parse(req.body);
-    const task = await visibleTaskRow(req.currentUser, req.params.id);
-    const { rows } = await query(
-      `INSERT INTO task_checklist_items (task_id, title, position)
-       VALUES ($1, $2, (SELECT COALESCE(MAX(position), 0) + 1 FROM task_checklist_items WHERE task_id = $1))
-       RETURNING *`,
-      [task.id, title],
-    );
-    res.status(201).json({ item: rows[0] });
+    const data = z.object({ title: z.string().min(1).max(200), ...stepFields }).parse(req.body);
+    const task = await visibleStepTask(req.currentUser, req.params.id);
+    const item = await withTransaction((client) => addStep(client, req.currentUser, task, {
+      title: data.title, owner_user_id: data.owner_user_id ?? null, planned_on: data.planned_on ?? null, planned_time: data.planned_time ?? null,
+    }));
+    const [withNames] = (await stepsOf(task.id)).filter((s) => s.id === item.id);
+    res.status(201).json({ item: withNames || item });
   }),
 );
 
@@ -1502,30 +1514,40 @@ router.patch(
   '/:taskId/checklist/:itemId',
   asyncHandler(async (req, res) => {
     const data = z
-      .object({ title: z.string().min(1).max(200).optional(), is_done: z.boolean().optional() })
+      .object({ title: z.string().min(1).max(200).optional(), is_done: z.boolean().optional(), ...stepFields })
       .parse(req.body);
-    const task = await visibleTaskRow(req.currentUser, req.params.taskId);
+    const task = await visibleStepTask(req.currentUser, req.params.taskId);
     const item = await stepOnTask(task.id, req.params.itemId);
     if (data.title !== undefined && data.title !== item.title && !canEdit(req.currentUser, task)) {
       throw forbidden('Only people who can edit this task can rename its steps');
     }
+    await checkStepChange(req.currentUser, task, item, data);
 
     const fields = [];
     const params = [];
-    for (const key of ['title', 'is_done']) {
+    for (const key of ['title', 'owner_user_id', 'planned_on', 'planned_time']) {
       if (data[key] !== undefined) {
         params.push(data[key]);
         fields.push(`${key} = $${params.length}`);
       }
     }
-    if (!fields.length) throw badRequest('Nothing to update');
+    if (!fields.length && data.is_done === undefined) throw badRequest('Nothing to update');
 
-    params.push(item.id);
-    const { rows } = await query(
-      `UPDATE task_checklist_items SET ${fields.join(', ')} WHERE id = $${params.length} RETURNING *`,
-      params,
-    );
-    res.json({ item: rows[0] });
+    const result = await withTransaction(async (client) => {
+      let row = item;
+      if (fields.length) {
+        params.push(item.id);
+        row = (await client.query(
+          `UPDATE task_checklist_items SET ${fields.join(', ')} WHERE id = $${params.length} RETURNING *`,
+          params,
+        )).rows[0];
+      }
+      // ticking records who and when, and asks the assignee once every step is done
+      if (data.is_done !== undefined) return setStepDone(client, req.currentUser, task, row, data.is_done);
+      return { item: row, ask_complete: null };
+    });
+    const [withNames] = (await stepsOf(task.id)).filter((s) => s.id === item.id);
+    res.json({ item: withNames || result.item, ask_complete: result.ask_complete || null });
   }),
 );
 
@@ -1536,6 +1558,7 @@ router.delete(
     const item = await stepOnTask(task.id, req.params.itemId);
     if (!canEdit(req.currentUser, task)) throw forbidden('Only people who can edit this task can remove its steps');
     await query('DELETE FROM task_checklist_items WHERE id = $1', [item.id]);
+    await logActivity(null, { taskId: task.id, actorId: req.currentUser.id, action: 'step_removed', to: item.title, meta: { step_id: item.id } });
     res.json({ ok: true });
   }),
 );

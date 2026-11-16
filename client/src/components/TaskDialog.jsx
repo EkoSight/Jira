@@ -12,6 +12,8 @@ import {
   flushPendingAttachments,
 } from './TaskExtras.jsx';
 import CompleteTaskDialog from './CompleteTaskDialog.jsx';
+import RecordSteps from './todos/RecordSteps.jsx';
+import { announceTodosChanged, doneWords } from '../lib/todos.js';
 import DiscussionPanel from './DiscussionPanel.jsx';
 import CompletionRecord from './CompletionRecord.jsx';
 import TaskDeadlinePanel from './TaskDeadlinePanel.jsx';
@@ -319,6 +321,8 @@ const blankTask = (defaults = {}) => ({
   project_id: defaults.project_id || '',
   milestone_id: defaults.milestone_id || '',
   parent_task_id: defaults.parent_task_id || null,
+  // a task made from a to-do linked to a deal or application goes on it
+  opportunity_id: defaults.opportunity_id || null,
 });
 
 const RECURRENCE_OPTIONS = [
@@ -350,6 +354,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
   // why the deadline is moving: every move needs one (D1), and it is kept in the history
   const [deadlineReason, setDeadlineReason] = useState('');
   const [checklistDraft, setChecklistDraft] = useState('');
+  const [stepsAsk, setStepsAsk] = useState(null);
   // an existing card opens on its overview; the form is only for creating, or
   // for deliberately editing the task's details
   const [tab, setTab] = useState(taskId ? 'overview' : 'details');
@@ -515,6 +520,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
       if (isNew ? mid : mid !== (task?.milestone_id || null) || data.project_id !== undefined) data.milestone_id = pid ? mid : null;
     }
     if (isNew && form.parent_task_id) data.parent_task_id = form.parent_task_id;
+    if (isNew && form.opportunity_id) data.opportunity_id = Number(form.opportunity_id);
     if (memberAsk?.ask && memberAsk.add) data.add_assignee_to_project = true;
     return data;
   };
@@ -648,17 +654,21 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
     }
   };
 
-  const toggleChecklistItem = async (item) => {
+  const changeChecklistItem = async (item, change) => {
     try {
-      const { item: updated } = await api.updateChecklistItem(activeId, item.id, { is_done: !item.is_done });
+      const { item: updated, ask_complete: ask } = await api.updateChecklistItem(activeId, item.id, change);
       setDetail((current) => ({
         ...current,
         checklist: current.checklist.map((c) => (c.id === updated.id ? updated : c)),
       }));
+      // every step done: the assignee is asked, and nothing completes by itself
+      setStepsAsk(ask || null);
+      announceTodosChanged();
     } catch (err) {
       toast.error(err);
     }
   };
+  const toggleChecklistItem = (item) => changeChecklistItem(item, { is_done: !item.is_done });
 
   const archive = async () => {
     try {
@@ -764,10 +774,35 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
               {detail.checklist.filter((c) => c.is_done).length}/{detail.checklist.length}
             </span>
           </div>
+          {stepsAsk && (
+            <div className="td-donenote" role="group" aria-label="All steps are done">
+              <span>{stepsAsk.words}</span>
+              <button type="button" className="btn btn-sm btn-primary" onClick={() => {
+                const done = statuses.find((st) => st.stage === 'done');
+                if (done) setCompleting({ statusId: done.id });
+                setStepsAsk(null);
+              }}>Complete…</button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setStepsAsk(null)}>Not now</button>
+            </div>
+          )}
           {detail.checklist.map((item) => (
             <label key={item.id} className={`checklist-item ${item.is_done ? 'done' : ''}`}>
               <input type="checkbox" checked={item.is_done} onChange={() => toggleChecklistItem(item)} />
-              <span className="grow">{item.title}</span>
+              <span className="grow">
+                {item.title}
+                {(item.owner_name || item.planned_on || item.is_done) && (
+                  <span className="small muted td-step-meta">
+                    {item.owner_name && ` · ${item.owner_name}`}
+                    {item.planned_on && !item.is_done && ` · ${item.planned_on}${item.planned_time ? ` ${item.planned_time}` : ''}`}
+                    {item.is_done && ` · ${item.done_by_name ? `${item.done_by_name}, ` : ''}${doneWords({ done: true, done_at: item.done_at, done_date_unknown: !item.done_at })}`}
+                  </span>
+                )}
+              </span>
+              {!item.is_done && !item.owner_user_id && (detail.task?.assignee_id === user?.id || detail.collaborators?.some?.((c) => (c.user_id || c.id) === user?.id)) && (
+                <button type="button" className="btn btn-ghost btn-sm" onClick={(e) => { e.preventDefault(); changeChecklistItem(item, { owner_user_id: user.id }); }}>
+                  Mine
+                </button>
+              )}
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
@@ -793,6 +828,7 @@ export default function TaskDialog({ taskId, defaults, onClose, onSaved, onOpenT
               Add
             </button>
           </div>
+          <RecordSteps type="TASK" id={activeId} label={`${detail.task?.ref || ''} ${detail.task?.title || ''}`.trim()} showShared={false} compact />
         </div>
     ) },
     { key: 'attachments', label: 'Link or file', count: detail.attachments?.length || 0, node: (

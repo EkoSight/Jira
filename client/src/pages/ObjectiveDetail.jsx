@@ -16,6 +16,7 @@ import {
 import { threadHeadline } from '../lib/threads.js';
 import { useIsNarrow } from '../lib/useMedia.js';
 import { formatDate, relativeTime } from '../lib/format.js';
+import RecordSteps from '../components/todos/RecordSteps.jsx';
 
 function AddKeyResultDialog({ objective, onClose, onSaved }) {
   const toast = useToast();
@@ -968,6 +969,9 @@ export default function ObjectiveDetail() {
           />
         )}
 
+        {tab === 'activity' && (
+          <section className="card card-pad"><RecordSteps type="OBJECTIVE" id={objective.id} label={objective.title} title="Steps done" /></section>
+        )}
         {tab === 'activity' && <ActivityFeed activity={activity} />}
 
         {canEdit && (
@@ -1025,6 +1029,7 @@ export default function ObjectiveDetail() {
             canRaiseReview={data.can_raise_review}
             onChanged={load}
           />
+          <section className="card card-pad"><RecordSteps type="OBJECTIVE" id={objective.id} label={objective.title} title="Steps done" /></section>
           <ActivityFeed activity={activity} />
         </div>
 

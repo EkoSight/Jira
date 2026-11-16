@@ -138,8 +138,10 @@ export async function spawnNextOccurrence(client, task) {
 
   // carry the checklist forward, unchecked, so a daily routine keeps its steps
   await client.query(
-    `INSERT INTO task_checklist_items (task_id, title, position, is_done)
-     SELECT $1, title, position, FALSE FROM task_checklist_items WHERE task_id = $2`,
+    // steps come forward unticked, with their owners and planned times (B3);
+    // a planned day belonged to the old occurrence, so the step follows the new due date
+    `INSERT INTO task_checklist_items (task_id, title, position, is_done, owner_user_id, planned_time, created_by)
+     SELECT $1, title, position, FALSE, owner_user_id, planned_time, created_by FROM task_checklist_items WHERE task_id = $2`,
     [next.id, task.id],
   );
 
@@ -255,8 +257,8 @@ export async function copyRoutineSubtasks(client, task, next, due) {
 
     // a subtask's own checklist is part of the step, so it comes too
     await client.query(
-      `INSERT INTO task_checklist_items (task_id, title, position, is_done)
-       SELECT $1, title, position, FALSE FROM task_checklist_items WHERE task_id = $2`,
+      `INSERT INTO task_checklist_items (task_id, title, position, is_done, owner_user_id, planned_time, created_by)
+       SELECT $1, title, position, FALSE, owner_user_id, planned_time, created_by FROM task_checklist_items WHERE task_id = $2`,
       [rows[0].id, subtask.id],
     );
 

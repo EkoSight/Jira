@@ -33,7 +33,8 @@ import standupRoutes from './routes/standup.js';
 import workspaceRoutes from './routes/workspace.js';
 import applicationRoutes from './routes/applications.js';
 import projectRoutes from './routes/projects.js';
-import { requireProjectsEnabled } from './middleware/modules.js';
+import todoRoutes from './routes/todos.js';
+import { requireProjectsEnabled, requireTodosEnabled } from './middleware/modules.js';
 import { requireAttendance } from './services/attendance.js';
 import chatRoutes, { chatEventsRouter } from './routes/googleChat.js';
 import marketingRoutes from './routes/marketing.js';
@@ -112,6 +113,8 @@ export function createTaskFlowRouter() {
   router.use('/workspace', workspaceRoutes);
   // projects: each department's projects, their milestones, members and tasks
   router.use('/projects', requireProjectsEnabled, projectRoutes);
+  // to-dos and Today's plan: private to each person unless shared onto a record
+  router.use('/todos', requireTodosEnabled, todoRoutes);
   // your own Google Chat link and alerts; the admin's view of the set-up
   router.use('/chat', chatRoutes);
 

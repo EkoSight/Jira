@@ -90,6 +90,10 @@ export function activityWords(a, people = {}) {
     case 'milestone_removed': return `removed the milestone "${d.name}"${d.tasks_cleared ? ` (${d.tasks_cleared} task${d.tasks_cleared === 1 ? '' : 's'} kept, without it)` : ''}`;
     case 'update_posted': return `posted an update: ${HEALTH_LABEL[d.health] || ''}`;
     case 'changed': return d.field === 'status' ? `changed the status to ${STATUS_LABEL[d.to] || d.to}` : `changed the ${String(d.field || '').replace(/_/g, ' ').replace(' user id', '')}`;
+    case 'step_added': return `added a step: "${d.title}"`;
+    case 'step_done': return `ticked a step: "${d.title}"`;
+    case 'step_reopened': return `unticked a step: "${d.title}"`;
+    case 'step_removed': return `removed a step: "${d.title}"`;
     case 'kr_linked': return 'linked a key result it supports';
     case 'kr_unlinked': return 'unlinked a key result';
     case 'engagement_linked': return 'linked the CRM delivery record';

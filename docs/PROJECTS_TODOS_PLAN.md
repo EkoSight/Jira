@@ -64,12 +64,21 @@ task's project. The test then expects that path to be the only difference.
   - indexes.
 - **`039_todos.sql`**:
   - `todos`, `todo_lists`, `todo_routines`, `todo_pins`;
-  - the step columns on `task_checklist_items`;
-  - the TODO entity type.
+  - the step columns on `task_checklist_items`, plus `owner_position` (the
+    owner's own order for the step in Today's plan; the task's order is
+    unchanged);
+  - the TODO entity type;
+  - moved here from 040, because Part A already needs them: `todo_moves`
+    (moving a line's day starts in Part A) and `users.notebook_hide_done`
+    ("Hide done" is in A2);
+  - `record_step_activity`: the step history of deals, applications and
+    meetings. It is kept apart from `account_activities` because sales
+    reports count those rows, and a to-do must never feed a report. Tasks,
+    projects and goals use their own activity tables.
 - **`040_notebook.sql`**:
-  - `todo_day_notes`, `todo_moves`;
+  - `todo_day_notes`;
   - `todos.starred`, `projects.color`;
-  - the user notebook preferences.
+  - the other notebook preferences (handwriting, haptics).
 
 ## Services
 

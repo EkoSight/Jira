@@ -11,6 +11,7 @@ import { Badge, Modal, Spinner } from '../components/ui.jsx';
 import RemindMe from '../components/workspace/RemindMe.jsx';
 import { useWidgetData } from '../components/workspace/Widgets.jsx';
 import { whenWords } from '../lib/workspace.js';
+import RecordSteps from '../components/todos/RecordSteps.jsx';
 
 const iso = (local) => (local ? new Date(local).toISOString() : null);
 
@@ -114,6 +115,7 @@ function Act({ meeting, onClose, onDone }) {
           <label className="field"><span className="field-label">{mode === 'outcome' ? 'What came of it' : mode === 'cancel' ? 'Why it is cancelled' : 'Note (optional)'}</span><input className="input" value={text} onChange={(e) => setText(e.target.value)} /></label>
         )}
         {mode === 'outcome' && <label className="field"><span className="field-label">Next action, as a task for you (optional)</span><input className="input" value={followUp} onChange={(e) => setFollowUp(e.target.value)} placeholder="Only what you write is recorded" /></label>}
+        <RecordSteps type="MEETING" id={meeting.id} label={meeting.title} compact />
       </div>
     </Modal>
   );

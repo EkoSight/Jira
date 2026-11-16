@@ -19,6 +19,7 @@ import {
 } from '../lib/crm.js';
 import { formatDate, relativeTime } from '../lib/format.js';
 import { ProjectsForDeal } from './projects/ProjectLinks.jsx';
+import RecordSteps from './todos/RecordSteps.jsx';
 
 /**
  * The deals inside a relationship.
@@ -1486,6 +1487,7 @@ function DealBody({ summary, canEditList, onChanged, onMove }) {
       <hr className="divider" />
       <PeoplePanel opportunity={opportunity} handovers={detail?.handovers} canEdit={canEdit} onChanged={changed} />
       <ProjectsForDeal opportunityId={opportunity.id} won={opportunity.status === 'WON'} />
+      <RecordSteps type="DEAL" id={opportunity.id} label={opportunity.name} />
       <hr className="divider" />
       <ValuePanel opportunity={opportunity} ledger={detail?.commercial} canEdit={canEdit} onChanged={changed} />
       <hr className="divider" />
