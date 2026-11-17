@@ -237,16 +237,18 @@ test('half days go through leave too; unavailable is a planning note; nothing co
 
 test('only a manager can mark somebody else away, and that person is told', async (t) => {
   if (skipIfUnavailable(t)) return;
+  // never the half day the test above books (next Monday + 14): "today + 20" was that day on Tuesdays
+  const awayDay = addDays(nextMonday(), 22);
 
   const denied = await call('POST', '/availability', {
     token: tokens.rahul,
-    body: { user_id: ids.vartika, status: 'UNAVAILABLE', start_date: addDays(today(), 20) },
+    body: { user_id: ids.vartika, status: 'UNAVAILABLE', start_date: awayDay },
   });
   assert.equal(denied.status, 403);
 
   const byManager = await call('POST', '/availability', {
     token: tokens.manager,
-    body: { user_id: ids.vartika, status: 'UNAVAILABLE', start_date: addDays(today(), 20) },
+    body: { user_id: ids.vartika, status: 'UNAVAILABLE', start_date: awayDay },
   });
   assert.equal(byManager.status, 201);
 

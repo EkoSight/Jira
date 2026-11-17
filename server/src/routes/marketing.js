@@ -832,7 +832,8 @@ const outboxOnly = (req, res, next) => {
 };
 
 router.get('/dev/outbox', settingsOnly, outboxOnly, asyncHandler(async (req, res) => {
-  const list = outbox().slice(-50).reverse();
+  // account emails (sign-in details) are not marketing and never shown here
+  const list = outbox().filter((m) => !String(m.reference || '').startsWith('acct-')).slice(-50).reverse();
   const { rows } = await query('SELECT id, token, kind FROM mkt_messages WHERE token = ANY($1::text[])', [list.map((m) => m.reference)]);
   const byToken = new Map(rows.map((r) => [r.token, r]));
   res.json({ messages: list.map(({ raw, ...m }) => ({ ...m, size: raw.length, message_id: byToken.get(m.reference)?.id ?? null, kind: byToken.get(m.reference)?.kind ?? null })) });

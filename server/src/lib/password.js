@@ -34,3 +34,22 @@ export function verifyPassword(password, stored) {
 export function generateTempPassword() {
   return crypto.randomBytes(6).toString('base64url');
 }
+
+// No 0/O, 1/l/I: easy to read off an email and type on a phone.
+const SIGN_IN_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+
+/**
+ * A temporary password TaskFlow hands to a person (by email or on screen):
+ * 14 characters from an alphabet without look-alikes, about 80 bits.
+ */
+export function generateSignInPassword(length = 14) {
+  const out = [];
+  // rejection sampling keeps every character equally likely
+  const limit = 256 - (256 % SIGN_IN_ALPHABET.length);
+  while (out.length < length) {
+    for (const byte of crypto.randomBytes(length * 2)) {
+      if (byte < limit && out.length < length) out.push(SIGN_IN_ALPHABET[byte % SIGN_IN_ALPHABET.length]);
+    }
+  }
+  return out.join('');
+}

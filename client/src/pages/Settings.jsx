@@ -10,6 +10,7 @@ import SuperAdminClaim from '../components/SuperAdminClaim.jsx';
 import ProfilePhoto from '../components/ProfilePhoto.jsx';
 import LookSettings from '../components/LookSettings.jsx';
 import BrandingSettings from '../components/BrandingSettings.jsx';
+import { EmailSettings } from '../components/AccountEmails.jsx';
 import GoogleChatSettings, { ChatPreferencesCard } from '../components/GoogleChatSettings.jsx';
 import PipelineStageSettings from '../components/PipelineStageSettings.jsx';
 import WorkspaceSettings from '../components/WorkspaceSettings.jsx';
@@ -741,6 +742,7 @@ const TABS = [
   ['reminders', 'Reminders', 'settings.manage'],
   ['workspace', 'Workspace', 'settings.manage'],
   ['branding', 'Branding', 'settings.manage'],
+  ['email', 'Email', 'settings.manage'],
   ['account', 'My account'],
 ];
 
@@ -846,6 +848,7 @@ export default function Settings() {
       {tab === 'reminders' && <TaskReminderSettings />}
       {tab === 'workspace' && <WorkspaceSettings />}
       {tab === 'branding' && <BrandingSettings />}
+      {tab === 'email' && <EmailSettings />}
       {tab === 'account' && <AccountTab />}
     </div>
   );

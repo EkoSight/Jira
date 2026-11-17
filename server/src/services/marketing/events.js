@@ -89,6 +89,8 @@ async function findMessage(client, { messageId, token, reference, providerMessag
  * Returns { recorded, duplicate, event, message }.
  */
 export async function recordEvent(input) {
+  // an account email (sign-in details) is not marketing: its reports are not marketing events
+  if (String(input.reference || '').startsWith('acct-')) return { recorded: false, system: true };
   const settings = await marketingSettings();
   const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
   const outcome = await withTransaction(async (client) => {

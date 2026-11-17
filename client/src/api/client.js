@@ -193,6 +193,8 @@ export const api = {
   me: () => request('GET', '/auth/me'),
   changePassword: (currentPassword, newPassword) =>
     request('POST', '/auth/change-password', { currentPassword, newPassword }),
+  authOptions: () => request('GET', '/auth/options'),
+  forgotPassword: (email) => request('POST', '/auth/forgot-password', { email }),
 
   tasks: (params) => request('GET', `/tasks${qs(params)}`),
   myTasks: () => request('GET', '/tasks/mine'),
@@ -536,7 +538,12 @@ export const api = {
   user: (id) => request('GET', `/users/${id}`),
   createUser: (data) => request('POST', '/users', data),
   updateUser: (id, data) => request('PATCH', `/users/${id}`, data),
-  resetPassword: (id) => request('POST', `/users/${id}/reset-password`),
+  resetPassword: (id, body) => request('POST', `/users/${id}/reset-password`, body || {}),
+  resendSignIn: (id) => request('POST', `/users/${id}/resend-sign-in`),
+  accountEmails: (id) => request('GET', `/users/${id}/account-emails`),
+  accountEmailReadiness: () => request('GET', '/users/account-email-status'),
+  accountEmailStatus: () => request('GET', '/account-emails/status'),
+  sendAccountTestEmail: () => request('POST', '/account-emails/test'),
   deactivateUser: (id) => request('DELETE', `/users/${id}`),
   permissionCatalogue: () => request('GET', '/users/permissions/catalogue'),
   accessStatus: () => request('GET', '/users/access/status'),

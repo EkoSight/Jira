@@ -7,6 +7,7 @@ import ProfilePhoto, { PhotoAdminActions } from '../components/ProfilePhoto.jsx'
 import { LoadMeter } from '../components/charts.jsx';
 import { WORKLOAD_STATUS, loadSummary, relativeTime } from '../lib/format.js';
 import { AwayBadge, TeamCalendar } from '../components/Availability.jsx';
+import { EmailTick, ResetPasswordDialog, SignInPanel, SignInResult, useEmailReadiness } from '../components/AccountEmails.jsx';
 
 const ROLE_NOTE = {
   super_admin: 'The founders: every permission, always. Not part of attendance, check-in, reminders or the standup',
@@ -32,7 +33,10 @@ function MemberDialog({ member, onClose, onSaved }) {
   const isNew = !member;
   const [catalogue, setCatalogue] = useState({ permissions: {}, roles: [] });
   const [saving, setSaving] = useState(false);
-  const [tempPassword, setTempPassword] = useState(null);
+  // after adding someone: their sign-in details were emailed, or the password to pass on
+  const [created, setCreated] = useState(null);
+  const readiness = useEmailReadiness(isNew);
+  const [emailIt, setEmailIt] = useState(true);
   const [form, setForm] = useState({
     full_name: member?.full_name || '',
     email: member?.email || '',
@@ -80,9 +84,8 @@ function MemberDialog({ member, onClose, onSaved }) {
       if (!isNew && (!accessEditable || form.role === member.role)) delete payload.role;
 
       if (isNew) {
-        const result = await api.createUser(payload);
-        if (result.temporary_password) setTempPassword(result.temporary_password);
-        else onClose();
+        const result = await api.createUser({ ...payload, email_details: Boolean(readiness?.ready && emailIt) });
+        setCreated(result);
         toast.success(`${result.user.full_name} added`);
       } else {
         await api.updateUser(member.id, payload);
@@ -109,23 +112,14 @@ function MemberDialog({ member, onClose, onSaved }) {
     });
   };
 
-  if (tempPassword) {
+  if (created) {
     return (
       <Modal
         title="Member added"
         onClose={onClose}
         footer={<button type="button" className="btn btn-primary" onClick={onClose}>Done</button>}
       >
-        <div className="stack">
-          <p>Share this one-time password with {form.full_name}. They will be asked to change it at first sign in.</p>
-          <div
-            className="card card-pad tnum center"
-            style={{ fontSize: 22, fontWeight: 700, letterSpacing: '0.06em', userSelect: 'all' }}
-          >
-            {tempPassword}
-          </div>
-          <div className="small muted">It cannot be shown again — you can always issue a new one from the member row.</div>
-        </div>
+        <SignInResult result={created} name={created.user.full_name} />
       </Modal>
     );
   }
@@ -167,6 +161,11 @@ function MemberDialog({ member, onClose, onSaved }) {
           <Field label="Work email" hint={isNew ? 'They sign in with this' : undefined}>
             <input type="email" className="input" value={form.email} onChange={set('email')} />
           </Field>
+          {isNew && (
+            <div className="grid-span-2">
+              <EmailTick readiness={readiness} checked={emailIt} onChange={setEmailIt} label={`Email their sign-in details to ${form.email.trim() || 'them'}`} />
+            </div>
+          )}
           <Field label="Department">
             <select className="select" value={form.department_id} onChange={set('department_id')}>
               <option value="">No department</option>
@@ -214,6 +213,10 @@ function MemberDialog({ member, onClose, onSaved }) {
             />
           </Field>
         </div>
+
+        {!isNew && (
+          <SignInPanel member={member} canManage={can('user.edit') && (member.id === user?.id || canManageAccount(user, member))} />
+        )}
 
         <Field label="Avatar colour">
           <div className="row wrap" style={{ gap: 6 }}>
@@ -317,14 +320,7 @@ export default function Team() {
 
   const workloadFor = (id) => workload.find((w) => w.id === id);
 
-  const resetPassword = async (member) => {
-    try {
-      const { temporary_password: password } = await api.resetPassword(member.id);
-      toast.success(`New password for ${member.full_name}: ${password}`);
-    } catch (err) {
-      toast.error(err);
-    }
-  };
+  const [resetting, setResetting] = useState(null);
 
   const deactivate = async (member) => {
     try {
@@ -459,7 +455,7 @@ export default function Team() {
                           </button>
                         )}
                         {can('user.edit') && (member.id === user.id || canManageAccount(user, member)) && (
-                          <button type="button" className="btn btn-sm" onClick={() => resetPassword(member)}>
+                          <button type="button" className="btn btn-sm" onClick={() => setResetting(member)}>
                             Reset password
                           </button>
                         )}
@@ -479,6 +475,8 @@ export default function Team() {
           </table>
         </div>
       )}
+
+      {resetting && <ResetPasswordDialog member={resetting} onClose={() => { setResetting(null); load(); }} />}
 
       {editing !== undefined && (
         <MemberDialog

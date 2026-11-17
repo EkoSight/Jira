@@ -551,6 +551,18 @@ export const DEFAULT_SETTINGS = {
   },
   // Projects (docs/PROJECTS.md). Off hides project fields, widgets and pages;
   // the data is kept and tasks keep working.
+  // Account emails (docs/ACCOUNT_EMAILS.md): sign-in details by email when an
+  // account is created or a password reset. Nothing is sent until the server
+  // has an email provider and the sender address below is filled in.
+  accountEmails: {
+    senderName: 'TaskFlow',
+    senderEmail: '',
+    replyTo: '',
+    // how long an emailed or shown temporary password works
+    expiryHours: 24,
+    // "Forgot password?" on the sign-in page
+    forgotPassword: true,
+  },
   projects: { enabled: true },
   // To-dos and the notebook (docs/TODOS.md). Off hides every surface; the data is kept.
   todos: { enabled: true },

@@ -45,6 +45,25 @@ power on or off the list is a one-line change.
 - **Every change is recorded.** Changes to role, permissions or active status
   go to the audit trail, with who made them, before and after.
 
+## Passwords and account emails
+
+The full rules are in `docs/ACCOUNT_EMAILS.md`. In short:
+
+- **Who may send.** Emailing someone their sign-in details, resetting their
+  password and "Resend sign-in details" follow the same rule as any account
+  change: only for someone below you (a super admin: anyone).
+- **Temporary passwords.** They are issued by TaskFlow, 14 characters, and
+  work for 24 hours (Settings → Email). They work once: choosing your own ends
+  them. A password an administrator typed is never emailed.
+- **"Forgot password?"** never changes the current password, so a request
+  from someone else cannot lock anyone out. It never says whether an account
+  exists, and it sends nothing to deactivated or super admin accounts.
+- **Failed sign-ins.** After 10 in 15 minutes for one email, sign-in waits.
+  The answer is the same whether or not the account exists.
+- **Where a password never appears:** server logs, the audit trail, the
+  account email record, an answer once it has been emailed, or the browser's
+  storage.
+
 ## Super admins and daily work
 
 Super admins are not part of daily work tracking:

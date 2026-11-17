@@ -11,6 +11,7 @@ import taskReviewRoutes from './routes/taskReview.js';
 import blackmarkRoutes from './routes/blackmarks.js';
 import reportRoutes from './routes/reports.js';
 import settingsRoutes from './routes/settings.js';
+import accountEmailRoutes from './routes/accountEmails.js';
 import notificationRoutes from './routes/notifications.js';
 import noteRoutes from './routes/notes.js';
 import featureRequestRoutes from './routes/featureRequests.js';
@@ -95,6 +96,7 @@ export function createTaskFlowRouter() {
   router.use('/blackmarks', blackmarkRoutes);
   router.use('/reports', reportRoutes);
   router.use('/settings', settingsRoutes);
+  router.use('/account-emails', accountEmailRoutes);
   router.use('/notifications', notificationRoutes);
   router.use('/notes', noteRoutes);
   router.use('/feature-requests', featureRequestRoutes);

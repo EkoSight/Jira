@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { query } from '../db/pool.js';
 import { asyncHandler, notFound, badRequest, forbidden } from '../lib/errors.js';
-import { hashPassword, generateTempPassword } from '../lib/password.js';
+import { hashPassword } from '../lib/password.js';
 import {
   PERMISSIONS, PERMISSION_KEYS, ROLES, ROLE_LABELS, ROLE_PERMISSIONS, SUPER_ADMIN_ONLY, canAssignRole, canGrantPermission,
   canManageAccount, effectivePermissions, isSuperAdmin,
@@ -11,6 +11,9 @@ import { requirePermission } from '../middleware/auth.js';
 import { dateIn, orgCalendar, statusOn } from '../services/availability.js';
 import { audit } from '../services/attendance.js';
 import { accessStatus, claimFirstSuperAdmin } from '../services/access.js';
+import {
+  accountEmailsOf, cancelResetRequests, emailReadiness, newTempPassword, sendAccountEmail,
+} from '../services/accountEmail.js';
 
 /**
  * Who may change whose access. Roles, permissions, passwords, sign-in emails
@@ -57,7 +60,7 @@ const router = Router();
 const SELECT_USER = `
   SELECT u.id, u.full_name, u.email, u.role, u.department_id, u.job_title, u.phone,
          u.avatar_color, u.photo_version, u.weekly_capacity_hours, u.max_concurrent_tasks,
-         u.extra_permissions, u.revoked_permissions, u.is_active, u.must_change_password,
+         u.extra_permissions, u.revoked_permissions, u.is_active, u.must_change_password, u.temp_password_expires_at,
          u.external_user_id, u.last_login_at, u.last_activity_at, u.created_at,
          d.name AS department_name, d.color AS department_color
     FROM users u
@@ -102,6 +105,18 @@ router.get(
   '/access/status',
   asyncHandler(async (req, res) => {
     res.json(await accessStatus(req.currentUser));
+  }),
+);
+
+/** Whether account emails can go out, for the tick boxes on the Team page. */
+router.get(
+  '/account-email-status',
+  asyncHandler(async (req, res) => {
+    if (!req.permissions.includes('user.create') && !req.permissions.includes('user.edit')) {
+      throw forbidden('You do not have permission to do that');
+    }
+    const readiness = await emailReadiness();
+    res.json({ ready: readiness.ready, reason: readiness.reason, expiry_hours: readiness.settings.expiryHours });
   }),
 );
 
@@ -171,19 +186,21 @@ router.post(
     }
     assertMayGrant(req.currentUser, { role: data.role, extra: data.extra_permissions });
 
-    const tempPassword = data.password || generateTempPassword();
+    // a password the administrator typed is theirs to pass on; otherwise TaskFlow issues a temporary one
+    const emailDetails = req.body?.email_details === true;
+    const issued = data.password ? null : await newTempPassword();
     const { rows } = await query(
       `INSERT INTO users
          (full_name, email, password_hash, role, department_id, job_title, phone, avatar_color,
           weekly_capacity_hours, max_concurrent_tasks, extra_permissions, revoked_permissions,
-          external_user_id, must_change_password)
+          external_user_id, must_change_password, temp_password_expires_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,'#3b82f6'),COALESCE($9,40),COALESCE($10,8),
-               COALESCE($11::text[],'{}'::text[]),COALESCE($12::text[],'{}'::text[]),$13,$14)
+               COALESCE($11::text[],'{}'::text[]),COALESCE($12::text[],'{}'::text[]),$13,$14,$15)
        RETURNING id`,
       [
         data.full_name,
         data.email,
-        await hashPassword(tempPassword),
+        issued ? issued.hash : await hashPassword(data.password),
         data.role,
         data.department_id ?? null,
         data.job_title ?? null,
@@ -195,6 +212,7 @@ router.post(
         data.revoked_permissions ?? null,
         data.external_user_id ?? null,
         !data.password,
+        issued ? issued.expiresAt : null,
       ],
     );
 
@@ -205,10 +223,24 @@ router.post(
         action: 'CREATED', after: accessOf(created[0]), source: 'team_page',
       });
     }
+    // the welcome email: with the temporary password only when TaskFlow issued it
+    let email;
+    if (emailDetails) {
+      email = await sendAccountEmail({
+        kind: 'WELCOME', user: created[0], actor: req.currentUser,
+        password: issued ? issued.password : null, expiresAt: issued ? issued.expiresAt : null,
+      });
+      await audit(null, {
+        entityType: 'USER_ACCESS', entityId: rows[0].id, subjectUserId: rows[0].id, actorId: req.currentUser.id,
+        action: 'WELCOME_EMAIL', after: { status: email.status, with_password: Boolean(issued) }, source: 'team_page',
+      });
+    }
     res.status(201).json({
       user: withPermissions(created[0]),
-      // shown once so the admin can hand it over; it is never retrievable again
-      temporary_password: data.password ? undefined : tempPassword,
+      // shown once so the admin can hand it over, unless it was emailed; never retrievable again
+      temporary_password: issued && !email?.sent ? issued.password : undefined,
+      temporary_password_expires_at: issued ? issued.expiresAt : undefined,
+      email: email ? { sent: email.sent, status: email.status, reason: email.reason, to: email.to } : undefined,
     });
   }),
 );
@@ -271,6 +303,8 @@ router.patch(
     if (data.password) {
       set('password_hash', await hashPassword(data.password));
       set('must_change_password', true);
+      // typed by an administrator, not issued by TaskFlow: no expiry
+      set('temp_password_expires_at', null);
       fields.push('token_version = token_version + 1');
     }
 
@@ -305,17 +339,73 @@ router.post(
     if (target.id !== req.currentUser.id && !canManageAccount(req.currentUser, target)) {
       throw forbidden(target.role === 'super_admin' ? 'Only a super admin can reset a super admin\'s password' : 'You can only reset passwords for people below your own role');
     }
-    const tempPassword = generateTempPassword();
-    const { rowCount } = await query(
-      `UPDATE users
-          SET password_hash = $1, must_change_password = TRUE, token_version = token_version + 1, updated_at = now()
-        WHERE id = $2`,
-      [await hashPassword(tempPassword), req.params.id],
-    );
-    if (!rowCount) throw notFound('Team member not found');
-    res.json({ temporary_password: tempPassword });
+    res.json(await issueAndSend(req, target.id, { kind: 'RESET', emailDetails: req.body?.email_details === true }));
   }),
 );
+
+/**
+ * "Resend sign-in details", while the person has not yet chosen their own
+ * password. Only a hash is kept, so the earlier password cannot be resent: a
+ * new one replaces it. Nothing changes when email cannot go out.
+ */
+router.post(
+  '/:id/resend-sign-in',
+  requirePermission('user.edit'),
+  asyncHandler(async (req, res) => {
+    const { rows: [target] } = await query('SELECT id, role, must_change_password, is_active FROM users WHERE id = $1', [Number(req.params.id)]);
+    if (!target) throw notFound('Team member not found');
+    if (target.id !== req.currentUser.id && !canManageAccount(req.currentUser, target)) {
+      throw forbidden('You can only send sign-in details to people below your own role');
+    }
+    if (!target.is_active) throw badRequest('This account is deactivated');
+    if (!target.must_change_password) throw badRequest('They have already chosen their own password. Use Reset password instead.');
+    const readiness = await emailReadiness();
+    if (!readiness.ready) throw badRequest(`Email is not set up: ${readiness.reason}`);
+    res.json(await issueAndSend(req, target.id, { kind: 'WELCOME', emailDetails: true, resend: true }));
+  }),
+);
+
+/** The person's account emails: what went, when, whether it went and who sent it. Never a password. */
+router.get(
+  '/:id/account-emails',
+  requirePermission('user.edit'),
+  asyncHandler(async (req, res) => {
+    res.json({ emails: await accountEmailsOf(Number(req.params.id)) });
+  }),
+);
+
+/**
+ * A new temporary password for this person: their old one stops working, they
+ * are signed out everywhere, open "Forgot password?" requests end, and,
+ * when asked, it is emailed to them. The password is in the answer only when
+ * it was not emailed.
+ */
+async function issueAndSend(req, userId, { kind, emailDetails, resend = false }) {
+  const issued = await newTempPassword();
+  const { rows: [person] } = await query(
+    `UPDATE users
+        SET password_hash = $1, must_change_password = TRUE, temp_password_expires_at = $2,
+            token_version = token_version + 1, updated_at = now()
+      WHERE id = $3 RETURNING id, full_name, email`,
+    [issued.hash, issued.expiresAt, userId],
+  );
+  if (!person) throw notFound('Team member not found');
+  await cancelResetRequests(null, userId);
+  let email;
+  if (emailDetails) {
+    email = await sendAccountEmail({ kind, user: person, actor: req.currentUser, password: issued.password, expiresAt: issued.expiresAt, resend });
+  }
+  await audit(null, {
+    entityType: 'USER_ACCESS', entityId: userId, subjectUserId: userId, actorId: req.currentUser.id,
+    action: resend ? 'SIGN_IN_DETAILS_RESENT' : 'PASSWORD_RESET',
+    after: { emailed: Boolean(email?.sent), status: email?.status ?? 'SHOWN_ON_SCREEN' }, source: 'team_page',
+  });
+  return {
+    temporary_password: email?.sent ? undefined : issued.password,
+    temporary_password_expires_at: issued.expiresAt,
+    email: email ? { sent: email.sent, status: email.status, reason: email.reason, to: email.to } : undefined,
+  };
+}
 
 router.delete(
   '/:id',

@@ -16,9 +16,11 @@ duplicate.
 
 | Method | Route | Permission | Notes |
 |---|---|---|---|
-| POST | `/auth/login` | — | `{ email, password }` → `{ token, user }` |
+| POST | `/auth/login` | — | `{ email, password }` → `{ token, user }`. After 10 failed attempts for one email within 15 minutes, every attempt for it (right or wrong, account or not) gets 429 "Too many sign-in attempts. Wait N minutes and try again." A temporary password TaskFlow issued that has expired → 401 "This temporary password has expired. Ask your administrator to send a new one." A "Forgot password?" temporary password also signs in: it becomes the password, `must_change_password` is set and every other session ends (docs/ACCOUNT_EMAILS.md) |
+| GET | `/auth/options` | — | `{ forgot_password }`: whether the sign-in page offers "Forgot password?" (switched on and email set up) |
+| POST | `/auth/forgot-password` | — | `{ email }` → always `{ message }`, the same whether or not the address has an account. Emails a temporary password that works alongside the current one. 3 per address and 20 per IP address an hour; beyond that the same answer and nothing sent. Nothing to deactivated or super admin accounts. 404 when switched off or email is not set up |
 | GET | `/auth/me` | signed in | Current user with effective permissions |
-| POST | `/auth/change-password` | signed in | `{ currentPassword, newPassword }`, returns a fresh token |
+| POST | `/auth/change-password` | signed in | `{ currentPassword, newPassword }`, returns a fresh token. The new password must differ from the current one. Ends the temporary password and its expiry and any open "Forgot password?" request, and emails "Your password was changed" (no password in it) |
 | PUT | `/auth/me/preferences` | signed in | `{ theme_mode?: LIGHT/DARK/SYSTEM, theme_accent?: preset key or null }`. The look follows the person to every device; an accent outside the offered presets → 400 |
 
 ---
@@ -109,9 +111,12 @@ deadline is visible at review time.
 |---|---|---|
 | GET | `/users` | `user.view` |
 | GET | `/users/:id` | `user.view` |
-| POST | `/users` | `user.create`; a role, or extra permissions, needs `user.permissions` and a role below the actor's (any, for a super admin) |
+| POST | `/users` | `user.create`; a role, or extra permissions, needs `user.permissions` and a role below the actor's (any, for a super admin). `email_details: true` emails the sign-in details (docs/ACCOUNT_EMAILS.md). The reply: `user`; `temporary_password` only when TaskFlow issued one and it was not emailed; `temporary_password_expires_at`; `email: { sent, status: SENT/FAILED/NOT_SET_UP, reason, to }` when asked. A password typed in `password` is never emailed |
+| GET | `/users/account-email-status` | `user.create` or `user.edit` — `{ ready, reason, expiry_hours }` for the tick boxes |
+| POST | `/users/:id/resend-sign-in` | `user.edit`, the person below the actor, active, and not yet chosen their own password — a new temporary password, emailed; the earlier one stops working. 400 when email is not set up (nothing changes). The reply as for a reset |
+| GET | `/users/:id/account-emails` | `user.edit` — `{ emails: [{ kind, to_address, status, error, created_at, triggered_by_name }] }`; never a password |
 | PATCH | `/users/:id` | `user.edit`; role, permissions, email, password or active status only for someone below the actor (a super admin: anyone); never one's own role or permissions; a super admin's record only by a super admin |
-| POST | `/users/:id/reset-password` | `user.edit`, and the person is below the actor (a super admin: anyone) |
+| POST | `/users/:id/reset-password` | `user.edit`, and the person is below the actor (a super admin: anyone). `{ email_details?: true }`. Signs them out everywhere and ends open "Forgot password?" requests. The reply: `temporary_password` only when not emailed, `temporary_password_expires_at`, and `email` when asked |
 | DELETE | `/users/:id` | `user.delete`, and the person is below the actor (deactivates, never deletes) |
 | GET | `/users/permissions/catalogue` | signed in — also the roles and permissions this person may hand out (`assignableRoles`, `grantable`) and `superAdminOnly` |
 | GET | `/users/access/status` | signed in — `{ super_admins, can_claim }` |
@@ -791,6 +796,19 @@ team workload block comes back empty.
 `workload` states: `idle` (no open work), `available`, `busy` (≥70% of capacity),
 `overloaded` (at or above the configured percentage), `stalled` (holds open work
 but nothing has moved for `idleDays`).
+
+---
+
+## Account emails
+
+Settings → Email (docs/ACCOUNT_EMAILS.md).
+
+| Method | Route | Permission | Notes |
+|---|---|---|---|
+| GET | `/account-emails/status` | `settings.manage` | `{ ready, reason, provider, provider_label, delivers, missing, outbox_only }` |
+| POST | `/account-emails/test` | `settings.manage` | A sample to the caller's own address, with no password → `{ email: { sent, status, reason, to } }` |
+| GET | `/account-emails/dev/outbox` | `settings.manage` | Development and staging with no email provider only (404 otherwise): the account emails the outbox recorded |
+| PUT | `/settings/accountEmails` | `settings.manage` | `{ value: { senderName, senderEmail, replyTo, expiryHours (1–168), forgotPassword } }`, checked |
 
 ---
 

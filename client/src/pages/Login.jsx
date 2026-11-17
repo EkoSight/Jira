@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { api, tokenStore } from '../api/client.js';
 import { useAuth, useBranding, useToast } from '../state/AppState.jsx';
 import { Field } from '../components/ui.jsx';
@@ -25,6 +25,51 @@ function Shell({ children }) {
   );
 }
 
+/**
+ * "Forgot password?": always the same answer, whether or not the address has
+ * an account. The emailed temporary password works alongside the current one.
+ */
+function ForgotPassword({ initialEmail, onBack }) {
+  const toast = useToast();
+  const [email, setEmail] = useState(initialEmail || '');
+  const [busy, setBusy] = useState(false);
+  const [answer, setAnswer] = useState(null);
+  const submit = async (event) => {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const r = await api.forgotPassword(email.trim());
+      setAnswer(r.message);
+    } catch (err) {
+      toast.error(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (answer) {
+    return (
+      <div className="stack">
+        <div className="mkt-callout small" role="status">{answer}</div>
+        <div className="small muted">
+          The email has a temporary password. Your current password keeps working until you use it. When you sign in
+          with it, you choose a new one.
+        </div>
+        <button type="button" className="btn btn-primary btn-block" onClick={onBack}>Back to sign in</button>
+      </div>
+    );
+  }
+  return (
+    <form className="stack" onSubmit={submit}>
+      <div className="small dim">Enter your work email. If it has an account, we'll email you a temporary password.</div>
+      <Field label="Work email">
+        <input type="email" className="input" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="username" autoFocus required />
+      </Field>
+      <button type="submit" className="btn btn-primary btn-block" disabled={busy}>{busy ? 'Sending…' : 'Email me a temporary password'}</button>
+      <button type="button" className="btn btn-ghost btn-block" onClick={onBack}>Back to sign in</button>
+    </form>
+  );
+}
+
 export default function Login() {
   const { signIn } = useAuth();
   const toast = useToast();
@@ -32,6 +77,13 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
+  const [forgotOffered, setForgotOffered] = useState(false);
+  const [forgot, setForgot] = useState(false);
+
+  // offered only while the server can send it
+  useEffect(() => {
+    api.authOptions().then((r) => setForgotOffered(Boolean(r.forgot_password))).catch(() => setForgotOffered(false));
+  }, []);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -44,6 +96,14 @@ export default function Login() {
       setBusy(false);
     }
   };
+
+  if (forgot) {
+    return (
+      <Shell>
+        <ForgotPassword initialEmail={email} onBack={() => setForgot(false)} />
+      </Shell>
+    );
+  }
 
   return (
     <Shell>
@@ -72,6 +132,9 @@ export default function Login() {
         <button type="submit" className="btn btn-primary btn-block" disabled={busy}>
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
+        {forgotOffered && (
+          <button type="button" className="btn-link small center" onClick={() => setForgot(true)}>Forgot password?</button>
+        )}
         <div className="small muted center" style={{ paddingTop: 4 }}>
           Ask an administrator to add you if you do not have an account.
         </div>
