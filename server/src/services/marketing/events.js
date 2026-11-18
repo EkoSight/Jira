@@ -19,6 +19,17 @@ import { query, withTransaction } from '../../db/pool.js';
 import { recordConsent, localParts, marketingSettings, suppress } from './core.js';
 import { unsubscribe } from './audiences.js';
 import { createFollowUp, recordCrmHistory } from './followups.js';
+import { recordSystemEmailEvent } from '../reminderEmail.js';
+
+/** Whether a provider message id belongs to a system email (an account or reminder email). */
+async function isSystemEmail(providerMessageId) {
+  const { rows } = await query(
+    `SELECT 1 FROM email_outbox WHERE provider_message_id = $1
+     UNION ALL SELECT 1 FROM account_emails WHERE provider_message_id = $1 LIMIT 1`,
+    [providerMessageId],
+  );
+  return rows.length > 0;
+}
 
 export const EVENT_TYPES = ['SENT', 'DELIVERED', 'DEFERRED', 'BOUNCE_HARD', 'BOUNCE_SOFT', 'COMPLAINT', 'REJECTED',
   'FAILED', 'OPEN', 'CLICK', 'UNSUBSCRIBE', 'REPLY', 'CONVERSION'];
@@ -89,8 +100,10 @@ async function findMessage(client, { messageId, token, reference, providerMessag
  * Returns { recorded, duplicate, event, message }.
  */
 export async function recordEvent(input) {
-  // an account email (sign-in details) is not marketing: its reports are not marketing events
-  if (String(input.reference || '').startsWith('acct-')) return { recorded: false, system: true };
+  // account emails (acct-…) and reminder emails (rem-…) are not marketing: their
+  // reports go to their own handler, never to marketing's events or figures
+  if (/^(acct|rem)-/.test(String(input.reference || ''))) return recordSystemEmailEvent(input);
+  if (!input.reference && input.providerMessageId && await isSystemEmail(input.providerMessageId)) return recordSystemEmailEvent(input);
   const settings = await marketingSettings();
   const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
   const outcome = await withTransaction(async (client) => {

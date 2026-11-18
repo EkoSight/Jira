@@ -9,6 +9,7 @@ import { useAuth } from '../state/AppState.jsx';
 import { Spinner } from '../components/ui.jsx';
 import Dashboard from './Dashboard.jsx';
 import MyWorkspace from './MyWorkspace.jsx';
+import ChatConnectBanner from '../components/workspace/ChatConnectBanner.jsx';
 
 export default function Home() {
   const { user } = useAuth();
@@ -22,6 +23,8 @@ export default function Home() {
   // if My workspace cannot be loaded, the overview is still there
   if (failed) return <Dashboard />;
   if (!ws) return <Spinner label="Opening your home" />;
-  if (ws.home.workspace) return <MyWorkspace initial={ws} onHomeChange={(isHome) => { if (!isHome) setWs({ ...ws, home: { ...ws.home, workspace: false } }); }} />;
-  return <Dashboard offerWorkspace />;
+  if (ws.home.workspace) {
+    return <><ChatConnectBanner /><MyWorkspace initial={ws} onHomeChange={(isHome) => { if (!isHome) setWs({ ...ws, home: { ...ws.home, workspace: false } }); }} /></>;
+  }
+  return <><ChatConnectBanner /><Dashboard offerWorkspace /></>;
 }

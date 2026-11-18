@@ -20,7 +20,7 @@ import { generateSignInPassword, hashPassword } from '../lib/password.js';
 import { audit } from './attendance.js';
 
 const EMAIL_RE = /^[^\s@<>"]+@[^\s@<>"]+\.[^\s@<>"]+$/;
-export const KINDS = ['WELCOME', 'RESET', 'FORGOT', 'PASSWORD_CHANGED', 'TEST'];
+export const KINDS = ['WELCOME', 'RESET', 'FORGOT', 'PASSWORD_CHANGED', 'TEST', 'CHAT_STEPS'];
 
 // ---------------------------------------------------------------- settings and readiness
 
@@ -148,6 +148,20 @@ export function accountEmailWords(kind, d) {
         password: null,
         after: ["If this wasn't you, tell your administrator now."],
       };
+    case 'CHAT_STEPS':
+      return {
+        subject: `Get ${app} reminders in Google Chat`,
+        heading: `${firstName(d.name)}, get your ${app} reminders in Google Chat.`,
+        lines: [
+          `${actor} asked ${app} to send you these steps. They take a minute, once.`,
+          '1. Open Google Chat (chat.google.com, or the Chat app on your phone) with your work account.',
+          `2. Choose New chat, then search for ${app} under Apps.`,
+          `3. Start the chat and send it any message, for example "hi".`,
+          `${app} then sends your task reminders and your morning summary there. Until then they come to the ${app} bell${d.emailReminders ? ' and by email' : ''}.`,
+        ],
+        password: null,
+        after: [`Use the Google account for ${d.email}; a different account cannot be matched to you.`, 'No password is needed, and nothing else changes.'],
+      };
     case 'TEST':
       return {
         subject: `${app} account emails: a test`,
@@ -180,7 +194,7 @@ export async function renderAccountEmail(kind, d) {
 <h1 style="margin:0 0 16px;font-size:20px;line-height:1.3;color:#111827">${esc(words.heading)}</h1>
 ${words.lines.map(p).join('\n')}
 ${words.password ? `<div style="margin:0 0 16px;padding:14px 16px;border:1px solid #cfd8d3;border-radius:8px;background:#f6faf7;font-family:SFMono-Regular,Menlo,Consolas,monospace;font-size:20px;letter-spacing:2px;color:#111827;text-align:center">${esc(words.password)}</div>` : ''}
-${kind === 'TEST' || kind === 'PASSWORD_CHANGED' ? '' : `<p style="margin:0 0 18px"><a href="${esc(signIn)}" style="display:inline-block;background:${green};color:#ffffff;text-decoration:none;font-weight:600;padding:11px 20px;border-radius:8px">Sign in to ${esc(branding.appName)}</a></p>
+${['TEST', 'PASSWORD_CHANGED', 'CHAT_STEPS'].includes(kind) ? '' : `<p style="margin:0 0 18px"><a href="${esc(signIn)}" style="display:inline-block;background:${green};color:#ffffff;text-decoration:none;font-weight:600;padding:11px 20px;border-radius:8px">Sign in to ${esc(branding.appName)}</a></p>
 <p style="margin:0 0 16px;font-size:13px;color:#52606d">Or open: <a href="${esc(signIn)}" style="color:${green}">${esc(signIn)}</a></p>`}
 ${words.after.map(p).join('\n')}
 <p style="margin:18px 0 0;font-size:12px;color:#7b8794">Never share your password. ${esc(branding.appName)} will never ask you for it by email or phone.</p>
@@ -190,7 +204,7 @@ ${words.after.map(p).join('\n')}
     '',
     ...words.lines,
     ...(words.password ? ['', `    ${words.password}`, ''] : []),
-    ...(kind === 'TEST' || kind === 'PASSWORD_CHANGED' ? [] : [`Sign in: ${signIn}`, '']),
+    ...(['TEST', 'PASSWORD_CHANGED', 'CHAT_STEPS'].includes(kind) ? [] : [`Sign in: ${signIn}`, '']),
     ...words.after,
     '',
     `Never share your password. ${branding.appName} will never ask you for it by email or phone.`,
@@ -211,7 +225,7 @@ const cleanError = (err, secret) => {
  * the result says { sent, status, reason }. `password`, when given, goes only
  * into the email.
  */
-export async function sendAccountEmail({ kind, user, actor = null, password = null, expiresAt = null, resend = false, to = null }) {
+export async function sendAccountEmail({ kind, user, actor = null, password = null, expiresAt = null, resend = false, to = null, extra = {} }) {
   if (!KINDS.includes(kind)) throw new Error(`Unknown account email: ${kind}`);
   const readiness = await emailReadiness();
   const address = to || user.email;
@@ -233,6 +247,7 @@ export async function sendAccountEmail({ kind, user, actor = null, password = nu
     actorName: actor?.full_name || null,
     when: whenWords(new Date(), timeZone),
     expiresAt: expiresAt ? whenWords(expiresAt, timeZone) : null,
+    ...extra,
   });
   const { settings } = readiness;
   try {
@@ -281,6 +296,9 @@ export async function cancelResetRequests(runner, userId) {
 // ---------------------------------------------------------------- "Forgot password?"
 
 const pending = new Set();
+// requests for one address run one after another, so the email that arrives
+// last always carries the password that works
+const lastFor = new Map();
 /** Tests wait for the work that runs after "Forgot password?" has answered. */
 export const forgotPasswordWork = () => Promise.all([...pending]);
 
@@ -291,7 +309,9 @@ export const forgotPasswordWork = () => Promise.all([...pending]);
  * password is never touched here.
  */
 export function startForgotPassword(email, ip) {
-  const job = (async () => {
+  const address = String(email || '').trim().toLowerCase();
+  const previous = lastFor.get(address) || Promise.resolve();
+  const job = previous.catch(() => {}).then(async () => {
     const { rows: [user] } = await query(
       'SELECT id, full_name, email, role, is_active FROM users WHERE lower(email) = lower($1) LIMIT 1',
       [email],
@@ -320,11 +340,15 @@ export function startForgotPassword(email, ip) {
       entityType: 'USER_ACCESS', entityId: user.id, subjectUserId: user.id, actorId: null,
       action: 'PASSWORD_RESET_REQUESTED', after: { emailed: result.sent, status: result.status }, source: 'forgot_password',
     });
-  })().catch((err) => {
+  }).catch((err) => {
     // the address and the reason only; there is no password to leak at this point
     console.error('[taskflow] forgot password:', err?.message || err);
   });
+  lastFor.set(address, job);
   pending.add(job);
-  job.finally(() => pending.delete(job));
+  job.finally(() => {
+    pending.delete(job);
+    if (lastFor.get(address) === job) lastFor.delete(address);
+  });
   return job;
 }

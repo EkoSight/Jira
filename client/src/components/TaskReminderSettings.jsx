@@ -12,6 +12,15 @@ const MODE_WORDS = {
 const STATE_TONE = { SENT: 'good', ACKNOWLEDGED: 'good', SENT_BELL_ONLY: 'warning', QUEUED: 'brand', PLANNED: 'neutral', SKIPPED: 'warning', FAILED: 'critical', CANCELLED: 'neutral', WOULD_SEND: 'neutral' };
 const KIND = { BEFORE_DUE: 'Before the deadline', AT_DUE: 'At the deadline', AFTER_GRACE: 'After grace (manager)', COVER: 'Covering', UNREACHED: 'Could not reach owner' };
 const SUMMARY = { PERSONAL: 'Morning summary', DEPARTMENT: 'Department summary', BACKLOG_WEEKLY: 'Weekly backlog review' };
+const WHERE = { APP: 'TaskFlow bell', CHAT: 'Google Chat', EMAIL: 'Email' };
+export const CHOICES = [
+  ['BOTH', 'Google Chat and email'],
+  ['CHAT_ELSE_EMAIL', 'Google Chat, or email when Chat can\'t reach me'],
+  ['EMAIL', 'Email only'],
+  ['CHAT', 'Google Chat only'],
+  ['BELL', 'The TaskFlow bell only'],
+];
+const summaryWhere = (s) => (s.channel === 'EMAIL' ? 'Email' : s.status === 'APP_ONLY' ? 'TaskFlow bell' : s.space_name ? 'Google Chat' : '—');
 
 /** One person's delivery log: every reminder and summary, and what happened to it. */
 export function DeliveryLog({ userId = null, days = 14 }) {
@@ -24,13 +33,13 @@ export function DeliveryLog({ userId = null, days = 14 }) {
   return (
     <div className="table-wrap">
       <table className="data small">
-        <thead><tr><th>When</th><th>What</th><th>Where</th><th>What happened</th></tr></thead>
+        <thead><tr><th>When</th><th>What</th><th>Channel</th><th>What happened</th></tr></thead>
         <tbody>
           {log.summaries.map((s) => (
             <tr key={`s${s.id}`}>
               <td className="tnum">{s.summary_date}</td>
               <td>{SUMMARY[s.kind]}{s.late ? ' (late)' : ''}{s.items ? ` · ${s.items} item${s.items === 1 ? '' : 's'}` : ''}</td>
-              <td>{s.status === 'APP_ONLY' ? 'TaskFlow bell' : s.space_name ? 'Google Chat' : '—'}</td>
+              <td>{summaryWhere(s)}</td>
               <td><Badge tone={STATE_TONE[s.state]}>{s.state.toLowerCase().replace(/_/g, ' ')}</Badge>{s.reason ? <span className="muted"> {s.reason}</span> : null}</td>
             </tr>
           ))}
@@ -38,7 +47,7 @@ export function DeliveryLog({ userId = null, days = 14 }) {
             <tr key={`r${r.id}`}>
               <td className="tnum">{formatDate(r.remind_at, { withTime: true })}</td>
               <td>{KIND[r.kind]}: {r.ref} {r.title}{r.about_name ? ` (${r.about_name})` : ''}</td>
-              <td>{r.channel === 'CHAT' ? 'Google Chat' : 'TaskFlow bell'}</td>
+              <td>{WHERE[r.channel] || r.channel}</td>
               <td><Badge tone={STATE_TONE[r.state]}>{r.state.toLowerCase().replace(/_/g, ' ')}</Badge>{r.reason ? <span className="muted"> {r.reason}</span> : null}</td>
             </tr>
           ))}
@@ -87,35 +96,74 @@ function Coverage() {
       {report.departments_without_summary?.length > 0 && (
         <div className="small">Departments with open work and no summary space in Chat: {report.departments_without_summary.map((d) => d.name).join(', ')}</div>
       )}
+      {report.email_ready === false && <div className="small muted">Email is not set up ({report.email_reason}), so it reaches nobody yet: people Chat cannot reach get the bell only.</div>}
     </div>
   );
 }
 
 function Connections() {
+  const toast = useToast();
   const [data, setData] = useState(null);
-  useEffect(() => { api.get('/reminders/connections').then(setData).catch(() => {}); }, []);
+  const [picked, setPicked] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get('/reminders/connections').then(setData).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, []);
   if (!data) return null;
   const missing = data.people.filter((p) => !p.connected);
   const failed = data.people.filter((p) => p.last_failed);
+  const nobody = data.people.filter((p) => !p.reached_by?.length);
+  const sendSteps = async (ids) => {
+    if (!ids.length) return;
+    setBusy(true);
+    try {
+      const r = await api.post('/reminders/chat-steps', { user_ids: ids });
+      const notSent = r.results.filter((x) => !x.sent);
+      toast.success(`Steps emailed to ${r.sent} ${r.sent === 1 ? 'person' : 'people'}${notSent.length ? `; not sent to ${notSent.length} (${[...new Set(notSent.map((x) => x.reason))].join('; ')})` : ''}`);
+      setPicked(new Set());
+    } catch (err) { toast.error(err); } finally { setBusy(false); }
+  };
   return (
     <div className="stack-sm">
-      {!data.chat_enabled && <div className="mkt-callout is-warning small">Google Chat is switched off for the organisation (Settings → Google Chat): no morning summaries go out, and reminders reach only the TaskFlow bell.</div>}
+      {!data.chat_enabled && <div className="mkt-callout is-warning small">Google Chat is switched off for the organisation (Settings → Google Chat): no Chat messages or Chat summaries go out.{data.email_ready ? ' Email and the TaskFlow bell carry reminders.' : ' Reminders reach only the TaskFlow bell.'}</div>}
       <div className="small">
-        <strong>{data.people.length - missing.length}</strong> of {data.people.length} people connected.
-        {missing.length > 0 && <> Not connected: {missing.map((p) => `${p.full_name}${p.wrong_account ? ' (wrong Google account)' : ''}`).join(', ')}.</>}
+        <strong>{data.people.length - missing.length}</strong> of {data.people.length} people connected to Google Chat.
+        {nobody.length > 0 && <> <strong>{nobody.length}</strong> reached only by the bell: {nobody.map((p) => p.full_name).join(', ')}.</>}
       </div>
+      {missing.length > 0 && (
+        <div className="stack-sm" id="not-connected">
+          <div className="row wrap" style={{ gap: 8, alignItems: 'center' }}>
+            <strong className="small">Not connected to Google Chat</strong>
+            <button type="button" className="btn btn-sm" disabled={busy || !data.email_ready || !picked.size} onClick={() => sendSteps([...picked])}>Send them the steps by email{picked.size ? ` (${picked.size})` : ''}</button>
+            {!data.email_ready && <span className="small muted">Email is not set up: {data.email_reason}</span>}
+          </div>
+          <ul className="plain-list small">
+            {missing.map((p) => (
+              <li key={p.id} className="row wrap" style={{ gap: 8 }}>
+                <label className="row" style={{ gap: 6 }}>
+                  <input type="checkbox" checked={picked.has(p.id)} disabled={!data.email_ready || p.email_bounced} onChange={(e) => { const n = new Set(picked); if (e.target.checked) n.add(p.id); else n.delete(p.id); setPicked(n); }} />
+                  <Who id={p.id} name={p.full_name} size={18} />
+                </label>
+                <span className="muted">{p.wrong_account ? 'wrong Google account' : 'not connected'} · {p.reached_by?.length ? `reminders by ${p.reached_by.join(' and ')} and the bell` : 'the bell only'}{p.email_bounced ? ' · email bounced' : ''}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {failed.length > 0 && <div className="small critical-text">Last message failed for: {failed.map((p) => `${p.full_name} (${p.last_error || 'unknown error'})`).join('; ')}</div>}
       {data.departments_without_summary.length > 0 && <div className="small">No department summary space: {data.departments_without_summary.map((d) => d.name).join(', ')}.</div>}
       <details>
         <summary className="small">Everyone</summary>
         <table className="data small">
-          <thead><tr><th>Person</th><th>Department</th><th>Chat</th><th>Instant alerts</th><th>Morning summary</th><th>Last message</th></tr></thead>
+          <thead><tr><th>Person</th><th>Department</th><th>Chat</th><th>Email</th><th>Reached by</th><th>Instant alerts</th><th>Morning summary</th><th>Last Chat message</th></tr></thead>
           <tbody>
             {data.people.map((p) => (
               <tr key={p.id}>
                 <td><Who id={p.id} name={p.full_name} size={20} /></td>
                 <td>{p.department || '—'}</td>
                 <td><Badge tone={p.connected ? 'good' : 'warning'}>{p.connected ? 'connected' : p.wrong_account ? 'wrong account' : 'not connected'}</Badge></td>
+                <td>{p.email_bounced ? <Badge tone="critical">bounced</Badge> : p.email_ok ? <Badge tone="good">ok</Badge> : <Badge tone="neutral">not set up</Badge>}</td>
+                <td>{['Bell', ...(p.reached_by || [])].join(', ')}</td>
                 <td>{p.instant ? 'on' : 'off'}</td>
                 <td>{p.morning_summary ? 'on' : 'off'}</td>
                 <td>{p.last_status ? <Badge tone={p.last_status === 'FAILED' ? 'critical' : p.last_status === 'SENT' ? 'good' : 'neutral'}>{p.last_status.toLowerCase()}</Badge> : '—'} {p.last_at ? formatDate(p.last_at, { withTime: true }) : ''}</td>
@@ -142,7 +190,7 @@ function Tomorrow() {
             <td className="tnum">{formatDate(r.at, { withTime: true })}</td>
             <td>{r.user}{r.about ? ` (for ${r.about})` : ''}</td>
             <td>{KIND[r.kind]}: {r.task}</td>
-            <td>{r.channel === 'CHAT' ? 'Google Chat' : 'Bell'}</td>
+            <td>{WHERE[r.channel] || r.channel}</td>
             <td>{r.would}</td>
           </tr>
         ))}
@@ -160,17 +208,19 @@ function Audit() {
       <div className="small muted">{data.note}</div>
       <div className="table-wrap">
         <table className="data small">
-          <thead><tr><th>Person</th><th>Summaries sent</th><th>Bell only</th><th>Skipped</th><th>Failed</th><th>Old: sent / skipped</th><th>Reminders sent</th><th>Seen</th><th>Failed</th><th>Would send</th></tr></thead>
+          <thead><tr><th>Person</th><th>Summaries sent</th><th>Summaries emailed</th><th>Bell only</th><th>Skipped</th><th>Failed</th><th>Old: sent / skipped</th><th>Reminders sent</th><th>By email</th><th>Seen</th><th>Failed</th><th>Would send</th></tr></thead>
           <tbody>
             {data.people.map((p) => (
               <tr key={p.id}>
                 <td><Who id={p.id} name={p.full_name} size={20} /></td>
                 <td className="tnum">{p.summary_sent}</td>
+                <td className="tnum">{p.summary_emailed}</td>
                 <td className="tnum">{p.summary_bell_only}</td>
                 <td className="tnum">{p.summary_skipped}</td>
-                <td className="tnum">{p.summary_failed}</td>
+                <td className="tnum">{p.summary_failed + (p.summary_email_failed || 0)}</td>
                 <td className="tnum">{p.old_digest_sent} / {p.old_digest_skipped}</td>
                 <td className="tnum">{p.reminders_sent}</td>
+                <td className="tnum">{p.reminders_emailed}</td>
                 <td className="tnum">{p.reminders_acknowledged}</td>
                 <td className="tnum">{p.reminders_failed}</td>
                 <td className="tnum">{p.reminders_would_send}</td>
@@ -178,6 +228,73 @@ function Audit() {
             ))}
           </tbody>
         </table>
+      </div>
+    </div>
+  );
+}
+
+/** The checks before going live, each with its state and where to fix it. */
+function GoLive({ mode }) {
+  const [data, setData] = useState(null);
+  useEffect(() => { api.get('/reminders/go-live').then(setData).catch(() => {}); }, [mode]);
+  if (!data) return null;
+  const allOk = data.checks.every((c) => c.ok);
+  return (
+    <div className="card">
+      <div className="card-head"><h2>Before going live</h2><Badge tone={allOk ? 'good' : 'warning'}>{data.checks.filter((c) => c.ok).length} of {data.checks.length} ready</Badge></div>
+      <div className="card-pad">
+        <ul className="golive-list">
+          {data.checks.map((c) => (
+            <li key={c.key} className={c.ok ? 'is-ok' : 'is-todo'}>
+              <span className="golive-mark" aria-hidden="true">{c.ok ? '✓' : '!'}</span>
+              <div className="golive-text">
+                <strong>{c.label}</strong>
+                {c.detail && <span className="small muted">{c.detail}</span>}
+              </div>
+              {!c.ok && c.fix && <a className="btn btn-sm btn-ghost" href={c.fix.startsWith('#') ? c.fix : c.fix}>{c.fix.startsWith('#') ? 'Below' : 'Fix'}</a>}
+              <span className="sr-only">{c.ok ? 'ready' : 'not ready'}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="small muted">Going live stays your decision: look through the Test log first, then choose Live under Task reminders.</div>
+      </div>
+    </div>
+  );
+}
+
+/** Channels: the organisation's defaults for how people hear, and the daily email limit. */
+function Channels({ form, save }) {
+  const [email, setEmail] = useState(form.email);
+  useEffect(() => { setEmail(form.email); }, [form.email]);
+  if (!email) return null;
+  const set = (k, v) => setEmail({ ...email, [k]: v });
+  return (
+    <div className="card">
+      <div className="card-head"><h2>Channels</h2><Badge tone={email.ready ? 'good' : 'warning'}>{email.ready ? 'email ready' : 'email not set up'}</Badge></div>
+      <div className="card-pad stack">
+        <div className="small muted">The TaskFlow bell always carries task reminders. These are the defaults; each person can change theirs in My reminders.</div>
+        {!email.ready && <div className="mkt-callout is-warning small">{email.reason}. Until then nothing is emailed, and Google Chat and the bell carry everything. <a href="/settings?tab=email">Settings → Email</a></div>}
+        <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={email.enabled} onChange={(e) => set('enabled', e.target.checked)} /> Send reminders by email (once email is set up)</label>
+        <div className="grid-2">
+          <Field label="Task reminders (before, at and after the deadline; covering)">
+            <select className="select" value={email.taskReminders} onChange={(e) => set('taskReminders', e.target.value)}>
+              {CHOICES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </Field>
+          <Field label="Morning summary and weekly backlog review" hint="They are long: one copy a day is usually enough">
+            <select className="select" value={email.summaries} onChange={(e) => set('summaries', e.target.value)}>
+              {CHOICES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </Field>
+          <Field label="Reminder emails a day, per person" hint="Beyond this, the next morning summary carries them. Summaries do not count.">
+            <input type="number" className="input" min={1} max={50} value={email.dailyCap} onChange={(e) => set('dailyCap', Number(e.target.value))} />
+          </Field>
+          <div className="stack-sm">
+            <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={email.managerNotices} onChange={(e) => set('managerNotices', e.target.checked)} /> Notices to managers and covering people by email too</label>
+            <label className="row small" style={{ gap: 6 }}><input type="checkbox" checked={email.teamSummary} onChange={(e) => set('teamSummary', e.target.checked)} /> Team summary to each department's managers by email</label>
+          </div>
+        </div>
+        <div><button type="button" className="btn btn-primary" onClick={() => save({ email: { enabled: email.enabled, taskReminders: email.taskReminders, summaries: email.summaries, managerNotices: email.managerNotices, teamSummary: email.teamSummary, dailyCap: email.dailyCap } })}>Save channels</button></div>
       </div>
     </div>
   );
@@ -208,7 +325,8 @@ export default function TaskReminderSettings() {
   };
   return (
     <div className="stack">
-      <div className="card">
+      <GoLive mode={form.mode} />
+      <div className="card" id="mode">
         <div className="card-head"><h2>Task reminders</h2><Badge tone={form.mode === 'LIVE' ? 'good' : form.mode === 'TEST' ? 'warning' : 'neutral'}>{form.mode.toLowerCase()}</Badge></div>
         <div className="card-pad stack">
           <div className="row wrap" role="radiogroup" aria-label="Reminder mode" style={{ gap: 6 }}>
@@ -245,6 +363,7 @@ export default function TaskReminderSettings() {
           <div><button type="button" className="btn btn-primary" onClick={() => save({ beforeDueHours: form.beforeDueHours, quietStart: form.quietStart, quietEnd: form.quietEnd, atDue: form.atDue, managerNotice: form.managerNotice, weeklyBacklog: form.weeklyBacklog, catchUpUntil: form.catchUpUntil })}>Save</button></div>
         </div>
       </div>
+      <Channels form={form} save={save} />
 
       <div className="card">
         <div className="card-head">

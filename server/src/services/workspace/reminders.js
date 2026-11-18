@@ -32,6 +32,7 @@ import { chatLink as chatAnchor, chatText } from '../../lib/googleChat.js';
 import { getSettings } from '../settings.js';
 import { localDate, zonedInstant } from '../sales/core.js';
 import { awayAt, chatRoute, hhmm, inQuietHours, offWords, reminderSettings } from '../taskReminders.js';
+import { channelPref, queueReminderEmail } from '../reminderChannels.js';
 import { workspaceSettings } from './layout.js';
 import { canSeeRecord, recordLabel } from './access.js';
 
@@ -134,6 +135,8 @@ export function effectivePref(prefsForUser, ruleKey) {
     enabled: rule.personal ? true : (p ? p.enabled : rule.defaults.enabled),
     at: p?.at_time && TIME.test(p.at_time) ? p.at_time : rule.defaults.at,
     chat: p?.chat ?? rule.defaults.chat,
+    // by email only when the person turned it on (unset means off)
+    email: p?.email === true,
     chosen: Boolean(p),
   };
 }
@@ -379,9 +382,9 @@ export async function sendDueOccurrences(now = new Date(), { limit = 300 } = {})
         await client.query(
           `UPDATE reminder_occurrences SET status = $2, reason = $3, sent_at = CASE WHEN $2 = 'SENT' THEN $4::timestamptz ELSE sent_at END,
                   notification_id = COALESCE($5, notification_id), outbox_key = COALESCE($6, outbox_key),
-                  remind_at = COALESCE($7, remind_at), updated_at = now()
+                  remind_at = COALESCE($7, remind_at), email_outbox_key = COALESCE($8, email_outbox_key), updated_at = now()
             WHERE id = $1`,
-          [o.id, status, reason, now, extra.notificationId ?? null, extra.outboxKey ?? null, extra.remindAt ?? null],
+          [o.id, status, reason, now, extra.notificationId ?? null, extra.outboxKey ?? null, extra.remindAt ?? null, extra.emailKey ?? null],
         );
         if (o.personal_reminder_id && ['SENT', 'CANCELLED'].includes(status)) {
           await client.query(`UPDATE personal_reminders SET status = $2, updated_at = now() WHERE id = $1 AND status = 'ACTIVE' AND version = $3`, [o.personal_reminder_id, status === 'SENT' ? 'DONE' : 'CANCELLED', o.schedule_version]);
@@ -458,7 +461,25 @@ export async function sendDueOccurrences(now = new Date(), { limit = 300 } = {})
           );
         }
       }
-      await finish('SENT', coverNote, { notificationId: n[0].id, outboxKey });
+      // by email, when the person turned it on for this rule (never while covering for someone else)
+      let emailKey = null;
+      let emailNote = null;
+      if (pref.email && recipient.id === o.recipient_id) {
+        const emailLive = ts.mode === 'LIVE' || (ts.mode === 'TEST' && Number(ts.testRecipientId) === recipient.id);
+        const cp = await channelPref(recipient.id, client);
+        if (!ts.email.ready) emailNote = `Not emailed: email is not set up (${ts.email.reason})`;
+        else if (!emailLive) emailNote = ts.mode === 'OFF' ? 'Not emailed: reminders are switched off' : 'Not emailed: test mode';
+        else if (!cp || cp.undeliverable) emailNote = 'Not emailed: your email address bounced';
+        else {
+          const q = await queueReminderEmail(client, {
+            userId: recipient.id, address: cp.email, kind: 'WORKSPACE', now, timezone: tz, cap: ts.email.dailyCap,
+            item: { subject: title, title: words.title, lines: body.split('\n'), url: appUrl(label?.url || '/'), button: 'Open in TaskFlow', test },
+          });
+          if (q.capped) emailNote = `Not emailed: daily email limit reached (${ts.email.dailyCap})`;
+          else emailKey = q.key;
+        }
+      }
+      await finish('SENT', [coverNote, emailNote].filter(Boolean).join('. ') || null, { notificationId: n[0].id, outboxKey, emailKey });
     }
   });
   return out;
@@ -493,8 +514,9 @@ export async function replanMine(userId, ruleKey) {
 export async function occurrencesFor(userId, { days = 14 } = {}) {
   const { rows } = await query(
     `SELECT r.id, r.entity_type, r.entity_id, r.rule_key, r.remind_at, r.status, r.reason, r.sent_at, r.facts,
-            o.status AS chat_status, o.last_error AS chat_error
+            o.status AS chat_status, o.last_error AS chat_error, e.status AS email_status, e.last_error AS email_error
        FROM reminder_occurrences r LEFT JOIN chat_outbox o ON o.dedupe_key = r.outbox_key
+       LEFT JOIN email_outbox e ON e.dedupe_key = r.email_outbox_key
       WHERE r.recipient_id = $1 AND (r.remind_at > now() - ($2 || ' days')::interval OR r.status = 'PENDING')
       ORDER BY r.remind_at DESC LIMIT 300`,
     [userId, days],

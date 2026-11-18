@@ -165,6 +165,189 @@ Problem numbers below follow the brief.
 - **The rules page** says how the rules combine, shows what one late task
   costs before and now, and says "working days" for escalations.
 
+## Email (added 18 November 2026)
+
+Task reminders and the summaries can now go by email as well as in Google Chat
+and the TaskFlow bell. The plan and where it differs from the brief are in
+`EMAIL_REMINDERS_PLAN.md`.
+
+### Who hears how
+
+The **TaskFlow bell always** carries a task reminder. Chat and email follow a
+choice, made in two places:
+
+- **The organisation's defaults**, in **Settings → Reminders → Channels**:
+  - **Task reminders** (before, at and after the deadline; covering):
+    **Google Chat and email**.
+  - **The morning summary and the weekly backlog review**: **Google Chat, or
+    email when Chat can't reach me**. They are long; one copy a day is enough.
+  - **Notices to managers and covering people by email**: on.
+  - **The team summary to each department's managers by email**: off.
+  - **Reminder emails a day, per person**: 10.
+  - **Send reminders by email**: on. Nothing goes until email is set up
+    (Settings → Email) and the mode is Live.
+- **Each person's own choice**, in **Settings → My account → My reminders →
+  How you hear about your tasks**, for task reminders and for the summaries
+  separately:
+  - Google Chat and email;
+  - Google Chat, or email when Chat can't reach me;
+  - Email only;
+  - Google Chat only;
+  - The TaskFlow bell only.
+
+  The same section shows whether Chat is connected (with the steps) and whether
+  their email is reachable, and has **Send me a sample reminder email**. A box,
+  "Email me 'all clear' on days with nothing open", is off unless ticked.
+
+Two safety rules:
+
+- **"Email only" falls back to Chat** while email cannot be used (not set up,
+  or the address bounced), so nobody loses reminders by choosing it.
+- **Someone who switched the Chat morning summary off**, and has not chosen
+  anything here, does not start getting it by email. Switching it off meant "no
+  summary".
+
+Sales follow-up reminders and the workspace and personal reminders offer email
+too (**Email** in the follow-up settings; **Email me** in each reminder row).
+Both are **off unless the person turns them on**.
+
+### What each email says
+
+Reminder emails come from the system sender in Settings → Email, the same one
+as the account emails. They go only to the person's own **login email**, as it
+is when the email goes, never to a contact, lead or customer.
+
+**Subjects:**
+
+| Reminder | Subject |
+|---|---|
+| Before the deadline | `Due in 2 hours: TF-123 Sample report` |
+| At the deadline | `Due now: TF-123 Sample report` |
+| To the manager after the grace period | `Overdue, Sample Owner's task: TF-123 Sample report` |
+| Covering | `Covering for Sample Owner: TF-123 Sample report` |
+| Could not reach the owner | `Could not reach Sample Owner: TF-123 Sample report` |
+| Several at once | `3 task reminders: Due now: TF-123 Sample report and 2 more` |
+| Test mode | `TEST · ` before any of these |
+| The sample | `SAMPLE · Due in …` |
+| Morning summary | `Your TaskFlow day: 3 overdue, 2 due today`; with nothing due, `Your TaskFlow day: nothing due today`; asked-for all clear, `Your TaskFlow day: all clear` |
+| Weekly backlog review | `Your TaskFlow backlog review for the week` |
+
+**Body:** the same facts as the Chat message, one card per task:
+
+- the reason, for a manager or covering person ("The grace period has passed
+  and it is still open…");
+- for the manager: `Overdue by 24 hours; owned by Sample Owner.`;
+- `Owner: …`, `Due: Wed 18 Nov, 17:00 IST`, `Status: To Do · Due today`,
+  `Next action: …`;
+- an **Open the task** button, and the link written out.
+
+A summary email has the same sections and links as the Chat summary, and an
+**Open My tasks** button.
+
+**Footer:** why they get it ("You get this because you own this task in
+TaskFlow.", or "…because you are the fallback person for Sample Owner…"), a
+**Change how you get reminders** link to My reminders, and the app name from
+Branding. There is **no unsubscribe link and no marketing footer**: these are
+work reminders, changed in My reminders. The headers say `Auto-Submitted:
+auto-generated`.
+
+### When it is sent
+
+- **The same checks as Chat**, made when it is sent: the mode, quiet hours,
+  days off, holidays, leave, "finished, handed over, re-dated or deferred", an
+  inactive account, and "more than 12 hours late".
+- **Checked again at the last moment.** The email is written when it goes,
+  not when it is queued. A task closed in the meantime is left out, and its
+  reminder is cancelled with the reason ("The task is done before the email
+  went"). An email with nothing left is not sent.
+- **"Chat, or email when Chat can't reach me"**: the email is skipped ("Google
+  Chat carried it") when Chat reached them.
+- **One email, not five.** Reminders for one person that fall due within
+  **3 minutes** of the first go as one email listing each task. Each keeps its
+  own row in the log. (The brief said 15 minutes; that would hold "Deadline
+  now" for a quarter of an hour.) Sales follow-up reminders are not held.
+- **The daily limit:** 10 reminder emails a person a day (task, follow-up and
+  workspace reminders; summaries do not count). Beyond it: skipped, "Daily
+  email limit reached (10); the next morning summary carries it". The bell
+  still carries it.
+- **Summaries by email** run in the reminder worker, so they go whether or not
+  Google Chat is set up. They follow the mode: nothing when Off, only the test
+  administrator's in Test, everyone's in Live. They are logged in
+  `reminder_summary_log` with `channel = 'EMAIL'`, one row per channel. Every
+  older row reads `CHAT`.
+- **Retries:** after 1, 5, 30 and 120 minutes, then **failed**. A reminder
+  email that failed is followed by a notice to the fallback person, once ("A
+  reminder to … could not be delivered by email (…)").
+
+### Bounces
+
+Delivery reports for system emails (`acct-…` and `rem-…`) are handled on
+their own. They never become marketing events, figures or contacts, and are
+recorded in `system_email_events`.
+
+- **A hard bounce or a spam complaint** marks the address undeliverable, with
+  when and why. Reminder emails to it stop. The person and the administrators
+  are told in the bell.
+- **Soft bounces count:** three in a row count as hard. A delivery resets the
+  count. A report about an address the person no longer uses changes nothing.
+- **Clearing:** **Team → the person → Edit → Clear the bounce**, once the
+  address is fixed. Reminder emails resume. It is recorded in the audit.
+
+### When email or Chat isn't set up
+
+- **Email not set up** (no email service, or no sender in Settings → Email):
+  nothing is emailed or queued. An email reminder planned earlier is recorded
+  as "Email is not set up (…); the TaskFlow bell carried it". Chat and the bell
+  work as before. The coverage check says "Email is not set up, so it reaches
+  nobody yet".
+- **Chat not connected:** the Chat row says where it went instead ("Not
+  connected to Google Chat; email and the TaskFlow bell carried it").
+- **The coverage check:**
+  - a summary the email service took counts like one Chat delivered ("owner's
+    summary by email");
+  - new reasons, once email is set up: "The owner's email address bounced" and
+    "Reaches nobody: no Chat, no email".
+- **Who covers whom:** a person reached by email is no longer counted as
+  unreachable, so their fallback person is not told to cover them. While email
+  is not set up, this is exactly as before.
+
+### Going live
+
+**Settings → Reminders** now starts with **Before going live**. It shows each
+check with its state and where to fix it:
+
+1. Google Chat switched on.
+2. A test message sent and received (Settings → Google Chat → Send me a test).
+3. People with open work connected to Chat, out of how many.
+4. Email set up (Settings → Email).
+5. The mode.
+
+**Live stays a deliberate press** by an administrator, after the Test log has
+been looked at. Nothing switches it automatically.
+
+On the live site, an administrator:
+
+1. sets up email (`ACCOUNT_EMAILS.md`, "What an administrator must do"), and
+   sends a test;
+2. checks **Settings → Reminders → Channels** (the defaults are the owner's
+   decisions below);
+3. in **Connections**, ticks the people not connected and presses **Send them
+   the steps by email**;
+4. leaves the mode on **Test** for a few days and reads the delivery log ("would
+   send" rows, by channel);
+5. then chooses **Live**.
+
+### Owner decisions (defaults used)
+
+1. Task reminders by Chat and email for everyone. A person can narrow it.
+2. The morning summary by email only to people Chat can't reach, and anyone
+   who asks.
+3. Manager notices by email: yes.
+4. A daily limit of 10 reminder emails a person.
+5. Sales follow-ups and personal reminders by email: offered, off.
+6. No buttons in Chat in this release.
+7. No instant alerts (assigned, comments, mentions) by email.
+
 ## Migration and rollback
 
 **Migration 035 is additive** and passes the additive-only guard. It adds:
@@ -187,6 +370,35 @@ columns. The trigger keeps writing owner history, which is harmless.
 **After deploying,** the reminder engine starts in test mode. While it is in
 test mode, administrators can review the delivery log and the preview of
 tomorrow before switching to Live.
+
+**Migration 044 (email) is additive** and passes the same guard. It adds:
+
+- `email_outbox` (reminder and summary emails waiting to go, with what to say,
+  not the email), `reminder_channel_prefs` (each person's choice; no row means
+  the defaults) and `system_email_events` (delivery reports for system emails);
+- `users.email_undeliverable_at`, `email_undeliverable_reason` and
+  `email_soft_bounces` (nullable or defaulted);
+- `reminder_summary_log.channel` (default `CHAT`, so every existing row keeps
+  its meaning), `reminder_rule_prefs.email` (unset means off) and
+  `reminder_occurrences.email_outbox_key`;
+- widened CHECKs, each keeping every old value: `task_reminders.channel` and
+  `crm_followup_reminders.channel` gain `EMAIL`; `reminder_summary_log.status`
+  gains `EMAILED`; `account_emails.kind` gains `CHAT_STEPS`.
+
+Nobody gets a reminder email until an administrator has set up email and the
+mode is Live (in Test, only the test administrator).
+
+**Rollback:** the previous version ignores the new tables and columns, but it
+would treat a pending `EMAIL` reminder as a Chat one and send a second Chat
+message. So, **before** deploying the previous version, cancel the pending
+email reminders (this changes no other row):
+
+```sql
+UPDATE task_reminders SET status = 'CANCELLED', reason = 'Email reminders rolled back', updated_at = now()
+ WHERE channel = 'EMAIL' AND status = 'PENDING';
+UPDATE crm_followup_reminders SET status = 'CANCELLED', cancel_reason = 'Email reminders rolled back'
+ WHERE channel = 'EMAIL' AND status = 'PENDING';
+```
 
 ## What was tested
 

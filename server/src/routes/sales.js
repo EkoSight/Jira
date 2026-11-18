@@ -429,7 +429,7 @@ const followUpInput = z.object({
   reminder_minutes: z.number().int().min(0).max(10080).default(15),
   // this follow-up's own reminders; left out, the person's defaults apply
   reminder_offsets: z.array(z.number().int()).max(4).nullable().optional(),
-  reminder_channels: z.array(z.enum(['APP', 'CHAT'])).max(2).nullable().optional(),
+  reminder_channels: z.array(z.enum(['APP', 'CHAT', 'EMAIL'])).max(3).nullable().optional(),
 });
 
 router.post('/followups', requirePermission('crm.activity.log'), asyncHandler(async (req, res) => {
@@ -465,7 +465,7 @@ router.post('/followups/:id/complete', asyncHandler(async (req, res) => {
 router.post('/followups/:id/reschedule', asyncHandler(async (req, res) => {
   const data = z.object({
     due_at: z.string().min(10), reason: z.string().max(1000).nullable().optional(),
-    reminder_offsets: z.array(z.number().int()).max(4).nullable().optional(), reminder_channels: z.array(z.enum(['APP', 'CHAT'])).max(2).nullable().optional(),
+    reminder_offsets: z.array(z.number().int()).max(4).nullable().optional(), reminder_channels: z.array(z.enum(['APP', 'CHAT', 'EMAIL'])).max(3).nullable().optional(),
   }).parse(req.body || {});
   res.json({ task: await rescheduleFollowUp(id(req.params.id), {
     dueAt: data.due_at, reason: data.reason, reminderOffsets: data.reminder_offsets, reminderChannels: data.reminder_channels,

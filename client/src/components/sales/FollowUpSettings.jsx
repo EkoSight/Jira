@@ -69,12 +69,12 @@ export function FollowUpReminderDefaults() {
         </div>
         <div className="row wrap" style={{ gap: 12 }} role="group" aria-label="Where">
           {Object.entries(CHANNEL_LABEL).map(([k, l]) => {
-            const blocked = k === 'CHAT' && !data.chat_allowed;
+            const blocked = (k === 'CHAT' && !data.chat_allowed) || (k === 'EMAIL' && !data.email_ready && !form.channels.includes('EMAIL'));
             return (
               <label key={k} className={`row small${blocked ? ' muted' : ''}`} style={{ gap: 6 }}>
                 <input type="checkbox" disabled={blocked} checked={form.channels.includes(k) && !blocked}
                   onChange={() => setForm({ ...form, channels: form.channels.includes(k) ? form.channels.filter((c) => c !== k) : [...form.channels, k] })} />
-                {l}{blocked ? ' (an administrator has not turned this on)' : ''}
+                {l}{blocked ? (k === 'EMAIL' ? ' (email is not set up yet)' : ' (an administrator has not turned this on)') : ''}
               </label>
             );
           })}
@@ -84,6 +84,7 @@ export function FollowUpReminderDefaults() {
           In TaskFlow: reminders arrive under the bell, sent by the server whether or not TaskFlow is open. {PERMISSION_WORDS[permission] || ''}
           {permission === 'default' && <> <button type="button" className="btn-link" onClick={() => requestNotificationPermission().then(setPermission)}>Allow pop-ups</button></>}
           {data.chat_allowed ? ' Google Chat reaches you on your phone even when TaskFlow is closed, once you have messaged TaskFlow in Chat.' : ''}
+          {' Email is off unless you tick it; it follows the same quiet hours and daily limit as task reminder emails.'}
         </div>
         <div className="row wrap" style={{ gap: 6 }}>
           <button type="button" className="btn btn-primary btn-sm" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>

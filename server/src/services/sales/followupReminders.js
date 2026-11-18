@@ -1,8 +1,9 @@
 /**
  * Reminders before a follow-up, on each person's terms.
  *
- *   - **Choices:** any of 30, 15, 10 and 5 minutes before, in the app and/or
- *     Google Chat. Each person sets defaults; one follow-up can override them.
+ *   - **Choices:** any of 30, 15, 10 and 5 minutes before, in the app, Google
+ *     Chat and/or email (email off unless the person turns it on). Each person
+ *     sets defaults; one follow-up can override them.
  *   - **Planned, not guessed:** every reminder is a row planned for one
  *     follow-up time and one person. Moving, handing over, finishing or
  *     cancelling a follow-up cancels what is pending and plans afresh, so a
@@ -22,9 +23,11 @@ import { notify } from '../activity.js';
 import { config } from '../../config.js';
 import { salesSettings } from './core.js';
 import { getSettings } from '../settings.js';
+import { inQuietHours, reminderSettings } from '../taskReminders.js';
+import { channelPref, queueReminderEmail } from '../reminderChannels.js';
 
 export const REMINDER_OFFSETS = [30, 15, 10, 5];
-export const REMINDER_CHANNELS = ['APP', 'CHAT'];
+export const REMINDER_CHANNELS = ['APP', 'CHAT', 'EMAIL'];
 const DEFAULT_PREFS = { offsets: [15], channels: ['APP'] };
 
 const cleanOffsets = (list) => [...new Set((list || []).map(Number))].filter((n) => REMINDER_OFFSETS.includes(n)).sort((a, b) => b - a);
@@ -40,7 +43,7 @@ export async function saveReminderPrefs(userId, { offsets, channels }) {
   const o = cleanOffsets(offsets);
   const c = cleanChannels(channels);
   if (offsets?.length && !o.length) throw badRequest('Choose from 30, 15, 10 or 5 minutes before');
-  if (o.length && !c.length) throw badRequest('Choose where reminders arrive: in TaskFlow, in Google Chat, or both');
+  if (o.length && !c.length) throw badRequest('Choose where reminders arrive: in TaskFlow, in Google Chat or by email');
   await query(
     `INSERT INTO crm_reminder_prefs (user_id, offsets, channels, updated_at) VALUES ($1, $2, $3, now())
      ON CONFLICT (user_id) DO UPDATE SET offsets = EXCLUDED.offsets, channels = EXCLUDED.channels, updated_at = now()`,
@@ -117,8 +120,10 @@ export async function planReminders(client, taskId, { now = new Date() } = {}) {
 /** The reminders of one follow-up, newest plan first, with Chat delivery where it applies. */
 export async function remindersFor(taskId) {
   const { rows } = await query(
-    `SELECT r.*, o.status AS chat_status, o.last_error AS chat_error, o.sent_at AS chat_sent_at
+    `SELECT r.*, o.status AS chat_status, o.last_error AS chat_error, o.sent_at AS chat_sent_at,
+            e.status AS email_status, e.last_error AS email_error, e.sent_at AS email_sent_at
        FROM crm_followup_reminders r LEFT JOIN chat_outbox o ON o.dedupe_key = r.outbox_key
+       LEFT JOIN email_outbox e ON e.dedupe_key = r.outbox_key
       WHERE r.task_id = $1 ORDER BY r.due_at DESC, r.offset_minutes DESC, r.channel`,
     [taskId],
   );
@@ -136,6 +141,8 @@ export async function sendDueReminders(now = new Date(), { limit = 200 } = {}) {
   const settings = await salesSettings();
   const tz = settings.calendar?.timezone || 'Asia/Kolkata';
   const chatAllowed = (await getSettings()).crmFollowUps?.chatReminders === true;
+  // email follows the task reminders' switch, mode, quiet hours and daily limit
+  const rs = await reminderSettings();
   const out = { sent: 0, failed: 0, cancelled: 0, skipped: 0 };
   await withTransaction(async (client) => {
     const { rows } = await client.query(
@@ -184,6 +191,23 @@ export async function sendDueReminders(now = new Date(), { limit = 200 } = {}) {
       if (r.channel === 'APP') {
         await notify(client, { userId: r.user_id, type: 'crm_reminder', title, body, taskId: t.id, leadId: t.crm_lead_id, accountId: t.account_id });
         await finish('SENT');
+        continue;
+      }
+      if (r.channel === 'EMAIL') {
+        if (!rs.email.ready) { await finish('SKIPPED', `Email is not set up (${rs.email.reason})`); continue; }
+        if (rs.mode === 'OFF') { await finish('SKIPPED', 'Reminders are switched off (Settings → Reminders)'); continue; }
+        if (inQuietHours(now, rs)) { await finish('SKIPPED', `Quiet hours (${rs.quietStart}–${rs.quietEnd}): no reminder emails`); continue; }
+        const pref = await channelPref(r.user_id, client);
+        if (!pref) { await finish('CANCELLED', 'Their account no longer exists'); continue; }
+        if (pref.undeliverable) { await finish('SKIPPED', `Their email address bounced (${pref.undeliverableReason || 'undeliverable'})`); continue; }
+        const test = rs.mode === 'TEST';
+        if (test && Number(rs.testRecipientId) !== r.user_id) { await finish('SKIPPED', 'Test mode: would have been emailed'); continue; }
+        const q = await queueReminderEmail(client, {
+          userId: r.user_id, address: pref.email, kind: 'FOLLOW_UP', holdMs: 0, now, timezone: rs.timezone, cap: rs.email.dailyCap,
+          item: { subject: `${test ? 'TEST · ' : ''}${title}`, title, lines: body.split(' · '), url: `${config.publicUrl}${link}`, button: 'Open the follow-up', test },
+        });
+        if (q.capped) { await finish('SKIPPED', `Daily email limit reached (${rs.email.dailyCap})`); continue; }
+        await finish('SENT', null, { outboxKey: q.key });
         continue;
       }
       // Google Chat: only when the organization allows it, and only to a linked direct message

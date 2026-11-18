@@ -11,6 +11,9 @@ import { requirePermission } from '../middleware/auth.js';
 import { dateIn, orgCalendar, statusOn } from '../services/availability.js';
 import { audit } from '../services/attendance.js';
 import { accessStatus, claimFirstSuperAdmin } from '../services/access.js';
+import { chatRoute } from '../services/taskReminders.js';
+import { CHOICE_WORDS, channelPref, emailChannel } from '../services/reminderChannels.js';
+import { clearUndeliverable } from '../services/reminderEmail.js';
 import {
   accountEmailsOf, cancelResetRequests, emailReadiness, newTempPassword, sendAccountEmail,
 } from '../services/accountEmail.js';
@@ -362,6 +365,50 @@ router.post(
     const readiness = await emailReadiness();
     if (!readiness.ready) throw badRequest(`Email is not set up: ${readiness.reason}`);
     res.json(await issueAndSend(req, target.id, { kind: 'WELCOME', emailDetails: true, resend: true }));
+  }),
+);
+
+/**
+ * How reminders reach this person: Chat connected or not, and whether their
+ * email works (bounced, when and why), for the Team page.
+ */
+router.get(
+  '/:id/reminder-reach',
+  requirePermission('user.edit'),
+  asyncHandler(async (req, res) => {
+    const id = Number(req.params.id);
+    const { rows: [u] } = await query('SELECT id, email, email_undeliverable_at, email_undeliverable_reason, email_soft_bounces FROM users WHERE id = $1', [id]);
+    if (!u) throw notFound('Team member not found');
+    const [route, pref, channel] = await Promise.all([chatRoute(id), channelPref(id), emailChannel()]);
+    res.json({
+      chat: { connected: route.ok, why: route.ok ? null : route.why },
+      email: {
+        ready: channel.ready, why: channel.ready ? null : channel.reason,
+        bounced: Boolean(u.email_undeliverable_at), bounced_at: u.email_undeliverable_at, bounced_reason: u.email_undeliverable_reason,
+        soft_bounces: u.email_soft_bounces,
+      },
+      task_reminders: pref?.taskReminders, summaries: pref?.summaries, words: { task_reminders: CHOICE_WORDS[pref?.taskReminders], summaries: CHOICE_WORDS[pref?.summaries] },
+    });
+  }),
+);
+
+/** "Clear the bounce": once the address is fixed, reminder emails to it resume. */
+router.post(
+  '/:id/clear-email-bounce',
+  requirePermission('user.edit'),
+  asyncHandler(async (req, res) => {
+    const { rows: [target] } = await query('SELECT id, role, email, email_undeliverable_at, email_undeliverable_reason FROM users WHERE id = $1', [Number(req.params.id)]);
+    if (!target) throw notFound('Team member not found');
+    if (target.id !== req.currentUser.id && !canManageAccount(req.currentUser, target)) {
+      throw forbidden('You can only change this for people below your own role');
+    }
+    if (!target.email_undeliverable_at) return res.json({ cleared: false, note: 'Their address is not marked as bouncing' });
+    await clearUndeliverable(target.id);
+    await audit(null, {
+      entityType: 'USER_ACCESS', entityId: target.id, subjectUserId: target.id, actorId: req.currentUser.id, action: 'EMAIL_BOUNCE_CLEARED',
+      before: { undeliverable_at: target.email_undeliverable_at, reason: target.email_undeliverable_reason }, after: { email: target.email }, source: 'team_page',
+    });
+    res.json({ cleared: true });
   }),
 );
 

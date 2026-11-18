@@ -521,6 +521,21 @@ export const DEFAULT_SETTINGS = {
     weeklyBacklog: true,
     // the coverage check runs after the morning messages have had time to go
     coverageTime: '11:00',
+    // email as a third channel (docs/DEADLINES_REMINDERS.md, "Email"). Nothing
+    // goes until Settings → Email has a sender and the mode above is LIVE.
+    email: {
+      enabled: true,
+      // how people hear unless they choose otherwise (My reminders):
+      // BOTH, CHAT_ELSE_EMAIL, EMAIL, CHAT or BELL
+      taskReminders: 'BOTH',
+      summaries: 'CHAT_ELSE_EMAIL',
+      // the notice to the manager after the grace period, and covering notices
+      managerNotices: true,
+      // the department summary to its managers, by email
+      teamSummary: false,
+      // reminder emails per person per day; beyond it the morning summary carries them
+      dailyCap: 10,
+    },
   },
   googleChat: {
     // off until an admin has sent a test message and switched it on

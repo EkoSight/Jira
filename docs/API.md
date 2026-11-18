@@ -113,6 +113,8 @@ deadline is visible at review time.
 | GET | `/users/:id` | `user.view` |
 | POST | `/users` | `user.create`; a role, or extra permissions, needs `user.permissions` and a role below the actor's (any, for a super admin). `email_details: true` emails the sign-in details (docs/ACCOUNT_EMAILS.md). The reply: `user`; `temporary_password` only when TaskFlow issued one and it was not emailed; `temporary_password_expires_at`; `email: { sent, status: SENT/FAILED/NOT_SET_UP, reason, to }` when asked. A password typed in `password` is never emailed |
 | GET | `/users/account-email-status` | `user.create` or `user.edit` — `{ ready, reason, expiry_hours }` for the tick boxes |
+| GET | `/users/:id/reminder-reach` | `user.edit` — how reminders reach the person: `chat { connected, why }`, `email { ready, why, bounced, bounced_at, bounced_reason, soft_bounces }`, their choices |
+| POST | `/users/:id/clear-email-bounce` | `user.edit`, yourself or someone below you — "Clear the bounce" once the address is fixed: reminder emails resume. Audited (`EMAIL_BOUNCE_CLEARED`) |
 | POST | `/users/:id/resend-sign-in` | `user.edit`, the person below the actor, active, and not yet chosen their own password — a new temporary password, emailed; the earlier one stops working. 400 when email is not set up (nothing changes). The reply as for a reset |
 | GET | `/users/:id/account-emails` | `user.edit` — `{ emails: [{ kind, to_address, status, error, created_at, triggered_by_name }] }`; never a password |
 | PATCH | `/users/:id` | `user.edit`; role, permissions, email, password or active status only for someone below the actor (a super admin: anyone); never one's own role or permissions; a super admin's record only by a super admin |
@@ -807,7 +809,7 @@ Settings → Email (docs/ACCOUNT_EMAILS.md).
 |---|---|---|---|
 | GET | `/account-emails/status` | `settings.manage` | `{ ready, reason, provider, provider_label, delivers, missing, outbox_only }` |
 | POST | `/account-emails/test` | `settings.manage` | A sample to the caller's own address, with no password → `{ email: { sent, status, reason, to } }` |
-| GET | `/account-emails/dev/outbox` | `settings.manage` | Development and staging with no email provider only (404 otherwise): the account emails the outbox recorded |
+| GET | `/account-emails/dev/outbox?include=reminders` | `settings.manage` | Development and staging with no email provider only (404 otherwise): the account emails the outbox recorded, and with `include=reminders` the reminder emails too |
 | PUT | `/settings/accountEmails` | `settings.manage` | `{ value: { senderName, senderEmail, replyTo, expiryHours (1–168), forgotPassword } }`, checked |
 
 ---
@@ -945,7 +947,7 @@ is recorded. Send a new id for each new call, and the same id when retrying.
 | PATCH | `/calls/:id` | `crm.activity.log`, and the person who made it or someone who assigns — `{ notes?, duration_sec?, reason? }`. Corrects that call; never adds one. `changed: false` when nothing differed |
 | POST | `/calls/:id/void`, `/calls/:id/restore` | `crm.audit` or `crm.assign` — `{ reason }`. Marks a reviewed accidental repeat: kept, not counted; restore counts it again |
 | GET | `/calls/review?lead_id=692,693&since=&window=` | `crm.audit` — calls close together, grouped with advice. Read only |
-| GET / PUT | `/reminder-prefs` | signed in — `{ offsets: [30,15,10,5 any], channels: ['APP','CHAT'] }`; the reply says whether Chat is allowed |
+| GET / PUT | `/reminder-prefs` | signed in — `{ offsets: [30,15,10,5 any], channels: any of ['APP','CHAT','EMAIL'] }` (email is off unless chosen); the reply says whether Chat is allowed and whether email is ready (`email_ready`, `email_reason`) |
 | GET | `/followups/:id/reminders` | can see the follow-up — each planned reminder, its status, error and Chat delivery |
 | POST | `/followups/:id/acknowledge` | can see the follow-up — marks your sent reminders as seen |
 | POST | `/followups`, `/followups/:id/reschedule` | as before, plus `reminder_offsets` and `reminder_channels` (omit for the person's defaults; `[]` for none) |
@@ -1103,15 +1105,19 @@ Under `/reminders`. Mode, timing and records: `settings.manage`, except where ma
 
 | Method | Route | Permission |
 |---|---|---|
-| GET / PUT | `/settings` | `{ mode: OFF/TEST/LIVE, beforeDueHours, atDue, managerNotice, quietStart, quietEnd, catchUpUntil, weeklyBacklog, coverageTime }`. TEST sends only to the administrator who set it; LIVE retires the old due-soon notice. Audited |
+| GET / PUT | `/settings` | `{ mode: OFF/TEST/LIVE, beforeDueHours, atDue, managerNotice, quietStart, quietEnd, catchUpUntil, weeklyBacklog, coverageTime, email? }`. `email`: the Channels defaults `{ enabled, taskReminders, summaries, managerNotices, teamSummary, dailyCap (1–50) }`, each choice one of `BOTH`, `CHAT_ELSE_EMAIL`, `EMAIL`, `CHAT`, `BELL`. The reply's `reminders.email` also says whether email is `ready`, and if not the `reason`. TEST sends only to the administrator who set it; LIVE retires the old due-soon notice. Audited |
+| GET | `/go-live` | the checks before Live: `{ checks: [{ key, label, ok, detail, fix }], mode, people: { total, connected, bounced } }` — Chat on, a test message delivered, people connected, email set up, the mode |
+| GET / PUT | `/channels` | signed in, yourself only — how you hear: `{ task_reminders, summaries, summary_all_clear }` (PUT), and on GET also `choices`, `defaults`, `mode`, `chat { connected, why, enabled }`, `email { address, ready, why, bounced, bounced_at, bounced_reason }`, `now.task_reminders` (in words). PUT re-plans your open tasks; audited |
+| POST | `/sample-email` | signed in — a sample reminder email to your own address only, marked SAMPLE (at most 3 in 10 minutes). `{ sent, to, subject }` or `{ sent: false, reason }` |
+| POST | `/chat-steps` | `{ user_ids }` — "Send them the steps by email": how to connect Google Chat, one account email each (`CHAT_STEPS`), no password; skips anyone already connected, switched off or bounced. 400 when email is not set up. `{ results: [{ id, sent, reason }], sent }` |
 | GET | `/preview?date=` | who would get what (default tomorrow), and whether it would go |
 | GET | `/preview/summary/:userId` | a person's summary as it would be now, sent to nobody |
-| GET | `/log?user_id=&days=` | your own; anyone's with `settings.manage` — summaries and reminders with their state and reason |
+| GET | `/log?user_id=&days=` | your own; anyone's with `settings.manage` — summaries and reminders with their state and reason. Each row has its `channel` (`APP`, `CHAT`, `EMAIL`); an email is SENT once the email service took it, FAILED after its last retry, CANCELLED when every task in it closed first |
 | POST | `/ack` | signed in — `{ task_id }`: "Got it" (opening the task does the same) |
 | GET | `/task/:id` | can see the task — its reminders |
-| GET | `/connections` | who is connected to Chat, who is not, last message status, departments without a summary space |
-| GET | `/coverage?refresh=1` | today's coverage check (stored; `refresh` recomputes); `/coverage/history` the last 30 |
-| GET | `/audit?days=14` | read only — per person: summaries sent, bell only, skipped, failed (old skipped-as-sent rows read as skipped), reminders sent, seen, failed, would send |
+| GET | `/connections` | who is connected to Chat, who is not, last message status, departments without a summary space; and per person `email_ok`, `email_bounced`, `task_reminders`, `summaries`, `reached_by` (`Chat`, `email`); `email_ready`, `email_reason` |
+| GET | `/coverage?refresh=1` | today's coverage check (stored; `refresh` recomputes); `/coverage/history` the last 30. A summary delivered by email counts; new reasons `EMAIL_BOUNCED`, `REACHES_NOBODY`; `email_ready`, `email_reason` |
+| GET | `/audit?days=14` | read only — per person: summaries sent, emailed, bell only, skipped, failed (old skipped-as-sent rows read as skipped), reminders sent, by email, seen, failed, would send |
 | POST | `/test` | `{ task_id, kind }` — a sample reminder to yourself, labelled TEST |
 
 ## Black marks: fairness
@@ -1159,8 +1165,8 @@ reminders or preferences. See `docs/MY_WORKSPACE.md`.
 | GET / PUT | `/workspace/origin/:kind/:id` | kind lead, deal or application — read: anyone who can see it; change "introduced by": the people working on it. Audited |
 | GET | `/workspace/handover-check?opportunity_id=&to_user_id=` | can see the deal — open tasks and meetings on it held by someone else |
 | POST | `/workspace/handover-reassign` | `task.assign` and a part in the deal — `{ opportunity_id, to_user_id, task_ids, meeting_ids }`; only the chosen ones, only on that deal |
-| GET | `/workspace/reminders` | signed in — every rule that can reach you (new and older), your choices, channels (email and push: false), your own reminders, timezone |
-| PUT | `/workspace/reminders/rules/:key` | signed in — `{ enabled, at_time?, chat? }`; off cancels only your pending reminders of that rule |
+| GET | `/workspace/reminders` | signed in — every rule that can reach you (new and older), your choices (each rule's `email`), channels (`email`: whether email can reach you; push: false), `email_why`, your own reminders, timezone |
+| PUT | `/workspace/reminders/rules/:key` | signed in — `{ enabled, at_time?, chat?, email? }`; off cancels only your pending reminders of that rule. `email` left out keeps your earlier choice. `PERSONAL` takes only `chat` and `email` (where your own reminders arrive) |
 | GET / POST | `/workspace/reminders/personal` | signed in — your own "remind me" reminders; POST `{ entity_type, entity_id, remind_at, note? }` on a record you can see (404 "Not available" otherwise). `entity_type` `TODO` is your own to-do only; ticking or removing it cancels the reminder |
 | PUT | `/workspace/reminders/personal/:id` | yours only (someone else's is 404) — "Change my reminder" |
 | POST | `/workspace/reminders/personal/:id/cancel` | yours only |

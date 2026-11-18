@@ -11,6 +11,7 @@ import {
   digestExceptions, digestLog, digestSettings, previewDigest, saveDigestSettings, sendTestDigest, setDigestException,
 } from '../services/sales/followupDigest.js';
 import { WORK_BUCKETS, workQueue } from '../services/sales/workQueue.js';
+import { emailChannel } from '../services/reminderChannels.js';
 import {
   acceptSuggestion, districtSuggestions, generateLocationSuggestions, leadSuggestions, listLocationSuggestions, rejectSuggestion,
 } from '../services/sales/location.js';
@@ -86,10 +87,15 @@ router.post('/calls/:id/restore', asyncHandler(async (req, res) => {
 
 router.get('/reminder-prefs', asyncHandler(async (req, res) => {
   const settings = await digestSettings();
-  res.json({ prefs: await reminderPrefs(req.currentUser.id), offsets: REMINDER_OFFSETS, channels: REMINDER_CHANNELS, chat_allowed: settings.chatReminders });
+  const email = await emailChannel();
+  res.json({
+    prefs: await reminderPrefs(req.currentUser.id), offsets: REMINDER_OFFSETS, channels: REMINDER_CHANNELS, chat_allowed: settings.chatReminders,
+    // email is offered, off unless the person turns it on; it goes only once email is set up
+    email_ready: email.ready, email_reason: email.ready ? null : email.reason,
+  });
 }));
 router.put('/reminder-prefs', asyncHandler(async (req, res) => {
-  const d = z.object({ offsets: z.array(z.number().int()).max(4), channels: z.array(z.enum(REMINDER_CHANNELS)).max(2) }).parse(req.body || {});
+  const d = z.object({ offsets: z.array(z.number().int()).max(4), channels: z.array(z.enum(REMINDER_CHANNELS)).max(3) }).parse(req.body || {});
   res.json({ prefs: await saveReminderPrefs(req.currentUser.id, d) });
 }));
 

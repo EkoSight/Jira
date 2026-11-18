@@ -134,11 +134,45 @@ export function ResetPasswordDialog({ member, onClose }) {
 const KIND_WORDS = {
   WELCOME: 'Sign-in details',
   RESET: 'Password reset',
+  CHAT_STEPS: 'Steps to connect Google Chat',
   FORGOT: '"Forgot password?"',
   PASSWORD_CHANGED: 'Password changed',
   TEST: 'Test',
 };
 const STATUS = { SENT: ['Sent', 'good'], FAILED: ['Not sent', 'critical'], NOT_SET_UP: ['Email not set up', 'warning'] };
+
+/** How reminders reach this person: Chat connected or not, email reachable or bounced, with "Clear the bounce". */
+function ReminderReach({ member }) {
+  const toast = useToast();
+  const [reach, setReach] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get(`/users/${member.id}/reminder-reach`).then(setReach).catch(() => setReach(false));
+  useEffect(() => { load(); }, [member.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!reach) return null;
+  const clear = async () => {
+    if (!window.confirm(`Clear the bounce for ${member.email}? Do this once the address is fixed: reminder emails to it start again.`)) return;
+    setBusy(true);
+    try { await api.post(`/users/${member.id}/clear-email-bounce`); toast.success('Cleared. Reminder emails to this address resume'); load(); } catch (err) { toast.error(err); } finally { setBusy(false); }
+  };
+  return (
+    <div className="stack-xs">
+      <div className="stat-label">Reminders reach them</div>
+      <div className="reach-row small">
+        <span>Google Chat</span>
+        <Badge tone={reach.chat.connected ? 'good' : 'warning'}>{reach.chat.connected ? 'connected' : 'not connected'}</Badge>
+        {!reach.chat.connected && <span className="muted">{reach.chat.why}</span>}
+      </div>
+      <div className="reach-row small">
+        <span>Email</span>
+        {reach.email.bounced ? <Badge tone="critical">bounced</Badge> : reach.email.ready ? <Badge tone="good">ok</Badge> : <Badge tone="neutral">not set up</Badge>}
+        {reach.email.bounced && <span className="muted">{formatDate(reach.email.bounced_at, { withTime: true })}: {reach.email.bounced_reason}</span>}
+        {reach.email.bounced && <button type="button" className="btn btn-sm" disabled={busy} onClick={clear}>Clear the bounce</button>}
+        {!reach.email.bounced && !reach.email.ready && <span className="muted">{reach.email.why}</span>}
+      </div>
+      <div className="small muted">Task reminders: {reach.words.task_reminders}. Summaries: {reach.words.summaries}.</div>
+    </div>
+  );
+}
 
 /** Team → a person: whether they have signed in yet, "Resend sign-in details", and their account emails. */
 export function SignInPanel({ member, canManage }) {
@@ -200,6 +234,7 @@ export function SignInPanel({ member, canManage }) {
           )}
         </div>
       )}
+      <ReminderReach member={member} />
       <div className="stack-xs">
         <div className="stat-label">Account emails</div>
         {!emails ? <Spinner label="Loading" /> : emails.length === 0 ? <div className="small muted">None yet.</div> : (

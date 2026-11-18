@@ -285,9 +285,9 @@ export function ReminderChoice({ value, onChange, prefs }) {
           </div>
           <div className="row wrap" style={{ gap: 10 }} role="group" aria-label="Where">
             {Object.entries(CHANNEL_LABEL).map(([k, l]) => {
-              const blocked = k === 'CHAT' && !prefs?.chat_allowed;
+              const blocked = (k === 'CHAT' && !prefs?.chat_allowed) || (k === 'EMAIL' && !prefs?.email_ready && !channels.includes('EMAIL'));
               return (
-                <label key={k} className={`row small${blocked ? ' muted' : ''}`} style={{ gap: 6 }} title={blocked ? 'An administrator has not turned on Google Chat reminders' : undefined}>
+                <label key={k} className={`row small${blocked ? ' muted' : ''}`} style={{ gap: 6 }} title={blocked ? (k === 'EMAIL' ? 'Email is not set up yet' : 'An administrator has not turned on Google Chat reminders') : undefined}>
                   <input type="checkbox" disabled={blocked} checked={channels.includes(k) && !blocked} onChange={() => onChange({ ...value, channels: toggle(channels, k) })} />{l}
                   {blocked && ' (not turned on)'}
                 </label>
@@ -389,7 +389,8 @@ export function ReminderStatus({ taskId }) {
             <span>{r.offset_minutes} min before, {CHANNEL_LABEL[r.channel] || r.channel}</span>
             <span className="muted tnum">{r.sent_at ? `sent ${exactTime(r.sent_at)}` : `at ${exactTime(r.remind_at)}`}</span>
             {r.channel === 'CHAT' && r.chat_status && <span className="muted">Chat delivery: {String(r.chat_status).toLowerCase()}</span>}
-            {(r.last_error || r.chat_error) && <span className="critical-text">{r.last_error || r.chat_error}</span>}
+            {r.channel === 'EMAIL' && r.email_status && <span className="muted">Email: {String(r.email_status).toLowerCase()}</span>}
+            {(r.last_error || r.chat_error || r.email_error) && <span className="critical-text">{r.last_error || r.chat_error || r.email_error}</span>}
           </li>
         );
       })}

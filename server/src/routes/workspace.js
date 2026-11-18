@@ -35,6 +35,7 @@ import { recordAuditEvent } from '../services/audit.js';
 import { recordHistory, canWorkOnOpportunity } from '../services/opportunities.js';
 import { withTransaction } from '../db/pool.js';
 import { chatRoute, reminderSettings } from '../services/taskReminders.js';
+import { CHOICE_WORDS, channelPref } from '../services/reminderChannels.js';
 import { scopesFor, widgetAccess } from '../../../shared/workspaceWidgets.js';
 
 const router = Router();
@@ -221,21 +222,24 @@ router.get('/reminders', asyncHandler(async (req, res) => {
     const p = effectivePref(mine, key);
     return {
       key, group: r.group, label: r.label, description: r.description, opt_in: Boolean(r.optIn), personal: Boolean(r.personal),
-      default: { enabled: r.defaults.enabled, at: r.defaults.at }, enabled: p.enabled, at: p.at, chat: p.chat, chosen: p.chosen, relative: Boolean(r.relative),
+      default: { enabled: r.defaults.enabled, at: r.defaults.at }, enabled: p.enabled, at: p.at, chat: p.chat, email: p.email, chosen: p.chosen, relative: Boolean(r.relative),
     };
   });
   const { rows: chatPref } = await query('SELECT instant, morning_summary FROM chat_preferences WHERE user_id = $1', [user.id]);
   const { rows: crmPref } = await query('SELECT offsets, channels FROM crm_reminder_prefs WHERE user_id = $1', [user.id]);
+  const how = await channelPref(user.id);
   const existing = [
-    { key: 'TASK_REMINDERS', label: 'Task deadlines', description: `Before a task's deadline (${ts.beforeDueHours} h), at the deadline, and to your fallback person after the grace period.`, choice: ts.mode === 'LIVE' ? 'On for everyone' : ts.mode === 'TEST' ? 'In test mode' : 'Off', manage: '/settings?tab=account' },
-    { key: 'DAILY_SUMMARY', label: 'Morning summary', description: 'Your open work each working morning, in Google Chat.', choice: chatPref[0]?.morning_summary === false ? 'Off' : 'On', manage: '/settings?tab=account' },
-    ...(crm ? [{ key: 'CRM_FOLLOWUPS', label: 'CRM follow-ups', description: 'Before a follow-up is due, and the daily follow-up digest.', choice: crmPref[0] ? `${crmPref[0].offsets.join(', ')} min before · ${crmPref[0].channels.map((c) => (c === 'CHAT' ? 'Google Chat' : 'in-app')).join(' and ')}` : '15 min before · in-app', manage: '/settings?tab=account' }] : []),
+    { key: 'TASK_REMINDERS', label: 'Task deadlines', description: `Before a task's deadline (${ts.beforeDueHours} h), at the deadline, and to your fallback person after the grace period.`, choice: `${ts.mode === 'LIVE' ? 'On for everyone' : ts.mode === 'TEST' ? 'In test mode' : 'Off'} · ${CHOICE_WORDS[how?.taskReminders] || ''}`, manage: '/settings?tab=account#how-you-hear' },
+    { key: 'DAILY_SUMMARY', label: 'Morning summary', description: 'Your open work each working morning.', choice: chatPref[0]?.morning_summary === false && !how?.chosen ? 'Off in Google Chat' : CHOICE_WORDS[how?.summaries] || 'On', manage: '/settings?tab=account#how-you-hear' },
+    ...(crm ? [{ key: 'CRM_FOLLOWUPS', label: 'CRM follow-ups', description: 'Before a follow-up is due, and the daily follow-up digest.', choice: crmPref[0] ? `${crmPref[0].offsets.join(', ')} min before · ${crmPref[0].channels.map((c) => ({ CHAT: 'Google Chat', EMAIL: 'email' }[c] || 'in-app')).join(' and ')}` : '15 min before · in-app', manage: '/settings?tab=account' }] : []),
     ...(settings.okr?.enabled !== false && hasPermission(user, 'okr.view') ? [{ key: 'OKR_ALERTS', label: 'Goal and key result alerts', description: 'When one of your key results goes quiet or falls behind.', choice: 'As set for the company', manage: '/goals' }] : []),
   ];
   res.json({
     rules, existing,
     personal: await myPersonalReminders(user),
-    channels: { app: true, chat: route.ok, chat_why: route.ok ? null : route.why, email: false, push: false },
+    channels: { app: true, chat: route.ok, chat_why: route.ok ? null : route.why, email: Boolean(ts.email.ready && !how?.undeliverable), push: false },
+    // why email cannot reach me, when it cannot
+    email_why: !ts.email.ready ? ts.email.reason : how?.undeliverable ? 'Your email address bounced; an administrator can clear the mark once it is fixed' : null,
     mode: ws.reminderMode,
     timezone: user.timezone || ws.timezone, timezone_is_personal: Boolean(user.timezone), company_timezone: ws.timezone,
   });
@@ -244,18 +248,24 @@ router.get('/reminders', asyncHandler(async (req, res) => {
 router.put('/reminders/rules/:key', asyncHandler(async (req, res) => {
   const key = req.params.key;
   const rule = RULES[key];
-  if (!rule || rule.personal) throw badRequest('There is no such rule to change');
+  if (!rule) throw badRequest('There is no such rule to change');
   const body = z.object({
     enabled: z.boolean(),
     at_time: z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'Use HH:MM').nullable().optional(),
     chat: z.boolean().nullable().optional(),
+    email: z.boolean().nullable().optional(),
   }).parse(req.body || {});
+  // personal reminders are always on and set one by one; only where they arrive can change here
+  if (rule.personal && (body.enabled === false || body.at_time)) throw badRequest('Personal reminders are set one by one; only where they arrive can change here');
   if (body.at_time && rule.relative) throw badRequest('This reminder is set relative to the meeting, not to a time of day');
+  // "email" left out keeps the earlier choice
   await query(
-    `INSERT INTO reminder_rule_prefs (user_id, rule_key, enabled, at_time, chat) VALUES ($1, $2, $3, $4, $5)
-     ON CONFLICT (user_id, rule_key) DO UPDATE SET enabled = EXCLUDED.enabled, at_time = EXCLUDED.at_time, chat = EXCLUDED.chat, updated_at = now()`,
-    [req.currentUser.id, key, body.enabled, body.at_time ?? null, body.chat ?? null],
+    `INSERT INTO reminder_rule_prefs (user_id, rule_key, enabled, at_time, chat, email) VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_id, rule_key) DO UPDATE SET enabled = EXCLUDED.enabled, at_time = EXCLUDED.at_time, chat = EXCLUDED.chat,
+       email = CASE WHEN $7 THEN EXCLUDED.email ELSE reminder_rule_prefs.email END, updated_at = now()`,
+    [req.currentUser.id, key, rule.personal ? true : body.enabled, body.at_time ?? null, body.chat ?? null, body.email ?? null, body.email !== undefined],
   );
+  if (rule.personal) return res.json({ ok: true, cancelled: 0, replanned: 0, note: 'Only where your personal reminders arrive changed.' });
   // off: only my pending reminders of this rule are cancelled. On: planned afresh (at most one current each)
   const cancelled = await cancelMine(req.currentUser.id, key);
   const replanned = await replanMine(req.currentUser.id, key);

@@ -203,6 +203,27 @@ reason a temporary password expires.
 Until step 2 is done, everything works as it did before: the temporary password
 is shown on screen to pass on.
 
+## Shared with reminder emails
+
+The system sender in **Settings → Email** is also the sender of reminder
+emails and summaries (`DEADLINES_REMINDERS.md`, "Email"). Setting it up is what
+lets reminder emails go, once an administrator has also switched reminders to
+Live.
+
+- **Delivery reports** for account emails (`acct-…`) and reminder emails
+  (`rem-…`) go to their own handler, never to marketing. A hard bounce or a
+  spam complaint marks the person's address undeliverable, and reminder emails
+  to it stop. Account emails still try, so an administrator can still send
+  sign-in details after fixing the address. **Team → Edit → Clear the bounce**
+  resumes reminder emails.
+- **A new account email:** "Steps to connect Google Chat" (`CHAT_STEPS`), sent
+  from Settings → Reminders → Connections. No password, nothing changes.
+- **"Forgot password?" asked twice in a row:** requests for one address are now
+  handled one after another. The email that arrives last always carries the
+  password that works. Before, two quick requests could arrive in either order.
+- **The development outbox** (`GET /account-emails/dev/outbox`) shows reminder
+  emails too with `?include=reminders`.
+
 ## Owner decisions (defaults used)
 
 1. **"Forgot password?"** — built, on.

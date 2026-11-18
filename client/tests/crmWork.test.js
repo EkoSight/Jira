@@ -59,3 +59,9 @@ test('short times in India time', async () => {
   assert.match(indiaTime('2026-11-13T11:45:42Z'), /13 Nov,? 5:15\s?pm/i);
   assert.equal(indiaTime(null), '');
 });
+
+test('follow-up reminders by email read plainly', () => {
+  assert.equal(reminderWords([15], ['APP', 'EMAIL']), '15 minutes before, in TaskFlow and by email');
+  assert.equal(reminderWords([15], ['EMAIL']), '15 minutes before, by email');
+  assert.equal(reminderWords([30, 5], ['APP', 'CHAT', 'EMAIL']), '30 and 5 minutes before, in TaskFlow and Google Chat and by email');
+});

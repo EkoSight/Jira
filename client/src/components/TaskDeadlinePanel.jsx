@@ -186,7 +186,7 @@ export default function TaskDeadlinePanel({ task, onChanged }) {
                     <td className="tnum">{formatDate(r.remind_at, { withTime: true })}</td>
                     <td><Who id={r.user_id} name={r.user_name} size={18} /></td>
                     <td>{KIND_WORDS[r.kind]}</td>
-                    <td>{r.channel === 'CHAT' ? 'Google Chat' : 'TaskFlow bell'}</td>
+                    <td>{{ CHAT: 'Google Chat', EMAIL: 'Email' }[r.channel] || 'TaskFlow bell'}</td>
                     <td><Badge tone={STATE_TONE[r.state]}>{r.state.toLowerCase().replace('_', ' ')}</Badge>{r.reason ? <span className="muted"> {r.reason}</span> : null}</td>
                   </tr>
                 ))}

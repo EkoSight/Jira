@@ -9,6 +9,7 @@
  *     nobody (no owner, or an owner whose account is switched off).
  * A summary that only reached the TaskFlow bell does not count on its own (the
  * person has to open TaskFlow to see it): the fallback has to have it too.
+ * A summary the email service accepted counts like one Chat delivered.
  * Work whose owner is away and that is not due before they are back needs
  * nobody today.
  *
@@ -22,6 +23,7 @@ import { getSettings } from './settings.js';
 import { deadlineClock } from './deadlines.js';
 import { healthOf, weekdayOf } from '../../../shared/deadlineHealth.js';
 import { awayAt, reminderSettings } from './taskReminders.js';
+import { channelPrefs } from './reminderChannels.js';
 
 export const REASON_WORDS = {
   NO_OWNER: 'No owner',
@@ -33,10 +35,16 @@ export const REASON_WORDS = {
   NO_SUMMARY: 'No summary was sent to the owner today',
   NO_FALLBACK: 'Nobody to fall back on',
   CHAT_OFF: 'Google Chat is switched off for the organisation',
+  EMAIL_BOUNCED: 'The owner\'s email address bounced',
+  EMAIL_NOT_SET_UP: 'Email is not set up',
+  REACHES_NOBODY: 'Reaches nobody: no Chat, no email',
 };
 
-const delivered = (row) => row && row.status === 'QUEUED' && row.chat_status === 'SENT';
-const queuedOnly = (row) => row && row.status === 'QUEUED' && (row.chat_status === 'PENDING' || !row.chat_status);
+// a Chat summary counts once Chat delivered it; an email once the email service took it
+const delivered = (row) => Boolean(row && ((row.status === 'QUEUED' && row.chat_status === 'SENT') || (row.status === 'EMAILED' && row.email_status === 'SENT')));
+const queuedOnly = (row) => Boolean(row && ((row.status === 'QUEUED' && (row.chat_status === 'PENDING' || !row.chat_status))
+  || (row.status === 'EMAILED' && (row.email_status === 'PENDING' || !row.email_status))));
+const by = (l) => (l.channel === 'EMAIL' ? ' (email)' : '');
 
 export async function coverageReport({ now = new Date(), store = false } = {}) {
   const settings = await getSettings();
@@ -55,17 +63,23 @@ export async function coverageReport({ now = new Date(), store = false } = {}) {
       ORDER BY t.id`,
   );
   const { rows: logs } = await query(
-    `SELECT g.*, o.status AS chat_status, o.last_error AS chat_error, u.full_name
-       FROM reminder_summary_log g LEFT JOIN chat_outbox o ON o.dedupe_key = g.outbox_key LEFT JOIN users u ON u.id = g.user_id
+    `SELECT g.*, o.status AS chat_status, o.last_error AS chat_error, e.status AS email_status, e.last_error AS email_error, u.full_name
+       FROM reminder_summary_log g LEFT JOIN chat_outbox o ON o.dedupe_key = g.outbox_key
+       LEFT JOIN email_outbox e ON e.dedupe_key = g.outbox_key LEFT JOIN users u ON u.id = g.user_id
       WHERE g.summary_date = $1 AND g.kind IN ('PERSONAL', 'DEPARTMENT')`,
     [date],
   );
-  const personal = new Map(logs.filter((l) => l.kind === 'PERSONAL').map((l) => [l.user_id, l]));
+  // one row per person and channel: the Chat (or bell) row, and the email row
+  const chatLogs = logs.filter((l) => l.channel !== 'EMAIL');
+  const personal = new Map(chatLogs.filter((l) => l.kind === 'PERSONAL').map((l) => [l.user_id, l]));
+  const personalEmail = new Map(logs.filter((l) => l.kind === 'PERSONAL' && l.channel === 'EMAIL').map((l) => [l.user_id, l]));
   const departmentLogs = logs.filter((l) => l.kind === 'DEPARTMENT');
   const coverers = logs.filter((l) => l.kind === 'PERSONAL' && l.covering_user_ids?.length);
+  const ownerIds = [...new Set(tasks.map((t) => t.assignee_id).filter(Boolean))];
+  const prefs = await channelPrefs(ownerIds, { query }, settings);
 
   // when the owners who are away are back, for "nothing due before they return"
-  const awayOwners = [...personal.values()].filter((l) => l.status === 'SKIPPED' && /^Away/.test(l.reason || '')).map((l) => l.user_id);
+  const awayOwners = [...new Set([...personal.values(), ...personalEmail.values()].filter((l) => l.status === 'SKIPPED' && /^Away/.test(l.reason || '')).map((l) => l.user_id))];
   const { backOn } = awayOwners.length ? await awayAt(awayOwners, now, c.timezone) : { backOn: () => null };
 
   const result = { seen: 0, pending: 0, unseen: 0, not_needed: 0 };
@@ -85,27 +99,45 @@ export async function coverageReport({ now = new Date(), store = false } = {}) {
     let pendingPath = false;
     if (nobody) {
       for (const d of departmentLogs) {
-        if (d.task_ids?.includes(t.id)) { if (delivered(d)) paths.push(`department summary (${d.space_name})`); else if (queuedOnly(d)) pendingPath = true; }
+        if (d.task_ids?.includes(t.id)) {
+          if (delivered(d)) paths.push(d.channel === 'EMAIL' ? `${d.full_name}'s team summary (email)` : `department summary (${d.space_name})`);
+          else if (queuedOnly(d)) pendingPath = true;
+        }
       }
-      for (const l of personal.values()) {
-        if (l.user_id && l.task_ids?.includes(t.id)) { if (delivered(l)) paths.push(`${l.full_name}'s summary`); else if (queuedOnly(l)) pendingPath = true; }
+      for (const l of [...personal.values(), ...personalEmail.values()]) {
+        if (l.user_id && l.task_ids?.includes(t.id)) { if (delivered(l)) paths.push(`${l.full_name}'s summary${by(l)}`); else if (queuedOnly(l)) pendingPath = true; }
       }
     } else {
-      const own = personal.get(t.assignee_id);
+      const ownEmail = personalEmail.get(t.assignee_id);
+      // with Chat switched off, the email row says whether the owner is away
+      const own = personal.get(t.assignee_id) || (ownEmail?.status === 'SKIPPED' && /^Away/.test(ownEmail.reason || '') ? ownEmail : undefined);
+      const emailSeen = delivered(ownEmail) && ownEmail.task_ids?.includes(t.id);
+      const emailPending = !emailSeen && queuedOnly(ownEmail) && ownEmail.task_ids?.includes(t.id);
       const covered = coverers.filter((l) => l.covering_user_ids.includes(t.assignee_id));
-      for (const l of covered) { if (delivered(l)) paths.push(`covered in ${l.full_name}'s summary`); else if (queuedOnly(l)) pendingPath = true; }
-      if (!own) reasons.push(s.chatEnabled ? 'NO_SUMMARY' : 'CHAT_OFF');
+      for (const l of covered) { if (delivered(l)) paths.push(`covered in ${l.full_name}'s summary${by(l)}`); else if (queuedOnly(l)) pendingPath = true; }
+      if (emailSeen) paths.push('owner\'s summary by email');
+      else if (emailPending) pendingPath = true;
+      const byEmail = emailSeen || emailPending;
+      if (!own) { if (!byEmail) reasons.push(s.chatEnabled ? 'NO_SUMMARY' : 'CHAT_OFF'); }
       else if (own.status === 'SKIPPED' && /^Away/.test(own.reason || '')) {
         reasons.push('OWNER_AWAY');
         const back = backOn(t.assignee_id);
         const urgent = ['OVERDUE', 'DUE_TODAY'].includes(h.code) || (t.due_date && back && new Date(t.due_date) < new Date(`${back}T00:00:00Z`) && !t.deferral_id);
         if (!urgent && !paths.length) status = 'NOT_NEEDED';
-      } else if (own.status === 'APP_ONLY') reasons.push('NOT_CONNECTED');
+      } else if (own.status === 'APP_ONLY') {
+        if (!byEmail) {
+          reasons.push('NOT_CONNECTED');
+          // once email is set up, say why email did not reach them either
+          if (s.email.ready) reasons.push(prefs.get(t.assignee_id)?.undeliverable ? 'EMAIL_BOUNCED' : ownEmail?.email_status === 'FAILED' ? 'DELIVERY_FAILED' : 'REACHES_NOBODY');
+        }
+      } else if (own.status === 'SKIPPED' && /email only/.test(own.reason || '')) {
+        if (!byEmail) reasons.push(ownEmail?.email_status === 'FAILED' ? 'DELIVERY_FAILED' : prefs.get(t.assignee_id)?.undeliverable ? 'EMAIL_BOUNCED' : 'NO_SUMMARY');
+      }
       else if (own.status === 'QUEUED' && own.chat_status === 'FAILED') reasons.push('DELIVERY_FAILED');
       else if (own.status === 'SKIPPED') reasons.push('NO_SUMMARY');
       if (delivered(own) && own.task_ids?.includes(t.id)) paths.unshift('owner\'s summary in Chat');
       else if (queuedOnly(own) && own.task_ids?.includes(t.id)) pendingPath = true;
-      const needsFallback = reasons.some((r) => ['OWNER_AWAY', 'NOT_CONNECTED', 'DELIVERY_FAILED'].includes(r));
+      const needsFallback = reasons.some((r) => ['OWNER_AWAY', 'NOT_CONNECTED', 'DELIVERY_FAILED', 'EMAIL_BOUNCED', 'REACHES_NOBODY'].includes(r));
       if (needsFallback && !covered.length && status !== 'NOT_NEEDED') reasons.push('NO_FALLBACK');
     }
     if (status !== 'NOT_NEEDED') status = paths.length ? 'SEEN' : pendingPath ? 'PENDING' : 'UNSEEN';
@@ -136,6 +168,9 @@ export async function coverageReport({ now = new Date(), store = false } = {}) {
     exceptions: exceptions.slice(0, 1000),
     departments_without_summary: noSpace,
     chat_enabled: s.chatEnabled,
+    // email as a way to reach people: whether it is set up, and if not why
+    email_ready: s.email.ready,
+    email_reason: s.email.ready ? null : s.email.reason,
   };
   if (store) {
     await query(
@@ -143,7 +178,7 @@ export async function coverageReport({ now = new Date(), store = false } = {}) {
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (report_date) DO UPDATE SET generated_at = EXCLUDED.generated_at, open_tasks = EXCLUDED.open_tasks,
          unseen = EXCLUDED.unseen, exceptions = EXCLUDED.exceptions, summary = EXCLUDED.summary`,
-      [date, now, tasks.length, result.unseen, JSON.stringify(report.exceptions), JSON.stringify({ ...result, by_reason: byReason, departments_without_summary: noSpace, chat_enabled: s.chatEnabled })],
+      [date, now, tasks.length, result.unseen, JSON.stringify(report.exceptions), JSON.stringify({ ...result, by_reason: byReason, departments_without_summary: noSpace, chat_enabled: s.chatEnabled, email_ready: s.email.ready, email_reason: report.email_reason })],
     );
   }
   return report;

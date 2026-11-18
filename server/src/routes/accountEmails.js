@@ -32,13 +32,15 @@ router.post('/test', manage, asyncHandler(async (req, res) => {
 }));
 
 // Development and staging with EMAIL_PROVIDER unset: nothing is delivered, so
-// the account emails the outbox recorded can be read here. Never in production.
+// the system emails the outbox recorded (account emails, and reminder emails
+// with ?include=reminders) can be read here. Never in production.
 const outboxOnly = (req, res, next) => {
   if (config.env === 'production' || providerName() !== 'log') return next(notFound());
   next();
 };
 router.get('/dev/outbox', manage, outboxOnly, (req, res) => {
-  const list = outbox().filter((m) => String(m.reference || '').startsWith('acct-')).slice(-20).reverse();
+  const prefix = req.query.include === 'reminders' ? /^(acct|rem)-/ : /^acct-/;
+  const list = outbox().filter((m) => prefix.test(String(m.reference || ''))).slice(-40).reverse();
   res.json({ messages: list.map(({ raw, ...m }) => ({ to: m.to, subject: m.subject, text: m.text, html: m.html, at: m.at, kind: m.headers?.['X-TaskFlow-Kind'] || null })) });
 });
 

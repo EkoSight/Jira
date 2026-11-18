@@ -31,6 +31,7 @@ import { deadlineClock } from './deadlines.js';
 import { addDays, healthLabel, healthOf, weekdayOf } from '../../../shared/deadlineHealth.js';
 import { awayAt, chatRoute, hhmm, offWords, reminderSettings, taskUrl } from './taskReminders.js';
 import { fallbackPeople, managedDepartmentIds, waitingForDecision } from './taskPeople.js';
+import { channelPrefs, emailChannel, summaryChannels, summaryEmailUsable } from './reminderChannels.js';
 
 import { planSummaryLine } from './todos/chat.js';
 const app = (path = '/') => `${config.publicUrl}${path}`;
@@ -265,7 +266,8 @@ export async function departmentSummary(departmentId, { now = new Date(), c = nu
   if (dueToday.length) lines.push(...section('Due today', dueToday, clock, { owner: true, max: 8, more: `/board?due=today&department_id=${departmentId}` }));
   if (!dueToday.length && !overdue.length && !unowned.length) lines.push('Nothing due today and nothing overdue.');
   if (notConnected.length) {
-    lines.push(`\n*Not connected to Google Chat:* ${notConnected.map((u) => chatText(u.full_name)).join(', ')}. They get reminders only in the TaskFlow bell.`);
+    const email = await emailChannel();
+    lines.push(`\n*Not connected to Google Chat:* ${notConnected.map((u) => chatText(u.full_name)).join(', ')}. ${email.ready ? 'They get reminders in the TaskFlow bell and, unless they chose otherwise, by email.' : 'They get reminders only in the TaskFlow bell.'}`);
   }
   return { text: lines.join('\n'), task_ids: [...new Set([...overdue, ...dueToday, ...unowned].map((t) => t.id))], items: overdue.length + dueToday.length + unowned.length };
 }
@@ -274,12 +276,13 @@ export async function departmentSummary(departmentId, { now = new Date(), c = nu
 
 const minutes = (hm) => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
 
-async function logSummary(row) {
+/** One log row per summary, recipient, day and channel (CHAT unless said: every older row is a Chat or bell row). */
+export async function logSummary(row) {
   const { rowCount } = await query(
-    `INSERT INTO reminder_summary_log (log_key, kind, user_id, department_id, space_name, summary_date, status, reason, items, task_ids, covering_user_ids, outbox_key, late)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (log_key) DO NOTHING`,
+    `INSERT INTO reminder_summary_log (log_key, kind, user_id, department_id, space_name, summary_date, status, reason, items, task_ids, covering_user_ids, outbox_key, late, channel)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14) ON CONFLICT (log_key) DO NOTHING`,
     [row.key, row.kind, row.userId ?? null, row.departmentId ?? null, row.space ?? null, row.date, row.status, row.reason ?? null,
-      row.items ?? 0, row.taskIds ?? [], row.covering ?? [], row.outboxKey ?? null, Boolean(row.late)],
+      row.items ?? 0, row.taskIds ?? [], row.covering ?? [], row.outboxKey ?? null, Boolean(row.late), row.channel || 'CHAT'],
   );
   return rowCount > 0;
 }
@@ -296,22 +299,37 @@ const plain = (text) => text.replace(/<([^|>]+)\|([^>]+)>/g, '$2').replace(/[*_]
 
 /**
  * Who cannot be reached today and who covers for them. Everyone is looked at
- * once: away (their own calendar), or not reachable in Chat.
+ * once: away (their own calendar), or reached neither in Chat nor, where
+ * email is set up and live for them, by email (each person's choice, see
+ * reminderChannels.js). While email is not set up this is Chat alone, as it
+ * always was.
  */
 export async function reachability(now, { s = null } = {}) {
   const settings = s || await reminderSettings();
   const { rows: people } = await query('SELECT id, full_name, department_id FROM users WHERE is_active ORDER BY id');
   const ids = people.map((p) => p.id);
   const { away, backOn } = ids.length ? await awayAt(ids, now, settings.timezone) : { away: new Map(), backOn: () => null };
+  const prefs = await channelPrefs(ids, { query });
+  const { rows: offRows } = ids.length
+    ? await query('SELECT user_id FROM chat_preferences WHERE morning_summary = FALSE AND user_id = ANY($1::int[])', [ids])
+    : { rows: [] };
+  const summaryOff = new Set(offRows.map((r) => r.user_id));
   const out = new Map();
   for (const p of people) {
     const off = away.get(p.id);
     const route = await chatRoute(p.id, { query }, settings);
+    const pref = prefs.get(p.id);
+    const chatOk = Boolean(route.ok && route.morningSummary);
+    const emailLive = summaryEmailUsable(pref, {
+      channel: settings.email, chatSummaryOff: summaryOff.has(p.id), mode: settings.mode, testRecipientId: settings.testRecipientId, userId: p.id, live: true,
+    });
+    const by = summaryChannels(pref?.summaries, { chatOk, emailUsable: emailLive });
     let unreachable = null;
     if (off && ['WEEKLY_OFF', 'HOLIDAY', 'LEAVE'].includes(off.code)) unreachable = { away: true, why: offWords(off), back: backOn(p.id) };
-    else if (!route.ok) unreachable = { away: false, why: route.why };
-    else if (!route.morningSummary) unreachable = { away: false, why: 'switched the morning summary off' };
-    out.set(p.id, { ...p, off, route, unreachable });
+    else if (!by.chat && !by.email) {
+      unreachable = { away: false, why: pref?.summaries === 'BELL' ? 'chose the TaskFlow bell only' : !route.ok ? route.why : 'switched the morning summary off' };
+    }
+    out.set(p.id, { ...p, off, route, unreachable, summaryChoice: pref?.summaries || null, emailCarries: by.email });
   }
   // fallback people for everyone who cannot be reached
   const covers = new Map();
@@ -374,17 +392,28 @@ export async function queueSummaries(now = new Date()) {
           }
           const text = late ? `${summary.text}\n\n_Sent late: TaskFlow could not send it at ${personalAt}._` : summary.text;
           const base = { key, kind: 'PERSONAL', userId: u.id, date: today, items: summary.items, taskIds: summary.task_ids, covering: summary.covering_user_ids, late };
+          const bell = () => query(
+            `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'daily_summary', $2, $3)`,
+            [u.id, `Your day: ${summary.counts.overdue} overdue, ${summary.counts.today} due today`, plain(text).slice(0, 4000)],
+          );
+          if (p.summaryChoice === 'BELL') {
+            await bell();
+            await logSummary({ ...base, status: 'APP_ONLY', reason: `They chose the TaskFlow bell only; sent to the bell${p.coveredBy?.length ? ', and their fallback person is told' : ''}` });
+            continue;
+          }
+          if (p.summaryChoice === 'EMAIL' && p.emailCarries) {
+            await logSummary({ ...base, status: 'SKIPPED', reason: 'They chose email only: it goes by email' });
+            continue;
+          }
           if (p.route.ok && p.route.morningSummary) {
             const outboxKey = `digest:${u.id}:${today}`;
             await enqueue(outboxKey, p.route.space, u.id, 'DIGEST', { text });
             if (await logSummary({ ...base, status: 'QUEUED', space: p.route.space, outboxKey })) queued += 1;
           } else {
-            // not reachable in Chat: the bell carries it, and their fallback person is told
-            await query(
-              `INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'daily_summary', $2, $3)`,
-              [u.id, `Your day: ${summary.counts.overdue} overdue, ${summary.counts.today} due today`, plain(text).slice(0, 4000)],
-            );
-            await logSummary({ ...base, status: 'APP_ONLY', reason: `${p.unreachable?.why || 'Not reachable in Chat'}; sent to the TaskFlow bell${p.coveredBy?.length ? ', and their fallback person is told' : ''}` });
+            // not reachable in Chat: the bell carries it (and email, where it reaches them), and their fallback person is told
+            await bell();
+            const why = p.unreachable?.why || (!p.route.ok ? p.route.why : 'switched the morning summary off');
+            await logSummary({ ...base, status: 'APP_ONLY', reason: `${why}; sent to the TaskFlow bell${p.emailCarries ? ' and by email' : ''}${p.coveredBy?.length ? ', and their fallback person is told' : ''}` });
           }
         }
       }
@@ -478,16 +507,17 @@ export async function queueBacklogReviews(now = new Date()) {
     if (!review) { await logSummary({ key, kind: 'BACKLOG_WEEKLY', userId: u.id, date: c.today, status: 'SKIPPED', reason: 'Nothing in Backlog' }); continue; }
     const base = { key, kind: 'BACKLOG_WEEKLY', userId: u.id, date: c.today, items: review.items, taskIds: review.task_ids };
     if (p?.unreachable?.away) { await logSummary({ ...base, status: 'SKIPPED', reason: `Away: ${p.unreachable.why}` }); continue; }
+    if (p?.summaryChoice === 'EMAIL' && p.emailCarries) { await logSummary({ ...base, status: 'SKIPPED', reason: 'They chose email only: it goes by email' }); continue; }
     const test = s.mode === 'TEST';
     if (test && Number(s.testRecipientId) !== u.id) { await logSummary({ ...base, status: 'WOULD_SEND', reason: 'Test mode: would have been sent' }); continue; }
     const text = `${test ? '*TEST* · ' : ''}${review.text}`;
-    if (p?.route?.ok) {
+    if (p?.route?.ok && p.summaryChoice !== 'BELL') {
       const outboxKey = `backlog:${u.id}:${c.today}`;
       await enqueue(outboxKey, p.route.space, u.id, 'BACKLOG_WEEKLY', { text });
       if (await logSummary({ ...base, status: 'QUEUED', space: p.route.space, outboxKey })) queued += 1;
     } else {
       await query(`INSERT INTO notifications (user_id, type, title, body) VALUES ($1, 'backlog_review', $2, $3)`, [u.id, `${test ? 'TEST · ' : ''}Backlog review for the week`, plain(text).slice(0, 4000)]);
-      await logSummary({ ...base, status: 'APP_ONLY', reason: `${p?.unreachable?.why || 'Not reachable in Chat'}; sent to the TaskFlow bell` });
+      await logSummary({ ...base, status: 'APP_ONLY', reason: `${p?.summaryChoice === 'BELL' ? 'They chose the TaskFlow bell only' : p?.unreachable?.why || p?.route?.why || 'Not reachable in Chat'}; sent to the TaskFlow bell${p?.emailCarries ? ' and by email' : ''}` });
     }
   }
   return { queued };

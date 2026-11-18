@@ -67,7 +67,7 @@ export const REMINDER_STATUS = {
   PENDING: ['Planned', 'neutral'], SENDING: ['Sending', 'brand'], SENT: ['Sent', 'good'], FAILED: ['Not sent', 'critical'],
   CANCELLED: ['Cancelled', 'neutral'], SKIPPED: ['Skipped', 'neutral'],
 };
-export const CHANNEL_LABEL = { APP: 'In TaskFlow', CHAT: 'Google Chat' };
+export const CHANNEL_LABEL = { APP: 'In TaskFlow', CHAT: 'Google Chat', EMAIL: 'Email' };
 
 /** "30, 15 and 5 minutes before, in TaskFlow and Google Chat"; "No reminders". */
 export function reminderWords(offsets, channels) {
@@ -75,7 +75,8 @@ export function reminderWords(offsets, channels) {
   if (!o.length) return 'No reminders';
   const list = o.length === 1 ? `${o[0]}` : `${o.slice(0, -1).join(', ')} and ${o[o.length - 1]}`;
   const where = (channels || []).map((c) => ({ APP: 'TaskFlow', CHAT: 'Google Chat' }[c])).filter(Boolean);
-  return `${list} minutes before${where.length ? `, in ${where.join(' and ')}` : ''}`;
+  const parts = [where.length ? `in ${where.join(' and ')}` : null, (channels || []).includes('EMAIL') ? 'by email' : null].filter(Boolean);
+  return `${list} minutes before${parts.length ? `, ${parts.join(' and ')}` : ''}`;
 }
 
 /** Where a follow-up stands against now: due now (within five minutes), overdue, or ahead. */

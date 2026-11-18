@@ -1,6 +1,8 @@
 /**
- * Task reminders, every minute: send what is due, tell the fallback person
- * about Chat messages that could not be delivered, re-plan near deadlines
+ * Task reminders, every minute: send what is due (the bell, Chat and email),
+ * send the reminder emails waiting in the email outbox and the summaries by
+ * email, tell the fallback person about Chat messages and emails that could
+ * not be delivered, re-plan near deadlines
  * every ten minutes, send the weekly backlog review on the first working day
  * of the week, and store the coverage check once the morning messages have
  * had time to go. One step failing never stops the others; several servers
@@ -9,6 +11,7 @@
 import { query } from '../db/pool.js';
 import { followUpFailedChats, hhmm, reminderSettings, replanSweep, sendDueTaskReminders } from '../services/taskReminders.js';
 import { queueBacklogReviews } from '../services/taskSummaries.js';
+import { followUpFailedEmails, queueEmailSummaries, sendEmailOutbox } from '../services/reminderEmail.js';
 import { coverageReport } from '../services/coverage.js';
 import { deadlineClock } from '../services/deadlines.js';
 import { planSweep, sendDueOccurrences } from '../services/workspace/reminders.js';
@@ -45,6 +48,9 @@ export async function runReminderTick({ now = new Date(), force = false } = {}) 
   await step('workspaceSent', () => sendDueOccurrences(now), out);
   await step('fallbacks', () => followUpFailedChats(now), out);
   await step('backlog', () => queueBacklogReviews(now), out);
+  await step('emailSummaries', () => queueEmailSummaries(now), out);
+  await step('emailed', () => sendEmailOutbox(now), out);
+  await step('emailFallbacks', () => followUpFailedEmails(now), out);
   const c = await deadlineClock(now);
   if (hhmm(now, c.timezone) >= s.coverageTime) {
     const { rows } = await query('SELECT 1 FROM coverage_reports WHERE report_date = $1', [c.today]);

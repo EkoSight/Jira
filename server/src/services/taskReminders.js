@@ -32,6 +32,7 @@ import { deadlineClock } from './deadlines.js';
 import { addDays, healthLabel, localDate } from '../../../shared/deadlineHealth.js';
 import { markCalendar, pickRule } from './blackmarks.js';
 import { fallbackPeople } from './taskPeople.js';
+import { channelPref, channelPrefs, emailChannel, plannedChannels, queueReminderEmail } from './reminderChannels.js';
 
 const HOUR = 3_600_000;
 const TIME = /^([01][0-9]|2[0-3]):[0-5][0-9]$/;
@@ -53,6 +54,24 @@ export async function reminderSettings(settings = null) {
     coverageTime: TIME.test(String(r.coverageTime)) ? r.coverageTime : '11:00',
     timezone: s.organisation?.timezone || 'Asia/Kolkata',
     chatEnabled: s.googleChat?.enabled === true,
+    // email as a third channel: the defaults, and whether it can go now
+    email: await emailChannel(s),
+  };
+}
+
+/**
+ * The channels to plan for these people, by their own choice: the bell
+ * always; Chat and email as chosen. Email only where it can go (set up, and
+ * their address has not bounced); notices to a manager or a covering person by
+ * email only while the organisation allows it.
+ */
+async function channelsFor(runner, userIds, s) {
+  const prefs = await channelPrefs(userIds, runner);
+  return (userId, role) => {
+    const p = prefs.get(Number(userId));
+    const usable = Boolean(s.email?.ready && p && !p.undeliverable && (role === 'OWNER' || s.email.managerNotices));
+    const pc = plannedChannels(p?.taskReminders, usable);
+    return ['APP', ...(pc.chat ? ['CHAT'] : []), ...(pc.email ? ['EMAIL'] : [])];
   };
 }
 
@@ -160,7 +179,9 @@ export function reminderWords(r, task, c, { test = false } = {}) {
   }[r.kind];
   const why = {
     COVER: `${task.owner_name || 'The owner'} is ${r.reason_note || 'away'}, and this is due before they are back.`,
-    UNREACHED: `A reminder to ${task.owner_name || 'the owner'} could not be delivered in Google Chat${r.reason_note ? ` (${r.reason_note})` : ''}.`,
+    UNREACHED: /^Email: /.test(r.reason_note || '')
+      ? `A reminder to ${task.owner_name || 'the owner'} could not be delivered by email (${r.reason_note.slice(7)}).`
+      : `A reminder to ${task.owner_name || 'the owner'} could not be delivered in Google Chat${r.reason_note ? ` (${r.reason_note})` : ''}.`,
     AFTER_GRACE: 'The grace period has passed and it is still open. A conversation may help: it may be blocked, need a new date, or be done but not marked.',
   }[r.kind];
   const facts = taskFacts(task, c);
@@ -183,14 +204,14 @@ async function graceHours(task, runner) {
   return rule ? Number(rule.grace_hours || 0) : 24;
 }
 
-const TASK_FOR_REMINDERS = `
+export const TASK_FOR_REMINDERS = `
   SELECT t.id, t.ref, t.title, t.assignee_id, t.due_date, t.department_id, t.priority, t.is_archived, t.followup_kind,
          t.deferral_id, t.review_date, t.next_action, t.status_id, s.stage, s.name AS status_name,
          u.full_name AS owner_name, u.is_active AS owner_active
     FROM tasks t JOIN workflow_statuses s ON s.id = t.status_id LEFT JOIN users u ON u.id = t.assignee_id`;
 
 /** Why a task has no reminders now, or null when it should have them. */
-function notRemindable(t) {
+export function notRemindable(t) {
   if (!t) return 'The task no longer exists';
   if (t.is_archived) return 'The task was archived';
   if (t.stage === 'done') return 'The task is done';
@@ -229,9 +250,8 @@ export async function planTaskReminders(runner, taskId, { now = new Date(), sett
   }
   const due = new Date(t.due_date);
   const wanted = [];
-  const add = (kind, at, userId, role, aboutUserId = null) => {
-    for (const channel of ['APP', 'CHAT']) wanted.push({ kind, at, userId, role, aboutUserId, channel });
-  };
+  const plan = [];
+  const add = (kind, at, userId, role, aboutUserId = null) => plan.push({ kind, at, userId, role, aboutUserId });
   if (s.beforeDueHours > 0) add('BEFORE_DUE', new Date(due.getTime() - s.beforeDueHours * HOUR), t.assignee_id, 'OWNER');
   if (s.atDue) add('AT_DUE', due, t.assignee_id, 'OWNER');
   if (s.managerNotice) {
@@ -240,6 +260,11 @@ export async function planTaskReminders(runner, taskId, { now = new Date(), sett
     // the reporting manager if there is one, otherwise the department's managers
     const told = fallback[0]?.why === 'reporting manager' ? [fallback[0]] : fallback;
     for (const p of told) add('AFTER_GRACE', new Date(due.getTime() + grace * HOUR), p.id, 'FALLBACK', t.assignee_id);
+  }
+  // each person's channels: the bell, and Chat and email as they chose
+  const channels = await channelsFor(runner, plan.map((p) => p.userId), s);
+  for (const p of plan) {
+    for (const channel of channels(p.userId, p.role)) wanted.push({ ...p, channel });
   }
   const keep = wanted.filter((w) => w.at.getTime() >= now.getTime() - 60_000);
 
@@ -310,11 +335,13 @@ async function insertNotification(runner, { userId, type, title, body, taskId })
 }
 
 /** Plans a fallback reminder (cover or could-not-reach) to be sent now, once. */
-async function planFallback(runner, task, kind, note, now) {
+export async function planFallback(runner, task, kind, note, now) {
   const people = await fallbackPeople(task.assignee_id, task.department_id, runner);
   const told = people[0]?.why === 'reporting manager' ? [people[0]] : people;
+  const s = await reminderSettings();
+  const channels = await channelsFor(runner, told.map((p) => p.id), s);
   for (const p of told) {
-    for (const channel of ['APP', 'CHAT']) {
+    for (const channel of channels(p.id, 'FALLBACK')) {
       await runner.query(
         `INSERT INTO task_reminders (task_id, user_id, kind, role, about_user_id, due_at, remind_at, channel, reason)
          VALUES ($1, $2, $3, 'FALLBACK', $4, $5, $6, $7, $8)
@@ -405,9 +432,35 @@ export async function sendDueTaskReminders(now = new Date(), { limit = 300 } = {
         await finish('SENT', null, { notificationId });
         continue;
       }
+      if (r.channel === 'EMAIL') {
+        const pref = await channelPref(r.user_id, client);
+        if (!pref) { await finish('CANCELLED', 'Their account no longer exists'); continue; }
+        const wants = plannedChannels(pref.taskReminders, true).email && (r.role === 'OWNER' || s.email.managerNotices);
+        if (!wants) { await finish('CANCELLED', 'They no longer get reminders by email'); continue; }
+        if (!s.email.ready) { await finish('SKIPPED', `Email is not set up (${s.email.reason}); the TaskFlow bell carried it`); continue; }
+        if (pref.undeliverable) { await finish('SKIPPED', `Their email address bounced (${pref.undeliverableReason || 'undeliverable'}); an administrator can clear it on the Team page`); continue; }
+        if (pref.taskReminders === 'CHAT_ELSE_EMAIL') {
+          const route = await chatRoute(r.user_id, client, s);
+          if (route.ok && route.instant) { await finish('SKIPPED', 'Google Chat carried it'); continue; }
+        }
+        const q = await queueReminderEmail(client, {
+          userId: r.user_id, address: pref.email, kind: 'REMINDER', item: { reminderId: r.id, test },
+          now, timezone: s.timezone, cap: s.email.dailyCap,
+        });
+        if (q.capped) { await finish('SKIPPED', `Daily email limit reached (${s.email.dailyCap}); the next morning summary carries it`); continue; }
+        await finish('SENT', null, { outboxKey: q.key });
+        continue;
+      }
+      // Chat: unless they have since chosen email only or the bell only
+      const pref = await channelPref(r.user_id, client);
+      const emailUsable = Boolean(s.email.ready && pref && !pref.undeliverable && (r.role === 'OWNER' || s.email.managerNotices));
+      const planned = plannedChannels(pref?.taskReminders, emailUsable);
+      if (!planned.chat) { await finish('CANCELLED', 'They no longer get reminders in Google Chat'); continue; }
       const route = await chatRoute(r.user_id, client, s);
-      if (!route.ok) { await finish('SKIPPED', `${route.why}; the TaskFlow bell carried it`); continue; }
-      if (!route.instant) { await finish('SKIPPED', 'They switched Chat alerts off; the TaskFlow bell carried it'); continue; }
+      // say where it went instead: email, when email carries their reminders, or the bell
+      const carriedBy = planned.email ? 'email and the TaskFlow bell carried it' : 'the TaskFlow bell carried it';
+      if (!route.ok) { await finish('SKIPPED', `${route.why}; ${carriedBy}`); continue; }
+      if (!route.instant) { await finish('SKIPPED', `They switched Chat alerts off; ${carriedBy}`); continue; }
       const key = `task-reminder:${r.id}`;
       await client.query(
         `INSERT INTO chat_outbox (dedupe_key, space_name, user_id, kind, payload) VALUES ($1, $2, $3, 'TASK_REMINDER', $4)
@@ -456,8 +509,10 @@ export async function acknowledgeTaskReminders(taskId, userId) {
 /** One task's reminders, newest plan first, with Chat delivery where it applies. */
 export async function remindersForTask(taskId) {
   const { rows } = await query(
-    `SELECT r.*, u.full_name AS user_name, o.status AS chat_status, o.last_error AS chat_error, o.sent_at AS chat_sent_at
+    `SELECT r.*, u.full_name AS user_name, o.status AS chat_status, o.last_error AS chat_error, o.sent_at AS chat_sent_at,
+            e.status AS email_status, e.last_error AS email_error
        FROM task_reminders r JOIN users u ON u.id = r.user_id LEFT JOIN chat_outbox o ON o.dedupe_key = r.outbox_key
+       LEFT JOIN email_outbox e ON e.dedupe_key = r.outbox_key
       WHERE r.task_id = $1 ORDER BY r.remind_at DESC, r.id DESC`,
     [taskId],
   );
@@ -473,6 +528,11 @@ export function deliveryStatus(r) {
   let state = r.status;
   if (r.status === 'PENDING' || r.status === 'SENDING') state = 'PLANNED';
   if (r.status === 'SENT' && r.channel === 'CHAT') state = r.chat_status === 'SENT' ? 'SENT' : r.chat_status === 'FAILED' ? 'FAILED' : 'QUEUED';
+  // an email is SENT once the email service took it; CANCELLED when every task in it had closed first
+  if (r.status === 'SENT' && r.channel === 'EMAIL') {
+    state = { SENT: 'SENT', FAILED: 'FAILED', CANCELLED: 'CANCELLED' }[r.email_status] || 'QUEUED';
+  }
   if (state === 'SENT' && r.acknowledged_at) state = 'ACKNOWLEDGED';
-  return { ...r, state, reason: r.status === 'SENT' && r.chat_status === 'FAILED' ? r.chat_error : r.reason };
+  const outboxError = r.channel === 'EMAIL' ? r.email_error : r.chat_error;
+  return { ...r, state, reason: r.status === 'SENT' && ['FAILED', 'CANCELLED'].includes(state) ? outboxError || r.reason : r.reason };
 }

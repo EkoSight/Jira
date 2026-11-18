@@ -227,6 +227,30 @@ What it reads, for a person who switched it on:
 - Nothing reaches a timeline until the person confirms it. A past meeting is
   logged only when they say it took place and what came of it.
 
+## Going live, and people who aren't connected
+
+**Settings → Reminders** starts with **Before going live**: Google Chat
+switched on, a test message sent and received, how many people with open work
+are connected, email set up, and the mode. Each check shows its state and
+where to fix it. Live stays a deliberate press by an administrator.
+
+**People who aren't connected:**
+
+- **On their home page:** a banner, "Connect Google Chat to get your reminders
+  there", with the steps (New chat → search for TaskFlow under Apps → send it a
+  message). "Not now" hides it for a week. My reminders always shows whether
+  Chat is connected.
+- **Settings → Reminders → Connections:** the list of people not connected,
+  how their reminders reach them instead (email and the bell, or the bell
+  only), and **Send them the steps by email**. That is one email each, from the
+  system sender, with no password. It is recorded in their account emails
+  ("Steps to connect Google Chat").
+- **The log says where a reminder went instead:** "Not connected to Google
+  Chat; email and the TaskFlow bell carried it", or "…; the TaskFlow bell
+  carried it".
+
+Reminders by email are described in `DEADLINES_REMINDERS.md`, "Email".
+
 ## In Chat
 
 In a direct message to TaskFlow, people can send:
