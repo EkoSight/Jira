@@ -230,7 +230,8 @@ export default function MyReminders() {
                 <tr key={x.key}>
                   <td><strong>{x.label}</strong><span className="small muted" style={{ display: 'block' }}>{x.description}</span></td>
                   <td className="small">{x.choice}</td>
-                  <td>{x.manage.endsWith('#how-you-hear')
+                  {/* positioned, so the hidden label stays inside the table's scroll box at phone width */}
+                  <td style={{ position: 'relative' }}>{x.manage.endsWith('#how-you-hear')
                     ? <a className="btn btn-sm btn-ghost" href="#how-you-hear" onClick={(e) => { e.preventDefault(); document.getElementById('how-you-hear')?.scrollIntoView({ block: 'start' }); }}>Change<span className="sr-only"> {x.label}</span></a>
                     : <Link className="btn btn-sm btn-ghost" to={x.manage}>Manage<span className="sr-only"> {x.label}</span></Link>}</td>
                 </tr>

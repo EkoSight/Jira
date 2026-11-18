@@ -128,7 +128,7 @@ export async function renderShell({ subject, heading, intro = null, cards = [], 
   const whyText = String(why || '').replace(/TaskFlow/g, appName);
   const prefsUrl = app(MY_REMINDERS_PATH);
   const card = (c) => `<tr><td style="padding:14px 16px;border:1px solid #dfe6e2;border-radius:10px;background:#fbfdfc">
-<p style="margin:0 0 8px;font-size:15px;line-height:1.35;font-weight:700;color:#111827">${esc(c.title)}</p>
+${c.title ? `<p style="margin:0 0 8px;font-size:15px;line-height:1.35;font-weight:700;color:#111827">${esc(c.title)}</p>` : ''}
 ${c.lines.map((l) => `<p style="margin:0 0 4px;font-size:14px;line-height:1.45;color:#1f2933">${esc(l)}</p>`).join('\n')}
 ${c.url ? `<p style="margin:10px 0 0"><a href="${esc(c.url)}" style="display:inline-block;background:${GREEN};color:#ffffff;text-decoration:none;font-weight:600;font-size:14px;padding:9px 16px;border-radius:8px">${esc(c.button || 'Open the task')}</a></p>
 <p style="margin:6px 0 0;font-size:12px;color:#52606d;word-break:break-all">${esc(c.url)}</p>` : ''}
@@ -153,7 +153,7 @@ ${button ? `<p style="margin:18px 0 0"><a href="${esc(button.url)}" style="displ
     label ? `[${label}] ${heading}` : heading,
     '',
     ...(intro ? [intro, ''] : []),
-    ...cards.flatMap((c) => [c.title, ...c.lines, ...(c.url ? [`${c.button || 'Open the task'}: ${c.url}`] : []), '']),
+    ...cards.flatMap((c) => [...(c.title ? [c.title] : []), ...c.lines, ...(c.url ? [`${c.button || 'Open the task'}: ${c.url}`] : []), '']),
     ...(bodyText ? [bodyText, ''] : []),
     ...(button ? [`${button.label}: ${button.url}`, ''] : []),
     '--',
@@ -189,7 +189,8 @@ export async function renderReminderEmail(cards, { test = false, label = null } 
   return renderShell({
     subject,
     heading: one ? cards[0].title : `${cards.length} tasks need you`,
-    cards: one ? [{ ...cards[0], title: cards[0].title }] : cards,
+    // one task: the heading already names it, so the card does not repeat it
+    cards: one ? [{ ...cards[0], title: '' }] : cards,
     why: footerWhy(cards),
     label: label || (test ? 'TEST' : null),
   });

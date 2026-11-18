@@ -80,6 +80,7 @@ function Coverage() {
         </div>
       )}
       {unseen.length > 0 && (
+        <div className="table-wrap">
         <table className="data small">
           <thead><tr><th>Task</th><th>Owner</th><th>Why nobody hears about it</th></tr></thead>
           <tbody>
@@ -92,6 +93,7 @@ function Coverage() {
             ))}
           </tbody>
         </table>
+        </div>
       )}
       {report.departments_without_summary?.length > 0 && (
         <div className="small">Departments with open work and no summary space in Chat: {report.departments_without_summary.map((d) => d.name).join(', ')}</div>
@@ -154,6 +156,7 @@ function Connections() {
       {data.departments_without_summary.length > 0 && <div className="small">No department summary space: {data.departments_without_summary.map((d) => d.name).join(', ')}.</div>}
       <details>
         <summary className="small">Everyone</summary>
+        <div className="table-wrap">
         <table className="data small">
           <thead><tr><th>Person</th><th>Department</th><th>Chat</th><th>Email</th><th>Reached by</th><th>Instant alerts</th><th>Morning summary</th><th>Last Chat message</th></tr></thead>
           <tbody>
@@ -171,6 +174,7 @@ function Connections() {
             ))}
           </tbody>
         </table>
+        </div>
       </details>
     </div>
   );
@@ -182,6 +186,7 @@ function Tomorrow() {
   if (!data) return null;
   if (!data.reminders.length) return <div className="small muted">No task reminders are planned for {data.date}.</div>;
   return (
+    <div className="table-wrap">
     <table className="data small">
       <thead><tr><th>Time</th><th>To</th><th>Reminder</th><th>Where</th><th>Would it go?</th></tr></thead>
       <tbody>
@@ -196,6 +201,7 @@ function Tomorrow() {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 

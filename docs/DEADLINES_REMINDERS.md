@@ -337,6 +337,42 @@ On the live site, an administrator:
    send" rows, by channel);
 5. then chooses **Live**.
 
+### What was tested (email)
+
+- **`server/tests/emailReminders.test.js`, 13 tests**, against the outbox
+  stand-in and the Chat stand-in: the brief's tests 1–12 (the planner by
+  choice, the checks when sent, Test mode, email not set up, batching and the
+  daily limit, retries and the fallback notice, bounces, summaries by email,
+  own addresses only, Chat unchanged, follow-ups and personal reminders, the
+  words), plus the channel choices, the go-live checks and the Chat steps
+  email.
+- **The full server suite: 776 tests, all passing**, on a copy of the
+  committed tree. The existing reminder, summary, coverage, sales follow-up,
+  workspace reminder, account email and marketing tests pass unchanged.
+- **The client: 160 tests, all passing**, and the build.
+- **A browser walk** on the walk-through copy (made-up people, the development
+  outbox only, no Google credentials):
+  - Settings → Reminders before and after email was set up;
+  - Channels, Connections and "Send them the steps by email";
+  - My reminders: "Email only", then a sample;
+  - the worker in Test (the administrator's reminder and morning summary
+    arrived labelled TEST; Mona's were "would send"), then Live (Mona's
+    reminder arrived at her own address);
+  - the task dialog's reminders with their channel;
+  - Team → a bounce, then "Clear the bounce";
+  - the home banner;
+  - phone width (390 px) in light and dark;
+  - axe (WCAG A/AA) on Settings → Reminders and My reminders: no violations.
+
+  The first pass found three things, now fixed: tables on Settings → Reminders
+  and a hidden label in My reminders pushed the page wider than a phone, and a
+  one-task email repeated its title. One check had to be redone because it did
+  not open the task dialog's collapsed reminder list.
+
+**Not verified:** delivery through a real email service (SES, Brevo or SMTP),
+real bounce reports from one, and Google Chat on the live site. Bounce
+handling was tested by feeding reports to the handler.
+
 ### Owner decisions (defaults used)
 
 1. Task reminders by Chat and email for everyone. A person can narrow it.
